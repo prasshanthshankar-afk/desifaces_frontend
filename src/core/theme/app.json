@@ -1,0 +1,15 @@
+{
+  "extra": {
+    "CORE_IOS": "http://localhost:8000",
+    "CORE_ANDROID": "http://10.0.2.2:8000",
+
+    "FACE_IOS": "http://localhost:8003",
+    "FACE_ANDROID": "http://10.0.2.2:8003",
+
+    "AUDIO_IOS": "http://localhost:8004",
+    "AUDIO_ANDROID": "http://10.0.2.2:8004",
+
+    "FUSION_IOS": "http://localhost:8002",
+    "FUSION_ANDROID": "http://10.0.2.2:8002"
+  }
+}
