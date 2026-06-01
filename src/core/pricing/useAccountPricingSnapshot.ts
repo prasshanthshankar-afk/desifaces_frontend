@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { fetchDashboardHome } from "../api/dashboard";
 import { useAuth } from "../auth/AuthContext";
+import * as PaymentsApi from "../payments/apiPayments";
 
 export type RealtimeGauge = {
   label: string;
@@ -37,6 +38,7 @@ type AuthIdentity = {
   userId: string | null;
   email: string | null;
   displayName: string | null;
+  countryCode: string | null;
 };
 
 function numberOrNull(v: any): number | null {
@@ -62,7 +64,9 @@ function base64UrlDecode(input: string): string {
     return atob(padded);
   }
 
-  return globalThis.Buffer ? globalThis.Buffer.from(padded, "base64").toString("utf8") : "";
+  return (globalThis as any).Buffer
+    ? (globalThis as any).Buffer.from(padded, "base64").toString("utf8")
+    : "";
 }
 
 function decodeJwtPayload(token?: string | null): Record<string, any> | null {
@@ -122,7 +126,15 @@ function resolveAuthIdentity(auth: any): AuthIdentity {
     cleanText(claims?.sub) ||
     null;
 
-  return { userId, email, displayName };
+  const countryCode =
+    cleanText(auth?.countryCode) ||
+    cleanText(auth?.country_code) ||
+    cleanText(auth?.user?.countryCode) ||
+    cleanText(auth?.user?.country_code) ||
+    cleanText(claims?.country_code) ||
+    "US";
+
+  return { userId, email, displayName, countryCode };
 }
 
 export function isMeaningfulPricingLabel(value?: string | null): boolean {
@@ -150,25 +162,50 @@ export function formatCredits(value: number | null | undefined): string | null {
   return rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2);
 }
 
-function derivePlanName(data: any): string | null {
-  const planSummary = data?.plan_summary ?? data?.pricing_summary ?? {};
-  const usageSummary = data?.usage_summary ?? data?.usage ?? {};
-  const header = data?.header ?? {};
-  const candidates = [
-    planSummary?.planName,
-    planSummary?.plan_name,
-    planSummary?.name,
-    planSummary?.tier_name,
-    planSummary?.tier_code,
-    usageSummary?.plan_name,
-    usageSummary?.tier_name,
-    header?.plan_name,
-    header?.planName,
-  ];
-  for (const c of candidates) {
-    const s = String(c ?? "").trim();
-    if (s) return s;
+function normalizePlanCode(rawPlanCode: unknown) {
+  const normalized = String(rawPlanCode || "free").trim().toLowerCase();
+  if (/(enterprise)/.test(normalized)) return "enterprise_monthly_v1";
+  if (/business_yearly/.test(normalized)) return "business_yearly_v1";
+  if (/(business)/.test(normalized)) return "business_monthly_v1";
+  if (/pro_yearly/.test(normalized)) return "pro_yearly_v1";
+  if (/(pro|creator pro)/.test(normalized)) return "pro_monthly_v1";
+  return "free";
+}
+
+function humanPlanNameFromCode(rawPlanCode: unknown): string {
+  switch (normalizePlanCode(rawPlanCode)) {
+    case "enterprise_monthly_v1":
+      return "Enterprise";
+    case "business_yearly_v1":
+    case "business_monthly_v1":
+      return "Business";
+    case "pro_yearly_v1":
+    case "pro_monthly_v1":
+      return "Pro";
+    default:
+      return "Free";
   }
+}
+
+function derivePlanNameFromSubscription(subscription: any): string | null {
+  const sub = subscription as any;
+  const explicit =
+    cleanText(sub?.plan_name) ||
+    cleanText(sub?.planName) ||
+    cleanText(sub?.current_plan_name) ||
+    cleanText(sub?.currentPlanName);
+
+  if (explicit) return explicit;
+
+  const code =
+    cleanText(sub?.plan_code) ||
+    cleanText(sub?.planCode) ||
+    cleanText(sub?.current_plan_code) ||
+    cleanText(sub?.currentPlanCode);
+
+  if (code) return humanPlanNameFromCode(code);
+
+  if (sub == null) return "Free";
   return null;
 }
 
@@ -185,23 +222,23 @@ function normalizeGauge(gauge: any, fallbackLabel: string, helper?: string | nul
       numberOrNull(gauge.queue_depth) ??
       numberOrNull(gauge.completed_60m),
     status: typeof gauge.status === "string" ? gauge.status : null,
-    helper:
-      typeof gauge.helper === "string"
-        ? gauge.helper
-        : helper ?? null,
+    helper: typeof gauge.helper === "string" ? gauge.helper : helper ?? null,
   };
 }
 
-function normalizeSnapshot(data: any): Omit<AccountPricingSnapshot, "isLoading"> {
-  const planSummary = data?.plan_summary ?? data?.pricing_summary ?? {};
+function normalizeSnapshot(data: any, subscription: any): Omit<AccountPricingSnapshot, "isLoading"> {
   const usageSummary = data?.usage_summary ?? data?.usage ?? {};
   const fuel = data?.gauges?.fuel ?? {};
   const pricingSummary = data?.pricing_summary ?? {};
   const header = data?.header ?? {};
 
-  const planName = derivePlanName(data);
+  const planName =
+    derivePlanNameFromSubscription(subscription) ||
+    cleanText(header?.plan_name) ||
+    cleanText(header?.planName) ||
+    "Free";
 
-  const rawAvailableCredits =
+  const availableCredits =
     numberOrNull(pricingSummary?.available_credits) ??
     numberOrNull(fuel?.credits_remaining) ??
     numberOrNull(data?.available_credits) ??
@@ -211,7 +248,7 @@ function normalizeSnapshot(data: any): Omit<AccountPricingSnapshot, "isLoading">
     numberOrNull(pricingSummary?.reserved_credits) ??
     numberOrNull(fuel?.reserved_credits) ??
     numberOrNull(data?.reserved_credits) ??
-    null;
+    0;
 
   const rawUsedCredits =
     numberOrNull(usageSummary?.used_credits) ??
@@ -224,16 +261,15 @@ function normalizeSnapshot(data: any): Omit<AccountPricingSnapshot, "isLoading">
     numberOrNull(fuel?.cap) ??
     numberOrNull(usageSummary?.credit_cap) ??
     numberOrNull(usageSummary?.credits_cap) ??
-    numberOrNull(planSummary?.credit_cap) ??
-    numberOrNull(planSummary?.credits_cap) ??
-    numberOrNull(planSummary?.included_credits) ??
-    numberOrNull(planSummary?.monthly_included_credits) ??
     numberOrNull(pricingSummary?.credit_cap) ??
     null;
 
-  const creditCap = rawCreditCap != null && rawCreditCap > 0 ? rawCreditCap : null;
-
-  const availableCredits = rawAvailableCredits;
+  const creditCap =
+    rawCreditCap != null && rawCreditCap > 0
+      ? rawCreditCap
+      : normalizePlanCode(planName) === "free"
+        ? 100
+        : null;
 
   const derivedUsedFromBalance =
     creditCap != null && availableCredits != null
@@ -250,7 +286,10 @@ function normalizeSnapshot(data: any): Omit<AccountPricingSnapshot, "isLoading">
     rawUsedCredits != null &&
     (rawUsedCredits < 0 ||
       rawUsedCredits > creditCap ||
-      Math.abs((Math.max(rawUsedCredits, 0) + Math.max(availableCredits, 0) + Math.max(reservedCredits ?? 0, 0)) - creditCap) > 0.01);
+      Math.abs(
+        (Math.max(rawUsedCredits, 0) + Math.max(availableCredits, 0) + Math.max(reservedCredits ?? 0, 0)) -
+          creditCap,
+      ) > 0.01);
 
   const usedCredits =
     hasInconsistentUsedBalance
@@ -260,11 +299,11 @@ function normalizeSnapshot(data: any): Omit<AccountPricingSnapshot, "isLoading">
         : derivedUsedFromBalance;
 
   const usagePercent =
-    numberOrNull(usageSummary?.usage_percent) ??
-    numberOrNull(usageSummary?.total_usage_percent) ??
-    (creditCap != null && usedCredits != null && creditCap > 0
+    creditCap != null && usedCredits != null && creditCap > 0
       ? clamp((usedCredits / Math.max(creditCap, 1)) * 100, 0, 100)
-      : null);
+      : numberOrNull(usageSummary?.usage_percent) ??
+        numberOrNull(usageSummary?.total_usage_percent) ??
+        null;
 
   const availableLabel = formatCredits(availableCredits);
   const reservedLabel = formatCredits(reservedCredits);
@@ -278,11 +317,13 @@ function normalizeSnapshot(data: any): Omit<AccountPricingSnapshot, "isLoading">
     availableLabel != null && creditCapLabel != null ? `${availableLabel} left of ${creditCapLabel}` : null;
 
   const usageHeadline =
-    availableLabel != null && usedLabel != null
-      ? `${availableLabel} available • ${usedLabel} used`
-      : availableLabel != null
-        ? `${availableLabel} available`
-        : (typeof header?.usage_label === "string" && header.usage_label.trim()) || null;
+    availableLabel != null && reservedLabel != null && usedLabel != null
+      ? `${availableLabel} available • ${reservedLabel} reserved • ${usedLabel} used`
+      : availableLabel != null && usedLabel != null
+        ? `${availableLabel} available • ${usedLabel} used`
+        : availableLabel != null
+          ? `${availableLabel} available`
+          : (typeof header?.usage_label === "string" && header.usage_label.trim()) || null;
 
   return {
     planName,
@@ -327,10 +368,14 @@ export function useAccountPricingSnapshot(): AccountPricingSnapshot {
       auth?.email,
       auth?.fullName,
       auth?.displayName,
+      auth?.countryCode,
+      auth?.country_code,
       auth?.user?.id,
       auth?.user?.email,
       auth?.user?.fullName,
       auth?.user?.full_name,
+      auth?.user?.countryCode,
+      auth?.user?.country_code,
       auth?.profile?.id,
       auth?.profile?.email,
       auth?.profile?.fullName,
@@ -338,8 +383,8 @@ export function useAccountPricingSnapshot(): AccountPricingSnapshot {
     ],
   );
 
-  const q = useQuery({
-    queryKey: ["account-pricing-snapshot", enabled ? identity.userId || identity.email || "authed" : "guest"],
+  const dashboardQ = useQuery({
+    queryKey: ["account-pricing-snapshot-dashboard", enabled ? identity.userId || identity.email || "authed" : "guest"],
     queryFn: async () => {
       try {
         return await fetchDashboardHome(false);
@@ -348,9 +393,26 @@ export function useAccountPricingSnapshot(): AccountPricingSnapshot {
       }
     },
     enabled,
-    staleTime: 15_000,
-    refetchInterval: 15_000,
-    refetchOnMount: true,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true,
+    retry: 0,
+  });
+
+  const subscriptionQ = useQuery({
+    queryKey: ["account-pricing-snapshot-subscription", enabled ? identity.userId || identity.email || "authed" : "guest", identity.countryCode || "US"],
+    queryFn: async () => {
+      try {
+        return await PaymentsApi.apiGetCurrentSubscription(identity.countryCode || "US");
+      } catch {
+        return null;
+      }
+    },
+    enabled,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnReconnect: true,
     refetchOnWindowFocus: true,
     retry: 0,
   });
@@ -361,13 +423,14 @@ export function useAccountPricingSnapshot(): AccountPricingSnapshot {
       user_id: identity.userId,
       email: identity.email,
       display_name: identity.displayName,
+      country_code: identity.countryCode,
       token_present: !!auth?.token,
     });
-  }, [enabled, identity.userId, identity.email, identity.displayName, auth?.token]);
+  }, [enabled, identity.userId, identity.email, identity.displayName, identity.countryCode, auth?.token]);
 
   useEffect(() => {
-    if (!enabled || !q.data) return;
-    const snapshot = normalizeSnapshot(q.data);
+    if (!enabled) return;
+    const snapshot = normalizeSnapshot(dashboardQ.data, subscriptionQ.data);
     console.log("DF_PRICING_SNAPSHOT", {
       user_id: identity.userId,
       email: identity.email,
@@ -376,15 +439,16 @@ export function useAccountPricingSnapshot(): AccountPricingSnapshot {
       reserved_credits: snapshot.reservedCredits,
       used_credits: snapshot.usedCredits,
       credit_cap: snapshot.creditCap,
+      usage_percent: snapshot.usagePercent,
       header_line_2: snapshot.headerLine2,
     });
-  }, [enabled, q.data, identity.userId, identity.email]);
+  }, [enabled, dashboardQ.data, subscriptionQ.data, identity.userId, identity.email]);
 
   return useMemo(() => {
-    const base = normalizeSnapshot(q.data);
+    const base = normalizeSnapshot(dashboardQ.data, subscriptionQ.data);
     return {
       ...base,
-      isLoading: Boolean(q.isFetching && !q.data),
+      isLoading: Boolean((dashboardQ.isFetching || subscriptionQ.isFetching) && !dashboardQ.data && !subscriptionQ.data),
     };
-  }, [q.data, q.isFetching]);
+  }, [dashboardQ.data, dashboardQ.isFetching, subscriptionQ.data, subscriptionQ.isFetching]);
 }

@@ -1,12 +1,15 @@
+
 export type MfaMethod = "email_otp" | "totp" | "sms_otp";
 export type MfaPurpose = "login" | "register" | "change_password";
 
 export type PendingMfaChallenge = {
   purpose: MfaPurpose;
   email?: string;
-  challengeToken: string;
+  challengeId?: string;
+  challengeToken?: string;
   method: MfaMethod;
   maskedDestination?: string;
+  expiresIn?: number | null;
 };
 
 type AnyObj = Record<string, any>;
@@ -27,12 +30,26 @@ function normalizeMethod(value: any): MfaMethod {
 
 export function isMfaRequiredResponse(resp: any): boolean {
   const r = (resp ?? {}) as AnyObj;
+  const detail = String(
+    r.detail?.code ||
+    r.detail?.error ||
+    r.detail ||
+    r.error_code ||
+    r.code ||
+    ""
+  ).toLowerCase();
+
   return !!(
     r.mfa_required ||
     r.status === "mfa_required" ||
+    r.status === "pending_email_verification" ||
+    r.challenge_id ||
+    r.verification_challenge_id ||
+    r.challenge?.id ||
     r.challenge_token ||
     r.mfa_token ||
-    r.challenge?.token
+    r.challenge?.token ||
+    detail === "email_verification_required"
   );
 }
 
@@ -42,6 +59,12 @@ export function extractMfaChallenge(
 ): PendingMfaChallenge {
   const r = (resp ?? {}) as AnyObj;
 
+  const challengeId =
+    r.challenge_id ||
+    r.verification_challenge_id ||
+    r.challenge?.id ||
+    "";
+
   const challengeToken =
     r.challenge_token ||
     r.mfa_token ||
@@ -49,19 +72,42 @@ export function extractMfaChallenge(
     r.token ||
     "";
 
-  if (!challengeToken) {
-    throw new Error("MFA was required but the challenge token was missing.");
+  if (!challengeId && !challengeToken) {
+    throw new Error("Verification was required but the challenge identifier was missing.");
   }
 
+  const rawPurpose =
+    r.purpose ||
+    r.challenge?.purpose ||
+    r.verification_purpose ||
+    fallback.purpose;
+
+  const purpose: MfaPurpose =
+    rawPurpose === "change_password"
+      ? "change_password"
+      : rawPurpose === "register"
+      ? "register"
+      : "login";
+
+  const expiresInValue =
+    typeof r.expires_in === "number"
+      ? r.expires_in
+      : typeof r.challenge?.expires_in === "number"
+      ? r.challenge.expires_in
+      : null;
+
   return {
-    purpose: fallback.purpose,
+    purpose,
     email: r.email || fallback.email,
-    challengeToken,
+    challengeId: challengeId || undefined,
+    challengeToken: challengeToken || undefined,
     method: normalizeMethod(r.method || r.mfa_method || r.challenge?.method),
     maskedDestination:
       r.masked_destination ||
       r.destination ||
       r.masked_email ||
+      r.challenge?.masked_destination ||
       maskEmail(r.email || fallback.email),
+    expiresIn: expiresInValue,
   };
 }

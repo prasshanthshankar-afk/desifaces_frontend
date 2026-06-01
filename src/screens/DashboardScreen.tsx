@@ -122,6 +122,41 @@ export default function DashboardScreen() {
     router.push({ pathname: "/pricing/upgrade-confirm" });
   }, [closeMenu]);
 
+  const goNotifications = React.useCallback(() => {
+    closeMenu();
+    router.push("/notifications" as any);
+  }, [closeMenu]);
+
+  const goHelp = React.useCallback(() => {
+    closeMenu();
+    router.push("/help" as any);
+  }, [closeMenu]);
+
+  const goFaq = React.useCallback(() => {
+    closeMenu();
+    router.push("/help/faq" as any);
+  }, [closeMenu]);
+
+  const goContactUs = React.useCallback(() => {
+    closeMenu();
+    router.push("/help/contact" as any);
+  }, [closeMenu]);
+
+  const goAbout = React.useCallback(() => {
+    closeMenu();
+    router.push("/help/about" as any);
+  }, [closeMenu]);
+
+  const goAgreement = React.useCallback(() => {
+    closeMenu();
+    router.push("/legal/agreement" as any);
+  }, [closeMenu]);
+
+  const goTerms = React.useCallback(() => {
+    closeMenu();
+    router.push("/legal/terms" as any);
+  }, [closeMenu]);
+
   const handleSignOut = React.useCallback(async () => {
     closeMenu();
     await logout();
@@ -163,6 +198,13 @@ export default function DashboardScreen() {
         onGoPlanBilling={goPlanBilling}
         onGoComparePlans={goComparePlans}
         onGoUpgradePlan={goUpgradePlan}
+        onGoNotifications={goNotifications}
+        onGoHelp={goHelp}
+        onGoFaq={goFaq}
+        onGoContactUs={goContactUs}
+        onGoAbout={goAbout}
+        onGoAgreement={goAgreement}
+        onGoTerms={goTerms}
         onSignOut={handleSignOut}
         disabled={!loaded}
       />
@@ -220,6 +262,13 @@ function GlobalMenuSheet({
   onGoPlanBilling,
   onGoComparePlans,
   onGoUpgradePlan,
+  onGoNotifications,
+  onGoHelp,
+  onGoFaq,
+  onGoContactUs,
+  onGoAbout,
+  onGoAgreement,
+  onGoTerms,
   onSignOut,
   disabled,
 }: {
@@ -232,6 +281,13 @@ function GlobalMenuSheet({
   onGoPlanBilling: () => void;
   onGoComparePlans: () => void;
   onGoUpgradePlan: () => void;
+  onGoNotifications: () => void;
+  onGoHelp: () => void;
+  onGoFaq: () => void;
+  onGoContactUs: () => void;
+  onGoAbout: () => void;
+  onGoAgreement: () => void;
+  onGoTerms: () => void;
   onSignOut: () => void;
   disabled?: boolean;
 }) {
@@ -250,7 +306,7 @@ function GlobalMenuSheet({
         >
           <View style={styles.drawerHeader}>
             <Text style={styles.drawerTitle}>Menu</Text>
-            <Text style={styles.drawerSubtitle}>Workspace, billing, account, help</Text>
+            <Text style={styles.drawerSubtitle}>Workspace, billing, account, help, about, legal</Text>
           </View>
 
           <ScrollView
@@ -278,6 +334,14 @@ function GlobalMenuSheet({
               <MenuItem label="Upgrade Plan" onPress={onGoUpgradePlan} />
             </MenuSection>
 
+            <MenuSection title="Notifications">
+              <MenuItem label="Notifications" onPress={onGoNotifications} />
+            </MenuSection>
+
+            <MenuSection title="About">
+              <MenuItem label="About us" onPress={onGoAbout} />
+            </MenuSection>
+
             <MenuSection title="Account">
               <MenuItem label="Settings" disabled hint="Soon" />
               <MenuItem label="Preferences" disabled hint="Soon" />
@@ -285,9 +349,14 @@ function GlobalMenuSheet({
             </MenuSection>
 
             <MenuSection title="Help">
-              <MenuItem label="Need Help" disabled hint="Soon" />
-              <MenuItem label="FAQ" disabled hint="Soon" />
-              <MenuItem label="Contact Us" disabled hint="Soon" />
+              <MenuItem label="Need Help" onPress={onGoHelp} />
+              <MenuItem label="FAQ" onPress={onGoFaq} />
+              <MenuItem label="Contact Us" onPress={onGoContactUs} />
+            </MenuSection>
+
+            <MenuSection title="Legal">
+              <MenuItem label="Agreement" onPress={onGoAgreement} />
+              <MenuItem label="Terms & Conditions" onPress={onGoTerms} />
             </MenuSection>
 
             <MenuSection title="Session">

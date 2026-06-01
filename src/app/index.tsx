@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
-import { router } from "expo-router";
+import React, { useEffect, useRef } from "react";
+import { View } from "react-native";
+import { Redirect } from "expo-router";
 
-import AnimatedSplash from "../features/splash/AnimatedSplash";
 import { useAuth } from "../core/auth/AuthContext";
 import {
   CORE_BASE,
@@ -10,6 +10,8 @@ import {
   DASH_BASE,
   VIDEO_BASE,
 } from "../core/config/env";
+
+const APP_BOOT_BG = "#010001";
 
 async function safe<T>(p: Promise<T>) {
   try {
@@ -21,15 +23,10 @@ async function safe<T>(p: Promise<T>) {
 
 export default function Index() {
   const { isReady, isAuthed } = useAuth();
-
-  // Keep this true until you actually add custom fonts.
-  const fontsLoaded = true;
-
-  const [showAnimatedSplash, setShowAnimatedSplash] = useState(true);
-
-  const navigatedRef = useRef(false);
   const didSmokeRef = useRef(false);
 
+  // Keep this true until custom fonts are actually added.
+  const fontsLoaded = true;
   const ready = fontsLoaded && isReady;
 
   useEffect(() => {
@@ -85,28 +82,9 @@ export default function Index() {
     })();
   }, [ready]);
 
-  const onSplashReady = () => {
-    // Native splash is controlled only from src/app/_layout.tsx
-  };
-
-  const onSplashDone = () => {
-    if (navigatedRef.current) return;
-    navigatedRef.current = true;
-
-    setShowAnimatedSplash(false);
-
-    if (isAuthed) {
-      router.replace("/(tabs)/dashboard");
-    } else {
-      router.replace("/(auth)/login");
-    }
-  };
-
-  if (!ready) return null;
-
-  if (showAnimatedSplash) {
-    return <AnimatedSplash onReady={onSplashReady} onDone={onSplashDone} />;
+  if (!ready) {
+    return <View style={{ flex: 1, backgroundColor: APP_BOOT_BG }} />;
   }
 
-  return null;
+  return <Redirect href={isAuthed ? "/(tabs)/dashboard" : "/(auth)/login"} />;
 }

@@ -24,6 +24,9 @@ export default function ClassicCluster(props: {
 }) {
   const { speedValue, rpmValue, fuelValue, tempValue, odometerValue, successRate } = props;
 
+  const throughput = Math.max(0, Math.min(60, Number(speedValue) || 0));
+  const queuePressure = Math.max(0, Math.min(100, Number(rpmValue) || 0));
+
   return (
     <View style={styles.clusterWrap}>
       {/* Top info row (like Mustang’s small upper display) */}
@@ -41,25 +44,25 @@ export default function ClassicCluster(props: {
       <View style={styles.gaugesRow}>
         <GaugeAnalog
           title="THROUGHPUT"
-          unit="jobs/min"
-          value={speedValue}
-          min={0}
-          max={60}
-          majorTicks={6}
-          minorTicks={4}
-          centerLabel="SPEED"
+          value01={throughput / 60}
+          valueLabel={`${Math.round(throughput)}`}
+          minValueLabel="0"
+          maxValueLabel="60"
+          minMeaningLabel=""
+          maxMeaningLabel="jobs/min"
+          accent={DF.gold}
           size={168}
         />
 
         <GaugeAnalog
           title="QUEUE PRESSURE"
-          unit="%"
-          value={rpmValue}
-          min={0}
-          max={100}
-          majorTicks={5}
-          minorTicks={4}
-          centerLabel="RPM"
+          value01={queuePressure / 100}
+          valueLabel={`${Math.round(queuePressure)}%`}
+          minValueLabel="0"
+          maxValueLabel="100"
+          minMeaningLabel=""
+          maxMeaningLabel="pressure"
+          accent={DF.goldBright}
           size={168}
         />
       </View>

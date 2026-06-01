@@ -1,6 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, ActivityIndicator } from "react-native";
-import { Video, ResizeMode } from "expo-av";
 import { Image } from "expo-image";
 
 import type {
@@ -54,52 +53,61 @@ const FALLBACK_CTX: RenderCardCtx = {
   cardH: 410,
 };
 
-export default function VideoCard({
-  item,
-  ctx,
+let ExpoVideo: any = null;
+let ExpoCore: any = null;
+
+try {
+  ExpoVideo = require("expo-video");
+  ExpoCore = require("expo");
+} catch (error) {
+  console.warn("[VideoCard] expo-video unavailable; using poster fallback", error);
+}
+
+function NativeVideoCard({
+  rawVideoUrl,
+  posterUrl,
+  safeCtx,
 }: {
-  item: ThumbFanItem;
-  ctx?: RenderCardCtx;
+  rawVideoUrl: string;
+  posterUrl: string;
+  safeCtx: RenderCardCtx;
 }) {
-  const ref = useRef<Video | null>(null);
-
   const [ready, setReady] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const rawVideoUrl = useMemo(() => pickVideoUrl(item), [item]);
-  const posterUrl = useMemo(() => pickPosterUrl(item), [item]);
-
-  const safeCtx = ctx ?? FALLBACK_CTX;
 
   const hasPlayableVideo = looksLikePlayableVideoUrl(rawVideoUrl);
   const hasPoster = !!posterUrl;
-  const shouldPlay = !!safeCtx.isTop && !!safeCtx.playing && hasPlayableVideo && !err;
+  const shouldPlay = !!safeCtx.isTop && !!safeCtx.playing && hasPlayableVideo;
+
+  const player = ExpoVideo.useVideoPlayer(hasPlayableVideo ? rawVideoUrl : null, (instance: any) => {
+    instance.loop = true;
+    instance.muted = true;
+    instance.staysActiveInBackground = false;
+  });
+
+  ExpoCore.useEvent(player, "playingChange", {
+    isPlaying: player.playing,
+  });
 
   useEffect(() => {
-    let cancelled = false;
+    setReady(false);
+    try {
+      player.pause();
+      player.currentTime = 0;
+    } catch {}
+  }, [rawVideoUrl, player]);
 
-    async function sync() {
-      try {
-        if (!ref.current) return;
-
-        if (shouldPlay) {
-          await ref.current.playAsync();
-        } else {
-          await ref.current.pauseAsync();
-          await ref.current.setPositionAsync(0);
-        }
-      } catch {
-        // player may not be ready yet
+  useEffect(() => {
+    try {
+      if (shouldPlay) {
+        player.play();
+      } else {
+        player.pause();
+        player.currentTime = 0;
       }
-    }
+    } catch {}
+  }, [player, shouldPlay]);
 
-    if (!cancelled) sync();
-    return () => {
-      cancelled = true;
-    };
-  }, [shouldPlay]);
-
-  const showPoster = hasPoster && (!shouldPlay || !ready || !!err);
+  const showPoster = hasPoster && (!shouldPlay || !ready);
 
   return (
     <View
@@ -111,7 +119,6 @@ export default function VideoCard({
         backgroundColor: "#0E0F14",
       }}
     >
-      {/* Base media frame */}
       <View
         style={{
           flex: 1,
@@ -121,30 +128,13 @@ export default function VideoCard({
         }}
       >
         {hasPlayableVideo ? (
-          <Video
-            ref={(r) => {
-              ref.current = r;
-            }}
-            source={{ uri: rawVideoUrl }}
+          <ExpoVideo.VideoView
+            player={player}
             style={{ width: "100%", height: "100%" }}
-            resizeMode={ResizeMode.COVER}
-            useNativeControls={false}
-            isLooping
-            shouldPlay={shouldPlay}
-            isMuted
-            onLoad={() => {
+            nativeControls={false}
+            contentFit="cover"
+            onFirstFrameRender={() => {
               setReady(true);
-              setErr(null);
-            }}
-            onError={(e) => {
-              const msg = (e as any)?.error ?? "Video failed to load";
-              setErr(String(msg));
-              console.warn("VideoCard onError:", msg, {
-                videoUrl: rawVideoUrl,
-                id: item?.id,
-                kind: item?.kind,
-                metaKeys: Object.keys((item?.meta ?? {}) as AnyMeta),
-              });
             }}
           />
         ) : null}
@@ -189,7 +179,7 @@ export default function VideoCard({
           </View>
         ) : null}
 
-        {hasPlayableVideo && !ready && !err && !hasPoster ? (
+        {hasPlayableVideo && !ready && !hasPoster ? (
           <View
             style={{
               position: "absolute",
@@ -205,7 +195,6 @@ export default function VideoCard({
           </View>
         ) : null}
 
-        {/* Decorative inner border */}
         <View
           pointerEvents="none"
           style={{
@@ -219,34 +208,6 @@ export default function VideoCard({
             borderColor: "rgba(255,255,255,0.07)",
           }}
         />
-
-        {/* Error / unavailable badge, subtle instead of noisy tile */}
-        {!!err ? (
-          <View
-            pointerEvents="none"
-            style={{
-              position: "absolute",
-              top: 10,
-              left: 10,
-              paddingHorizontal: 10,
-              paddingVertical: 6,
-              borderRadius: 999,
-              borderWidth: 1,
-              borderColor: "rgba(255,180,90,0.24)",
-              backgroundColor: "rgba(0,0,0,0.32)",
-            }}
-          >
-            <Text
-              style={{
-                color: "rgba(255,255,255,0.82)",
-                fontWeight: "900",
-                fontSize: 11,
-              }}
-            >
-              Unavailable
-            </Text>
-          </View>
-        ) : null}
 
         {!hasPlayableVideo && hasPoster ? (
           <View
@@ -275,7 +236,7 @@ export default function VideoCard({
           </View>
         ) : null}
 
-        {!shouldPlay && !err && hasPlayableVideo ? (
+        {!shouldPlay && hasPlayableVideo ? (
           <View
             pointerEvents="none"
             style={{
@@ -308,7 +269,139 @@ export default function VideoCard({
             </View>
           </View>
         ) : null}
+
+        {shouldPlay && !ready ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              top: 10,
+              left: 10,
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: "rgba(255,255,255,0.10)",
+              backgroundColor: "rgba(0,0,0,0.28)",
+            }}
+          >
+            <Text
+              style={{
+                color: "rgba(255,255,255,0.82)",
+                fontWeight: "900",
+                fontSize: 11,
+              }}
+            >
+              Loading
+            </Text>
+          </View>
+        ) : null}
       </View>
     </View>
   );
+}
+
+function FallbackVideoCard({
+  posterUrl,
+  safeCtx,
+}: {
+  posterUrl: string;
+  safeCtx: RenderCardCtx;
+}) {
+  return (
+    <View
+      style={{
+        width: safeCtx.cardW,
+        height: safeCtx.cardH,
+        borderRadius: 18,
+        overflow: "hidden",
+        backgroundColor: "#0E0F14",
+      }}
+    >
+      {posterUrl ? (
+        <Image
+          source={{ uri: posterUrl }}
+          style={{ width: "100%", height: "100%" }}
+          contentFit="cover"
+        />
+      ) : (
+        <View
+          style={{
+            flex: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <Text
+            style={{
+              color: "rgba(255,255,255,0.82)",
+              fontWeight: "800",
+              fontSize: 13,
+              textAlign: "center",
+            }}
+          >
+            Video preview unavailable
+          </Text>
+        </View>
+      )}
+
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          left: 10,
+          right: 10,
+          top: 10,
+          bottom: 10,
+          borderRadius: 16,
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.07)",
+        }}
+      />
+
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          top: 10,
+          left: 10,
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderRadius: 999,
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.10)",
+          backgroundColor: "rgba(0,0,0,0.28)",
+        }}
+      >
+        <Text
+          style={{
+            color: "rgba(255,255,255,0.82)",
+            fontWeight: "900",
+            fontSize: 11,
+          }}
+        >
+          Preview only
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+export default function VideoCard({
+  item,
+  ctx,
+}: {
+  item: ThumbFanItem;
+  ctx?: RenderCardCtx;
+}) {
+  const rawVideoUrl = useMemo(() => pickVideoUrl(item), [item]);
+  const posterUrl = useMemo(() => pickPosterUrl(item), [item]);
+  const safeCtx = ctx ?? FALLBACK_CTX;
+
+  if (!ExpoVideo || !ExpoCore) {
+    return <FallbackVideoCard posterUrl={posterUrl} safeCtx={safeCtx} />;
+  }
+
+  return <NativeVideoCard rawVideoUrl={rawVideoUrl} posterUrl={posterUrl} safeCtx={safeCtx} />;
 }

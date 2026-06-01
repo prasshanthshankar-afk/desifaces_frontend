@@ -1,16 +1,20 @@
-import React, { useCallback, useMemo, useState, useEffect } from "react";
-import { View, Text, StyleSheet, LayoutChangeEvent } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
   Extrapolate,
   interpolate,
   runOnJS,
+  type SharedValue,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  withTiming,
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
-const SPRING = { damping: 18, stiffness: 170, mass: 0.9 };
+const SPRING = { damping: 20, stiffness: 190, mass: 0.9 };
+const RETURN_SPRING = { damping: 24, stiffness: 210, mass: 0.85 };
+const THROW_DURATION_MS = 150;
 
 export type CardStackCarouselCtx = {
   width: number;
@@ -25,7 +29,6 @@ export function CardStackCarousel<T>({
   width: widthProp,
   peekCount = 4,
 
-  // Fan style
   fanOffsetX = 16,
   fanOffsetY = 8,
   fanScaleStep = 0.03,
@@ -33,11 +36,7 @@ export function CardStackCarousel<T>({
   fanRotateStepDeg = 1.05,
 
   showHint = true,
-
-  // ✅ Optional: deck-owned tap handler (safer than nested Pressables)
-  // If provided, it will fire for the ACTIVE card index.
   onPressActiveIndex,
-
   renderCard,
 }: {
   data: T[];
@@ -50,10 +49,7 @@ export function CardStackCarousel<T>({
   fanRotateBaseDeg?: number;
   fanRotateStepDeg?: number;
   showHint?: boolean;
-
-  // optional deck tap (index-based to avoid passing objects from UI thread)
   onPressActiveIndex?: (index: number) => void;
-
   renderCard: (item: T, ctx: CardStackCarouselCtx) => React.ReactNode;
 }) {
   const count = Array.isArray(data) ? data.length : 0;
@@ -63,13 +59,8 @@ export function CardStackCarousel<T>({
 
   const [activeIndex, setActiveIndex] = useState(0);
 
-  // UI-thread source of truth
   const activeIndexSV = useSharedValue(0);
-
-  // Small “pop” when index changes
   const pulse = useSharedValue(1);
-
-  // Interactive drag for top card
   const dragX = useSharedValue(0);
 
   const onLayout = useCallback(
@@ -81,21 +72,22 @@ export function CardStackCarousel<T>({
     [widthProp, measuredW]
   );
 
-  // ✅ When data shrinks, clamp index so we never point outside array
   useEffect(() => {
     if (count <= 0) {
       if (activeIndex !== 0) setActiveIndex(0);
       activeIndexSV.value = 0;
+      dragX.value = 0;
       return;
     }
-    if (activeIndex > count - 1) {
-      const n = Math.max(0, count - 1);
-      setActiveIndex(n);
-      activeIndexSV.value = n;
-    }
-  }, [count, activeIndex, activeIndexSV]);
 
-  // Reserve right-side room so peeks show
+    if (activeIndex > count - 1) {
+      const next = Math.max(0, count - 1);
+      setActiveIndex(next);
+      activeIndexSV.value = next;
+      dragX.value = 0;
+    }
+  }, [count, activeIndex, activeIndexSV, dragX]);
+
   const cardWidth = useMemo(() => {
     if (!width) return 0;
     const reserved = Math.min(84, Math.max(0, peekCount) * fanOffsetX + 10);
@@ -107,64 +99,78 @@ export function CardStackCarousel<T>({
   const goTo = useCallback(
     (next: number) => {
       if (count <= 0) return;
-      const n = Math.max(0, Math.min(count - 1, next));
-      setActiveIndex(n);
-      activeIndexSV.value = n;
+      const clamped = Math.max(0, Math.min(count - 1, next));
+      setActiveIndex(clamped);
+      activeIndexSV.value = clamped;
     },
     [count, activeIndexSV]
   );
 
+  const goPrev = useCallback(() => goTo(activeIndex - 1), [activeIndex, goTo]);
+  const goNext = useCallback(() => goTo(activeIndex + 1), [activeIndex, goTo]);
+
   const pan = useMemo(() => {
     return Gesture.Pan()
-      // ✅ easier swipe: small horizontal motion triggers
-      .activeOffsetX([-10, 10])
-      // ✅ allow more vertical wiggle inside ScrollView
-      .failOffsetY([-40, 40])
+      .activeOffsetX([-8, 8])
+      .failOffsetY([-72, 72])
       .onUpdate((e) => {
         "worklet";
-        const dx = Math.max(-120, Math.min(120, e.translationX));
+        const dx = Math.max(-cardWidth * 0.42, Math.min(cardWidth * 0.42, e.translationX));
         dragX.value = dx;
       })
       .onEnd((e) => {
         "worklet";
-        if (count <= 1) {
-          dragX.value = withSpring(0, SPRING);
+        if (count <= 1 || cardWidth <= 0) {
+          dragX.value = withSpring(0, RETURN_SPRING);
           return;
         }
 
         const dx = e.translationX;
         const vx = e.velocityX;
+        const threshold = Math.max(34, cardWidth * 0.12);
 
-        const goNext = dx < -28 || vx < -520;
-        const goPrev = dx > 28 || vx > 520;
+        const current = activeIndexSV.value;
+        const wantsNext = dx < -threshold || vx < -460;
+        const wantsPrev = dx > threshold || vx > 460;
 
-        const cur = activeIndexSV.value;
-        let nextIndex = cur;
+        let nextIndex = current;
+        let throwTo = 0;
 
-        if (goNext) nextIndex = Math.min(count - 1, cur + 1);
-        if (goPrev) nextIndex = Math.max(0, cur - 1);
+        if (wantsNext && current < count - 1) {
+          nextIndex = current + 1;
+          throwTo = -cardWidth * 0.82;
+        } else if (wantsPrev && current > 0) {
+          nextIndex = current - 1;
+          throwTo = cardWidth * 0.82;
+        }
 
-        dragX.value = withSpring(0, SPRING);
+        if (nextIndex === current) {
+          dragX.value = withSpring(0, RETURN_SPRING);
+          return;
+        }
 
-        if (nextIndex !== cur) {
+        dragX.value = withTiming(throwTo, { duration: THROW_DURATION_MS }, (finished) => {
+          if (!finished) return;
+          runOnJS(goTo)(nextIndex);
+          dragX.value = 0;
           pulse.value = 0;
           pulse.value = withSpring(1, SPRING);
-          runOnJS(goTo)(nextIndex);
-        }
+        });
       })
       .onFinalize(() => {
         "worklet";
-        dragX.value = withSpring(0, SPRING);
+        if (Math.abs(dragX.value) < 2) {
+          dragX.value = 0;
+        }
       });
-  }, [count, goTo, activeIndexSV, dragX, pulse]);
+  }, [count, cardWidth, goTo, activeIndexSV, dragX, pulse]);
 
-  // ✅ Optional deck tap gesture (only if caller provides handler)
   const tap = useMemo(() => {
     const enabled = !!onPressActiveIndex;
     return Gesture.Tap()
       .enabled(enabled)
-      .maxDistance(14)
-      .maxDuration(250)
+      .maxDistance(12)
+      .maxDuration(240)
       .onEnd(() => {
         "worklet";
         if (!enabled) return;
@@ -174,23 +180,25 @@ export function CardStackCarousel<T>({
 
   const composed = useMemo(() => Gesture.Simultaneous(pan, tap), [pan, tap]);
 
-  if (!count) return null;
-
   const visible = useMemo(() => {
+    if (!count) return [] as Array<{ item: T; i: number }>;
     const start = Math.max(0, Math.min(count - 1, activeIndex));
-    return data.slice(start, Math.min(count, start + 1 + peekCount));
+    return data
+      .slice(start, Math.min(count, start + 1 + peekCount))
+      .map((item, i) => ({ item, i }));
   }, [data, activeIndex, count, peekCount]);
 
-  // Render back cards first, active last (top)
-  const renderOrder = useMemo(() => {
-    const arr = visible.map((item, i) => ({ item, i }));
-    return arr.reverse();
-  }, [visible]);
+  const renderOrder = useMemo(() => [...visible].reverse(), [visible]);
+
+  const canGoPrev = activeIndex > 0;
+  const canGoNext = activeIndex < count - 1;
+
+  if (!count) return null;
 
   return (
-    <View onLayout={onLayout} style={{ height, width: widthProp ?? "100%" }}>
+    <View onLayout={onLayout} style={[styles.root, { height, width: widthProp ?? "100%" }]}> 
       <GestureDetector gesture={composed}>
-        <View style={[styles.stackWrap, { height, width: widthProp ?? "100%" }]}>
+        <View style={[styles.stackWrap, { height, width: widthProp ?? "100%" }]}> 
           {width > 0 &&
             renderOrder.map(({ item, i }) => (
               <DeckCard
@@ -234,6 +242,39 @@ export function CardStackCarousel<T>({
           ) : null}
         </View>
       </GestureDetector>
+
+      {count > 1 ? (
+        <View pointerEvents="box-none" style={styles.navWrap}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Previous card"
+            disabled={!canGoPrev}
+            hitSlop={10}
+            onPress={goPrev}
+            style={({ pressed }) => [
+              styles.navButton,
+              !canGoPrev && styles.navButtonDisabled,
+              pressed && canGoPrev && styles.navButtonPressed,
+            ]}
+          >
+            <Text style={styles.navText}>‹</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Next card"
+            disabled={!canGoNext}
+            hitSlop={10}
+            onPress={goNext}
+            style={({ pressed }) => [
+              styles.navButton,
+              !canGoNext && styles.navButtonDisabled,
+              pressed && canGoNext && styles.navButtonPressed,
+            ]}
+          >
+            <Text style={styles.navText}>›</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -261,8 +302,8 @@ function DeckCard({
   fanScaleStep: number;
   fanRotateBaseDeg: number;
   fanRotateStepDeg: number;
-  pulse: Animated.SharedValue<number>;
-  dragX: Animated.SharedValue<number>;
+  pulse: SharedValue<number>;
+  dragX: SharedValue<number>;
   isActive: boolean;
 }) {
   const s = useAnimatedStyle(() => {
@@ -270,23 +311,16 @@ function DeckCard({
 
     const shiftX = fanOffsetX * d;
     const shiftY = fanOffsetY * d;
-
     const baseScale = 1 - fanScaleStep * d;
 
-    const rot =
-      d === 0 ? 0 : (d % 2 === 0 ? 1 : -1) * (fanRotateBaseDeg + d * fanRotateStepDeg);
-
+    const rot = d === 0 ? 0 : (d % 2 === 0 ? 1 : -1) * (fanRotateBaseDeg + d * fanRotateStepDeg);
     const opacity = interpolate(d, [0, 5], [1, 0.78], Extrapolate.CLAMP);
 
-    const popY = d === 0 ? interpolate(pulse.value, [0, 1], [10, 0], Extrapolate.CLAMP) : 0;
+    const popY = d === 0 ? interpolate(pulse.value, [0, 1], [8, 0], Extrapolate.CLAMP) : 0;
     const popS = d === 0 ? interpolate(pulse.value, [0, 1], [0.985, 1], Extrapolate.CLAMP) : 1;
 
     const dx = d === 0 ? dragX.value : 0;
-    const dragRot =
-      d === 0 ? interpolate(dx, [-120, 0, 120], [-2.4, 0, 2.4], Extrapolate.CLAMP) : 0;
-
-    const z = 100 - d;
-    const elev = Math.max(1, 22 - d);
+    const dragRot = d === 0 ? interpolate(dx, [-160, 0, 160], [-3.2, 0, 3.2], Extrapolate.CLAMP) : 0;
 
     return {
       opacity,
@@ -296,8 +330,8 @@ function DeckCard({
         { scale: baseScale * popS },
         { rotate: `${rot + dragRot}deg` },
       ],
-      zIndex: z,
-      elevation: elev,
+      zIndex: 100 - d,
+      elevation: Math.max(1, 22 - d),
     } as any;
   });
 
@@ -319,6 +353,9 @@ function DeckCard({
 }
 
 const styles = StyleSheet.create({
+  root: {
+    position: "relative",
+  },
   stackWrap: {
     position: "relative",
     overflow: "hidden",
@@ -328,7 +365,6 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
   },
-
   hintWrap: {
     position: "absolute",
     right: 10,
@@ -366,5 +402,38 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "900",
     color: "rgba(255,255,255,0.90)",
+  },
+  navWrap: {
+    position: "absolute",
+    right: 8,
+    bottom: 8,
+    flexDirection: "row",
+    gap: 8,
+    zIndex: 1200,
+    elevation: 1200,
+  },
+  navButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.42)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+  },
+  navButtonPressed: {
+    transform: [{ scale: 0.96 }],
+    backgroundColor: "rgba(0,0,0,0.58)",
+  },
+  navButtonDisabled: {
+    opacity: 0.35,
+  },
+  navText: {
+    color: "rgba(255,255,255,0.92)",
+    fontSize: 22,
+    lineHeight: 24,
+    fontWeight: "900",
+    marginTop: -2,
   },
 });

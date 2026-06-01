@@ -1,5 +1,5 @@
 import { Platform, Share } from "react-native";
-import * as FileSystem from "expo-file-system";
+import * as ExpoFileSystem from "expo-file-system";
 
 export type ShareUrlOpts = { title?: string; message?: string };
 
@@ -14,11 +14,43 @@ function sanitizeUrl(input: string) {
 
 async function getExpoSharing() {
   try {
-    // Lazy import prevents "Cannot find native module 'ExpoSharing'" crash at app startup
+    // Lazy import prevents "Cannot find native module 'ExpoSharing'" crashes at app startup.
     return await import("expo-sharing");
   } catch {
     return null;
   }
+}
+
+function getWritableDirectory(): string | null {
+  const fsAny = ExpoFileSystem as any;
+  const candidate =
+    fsAny.cacheDirectory ||
+    fsAny.documentDirectory ||
+    fsAny.Paths?.cache?.uri ||
+    fsAny.Paths?.cacheDirectory?.uri ||
+    fsAny.Paths?.document?.uri ||
+    fsAny.Paths?.documentDirectory?.uri ||
+    null;
+
+  if (!candidate) return null;
+  return String(candidate).endsWith("/") ? String(candidate) : `${String(candidate)}/`;
+}
+
+async function downloadToLocalFile(url: string, localPath: string): Promise<{ uri: string }> {
+  const fsAny = ExpoFileSystem as any;
+
+  if (typeof fsAny.downloadAsync === "function") {
+    return fsAny.downloadAsync(url, localPath);
+  }
+
+  if (typeof fsAny.File === "function" && typeof fsAny.downloadFileAsync === "function") {
+    const file = new fsAny.File(localPath);
+    const result = await fsAny.downloadFileAsync(url, file);
+    const uri = result?.uri || result?.file?.uri || file?.uri || localPath;
+    return { uri };
+  }
+
+  throw new Error("expo-file-system download API unavailable");
 }
 
 export async function shareUrl(inputUrl: string, opts: ShareUrlOpts = {}) {
@@ -27,36 +59,34 @@ export async function shareUrl(inputUrl: string, opts: ShareUrlOpts = {}) {
   const title = opts.title ?? "DesiFaces";
   const message = opts.message ?? "Shared from DesiFaces";
 
-  // 1) Fast path (text/url share)
+  // 1) Fast path: native text/url share.
   try {
     if (Platform.OS === "ios") {
-      // iOS prefers `subject` over `title` in many share targets
-      await Share.share({ subject: title, message, url });
+      await Share.share({ title, message, url } as any);
     } else {
       await Share.share({ title, message: `${message}\n${url}` });
     }
     return;
   } catch {
-    // continue
+    // Continue to file fallback.
   }
 
-  // 2) File fallback (better UX for images/videos esp. Android)
+  // 2) File fallback: better UX for media, especially Android share targets.
   try {
     const Sharing = await getExpoSharing();
     if (!Sharing?.isAvailableAsync || !Sharing?.shareAsync) throw new Error("expo-sharing unavailable");
 
-    // Guess extension (ok to use path without query params for ext detection)
     const clean = url.split("?")[0];
     const extGuess = (clean.split(".").pop() || "jpg").toLowerCase();
     const safeExt = ["jpg", "jpeg", "png", "webp", "gif", "heic", "mp4", "mov"].includes(extGuess)
       ? extGuess
       : "jpg";
 
-    const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+    const baseDir = getWritableDirectory();
     if (!baseDir) throw new Error("No writable cache/document directory available");
 
     const localPath = `${baseDir}desifaces_${Date.now()}.${safeExt}`;
-    const res = await FileSystem.downloadAsync(url, localPath);
+    const res = await downloadToLocalFile(url, localPath);
 
     const can = await Sharing.isAvailableAsync();
     if (can) {
@@ -64,13 +94,12 @@ export async function shareUrl(inputUrl: string, opts: ShareUrlOpts = {}) {
       return;
     }
   } catch {
-    // continue
+    // Continue to final fallback.
   }
 
-  // 3) Final fallback (always works)
+  // 3) Final fallback.
   await Share.share({ title, message: `${message}\n${url}` });
 }
 
-// default export is fine if you like this style
 const ShareService = { shareUrl };
 export default ShareService;

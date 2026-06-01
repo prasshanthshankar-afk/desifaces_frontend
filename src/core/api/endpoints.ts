@@ -48,6 +48,10 @@ export const endpoints = {
 
       generate: "/api/face/creator/generate",
 
+      i2i: {
+        contentSafetyCheck: "/api/face/creator/i2i/content-safety/check",
+      },
+
       jobs: {
         list: (limit = 20) => `/api/face/creator/jobs?limit=${limit}`,
         status: (jobId: string) =>
@@ -109,6 +113,46 @@ export const endpoints = {
     },
   },
 
+  fusionExtension: {
+    root: "/",
+    health: {
+      v1: "/api/health/",
+      plain: "/api/health",
+      ready: "/api/health/ready",
+    },
+    longform: {
+      pricingPreview: "/api/longform/pricing/preview",
+      create: "/api/longform/jobs",
+      jobs: {
+        create: "/api/longform/jobs",
+        status: (jobId: string) =>
+          `/api/longform/jobs/${encodeURIComponent(jobId)}`,
+        segments: (jobId: string) =>
+          `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
+      },
+      byId: (jobId: string) =>
+        `/api/longform/jobs/${encodeURIComponent(jobId)}`,
+      segments: (jobId: string) =>
+        `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
+    },
+  },
+
+  longform: {
+    root: "/",
+    pricingPreview: "/api/longform/pricing/preview",
+    create: "/api/longform/jobs",
+    jobs: {
+      create: "/api/longform/jobs",
+      status: (jobId: string) =>
+        `/api/longform/jobs/${encodeURIComponent(jobId)}`,
+      segments: (jobId: string) =>
+        `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
+    },
+    byId: (jobId: string) => `/api/longform/jobs/${encodeURIComponent(jobId)}`,
+    segments: (jobId: string) =>
+      `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
+  },
+
   pricing: {
     root: "/",
     quote: "/api/pricing/quote",
@@ -122,6 +166,19 @@ export const endpoints = {
         `/api/pricing/reservations/${encodeURIComponent(reservationId)}`,
     },
 
+    payments: {
+      methods: "/api/payments/payment-methods",
+      plansCatalog: "/api/payments/plans/catalog",
+      currentSubscription: "/api/payments/subscriptions/current",
+      createSubscriptionCheckoutSession:
+        "/api/payments/subscriptions/create-checkout-session",
+      createCustomerPortalSession:
+        "/api/payments/customer-portal/create-session",
+      changeSubscription: "/api/payments/subscriptions/change",
+      cancelSubscription: "/api/payments/subscriptions/cancel",
+      reactivateSubscription: "/api/payments/subscriptions/reactivate",
+    },
+
     planSummaryCandidates: [
       "/api/pricing/plan-summary",
       "/api/pricing/account-summary",
@@ -133,5 +190,33 @@ export const endpoints = {
       "/api/pricing/usage",
       "/api/pricing/account-summary",
     ],
+  },
+
+  notifications: {
+    root: "/",
+    list: "/api/notifications",
+    unreadCount: "/api/notifications/unread-count",
+    markRead: (id: string) =>
+      `/api/notifications/${encodeURIComponent(id)}/read`,
+    markAllRead: "/api/notifications/read-all",
+    preferences: "/api/notifications/preferences",
+    registerDevice: "/api/notifications/devices/register",
+  },
+
+  support: {
+    root: "/",
+    contact: "/api/support/contact",
+    requests: "/api/support/requests",
+    byId: (id: string) => `/api/support/requests/${encodeURIComponent(id)}`,
+    reply: (id: string) =>
+      `/api/support/requests/${encodeURIComponent(id)}/reply`,
+  },
+
+  help: {
+    root: "/",
+    faq: "/api/help/faq",
+    categories: "/api/help/categories",
+    articleBySlug: (slug: string) =>
+      `/api/help/articles/${encodeURIComponent(slug)}`,
   },
 } as const;

@@ -6,6 +6,14 @@ function asNum(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function cleanString(v: unknown): string {
+  return typeof v === "string" ? v.trim() : v == null ? "" : String(v).trim();
+}
+
+function snapshotStage(snapshot: PricingSnapshot | null | undefined): string {
+  return cleanString((snapshot as any)?.stage);
+}
+
 export function formatMoney(amount: string | number | null | undefined, currency = "USD") {
   const n = asNum(amount);
   if (n == null) return null;
@@ -34,34 +42,34 @@ export function derivePricingUiSummary(
 ): PricingUiSummary | null {
   if (!snapshot && !summary) return null;
 
-  const currency = String(summary?.currency || snapshot?.currency || "USD");
-  const estimateAmount = summary?.estimateAmount ?? snapshot?.amount ?? null;
-  const finalAmount = summary?.finalAmount ?? snapshot?.amount ?? null;
-  const deltaAmount = summary?.deltaAmount ?? null;
+  const summaryAny = (summary || {}) as Record<string, any>;
+  const stage = snapshotStage(snapshot);
+
+  const currency = cleanString(summaryAny.currency || snapshot?.currency || "USD") || "USD";
+  const estimateAmount = summaryAny.estimateAmount ?? snapshot?.amount ?? null;
+  const finalAmount = summaryAny.finalAmount ?? snapshot?.amount ?? null;
+  const deltaAmount = summaryAny.deltaAmount ?? null;
 
   const estimateLabel =
-    String(summary?.estimateLabel || "").trim() ||
+    cleanString(summaryAny.estimateLabel) ||
     formatMoney(estimateAmount as any, currency) ||
     null;
 
   const finalLabel =
-    String(summary?.finalLabel || "").trim() ||
-    (snapshot?.stage === "committed" || snapshot?.stage === "released"
-      ? formatMoney(finalAmount as any, currency)
-      : null);
+    cleanString(summaryAny.finalLabel) ||
+    (stage === "committed" || stage === "released" ? formatMoney(finalAmount as any, currency) : null);
 
-  const deltaLabel =
-    String(summary?.deltaLabel || "").trim() || formatMoney(deltaAmount as any, currency) || null;
+  const deltaLabel = cleanString(summaryAny.deltaLabel) || formatMoney(deltaAmount as any, currency) || null;
 
   const message =
-    String(summary?.message || "").trim() ||
-    (snapshot?.stage === "released"
+    cleanString(summaryAny.message) ||
+    (stage === "released"
       ? "Reservation released."
-      : snapshot?.stage === "committed"
+      : stage === "committed"
       ? "Final charge posted."
-      : snapshot?.stage === "reserved"
+      : stage === "reserved"
       ? "Estimated amount reserved."
-      : snapshot?.stage === "pending_reservation"
+      : stage === "pending_reservation" || stage === "pending"
       ? "Reserving credits or spend allowance…"
       : null);
 
@@ -74,7 +82,6 @@ export function derivePricingUiSummary(
     deltaAmount: deltaAmount == null ? null : String(deltaAmount),
     currency,
     message,
-    receiptLabel:
-      finalLabel || estimateLabel || buildUnitLabel(snapshot) || String(summary?.label || "").trim() || null,
+    receiptLabel: finalLabel || estimateLabel || buildUnitLabel(snapshot) || cleanString(summaryAny.label) || null,
   };
 }

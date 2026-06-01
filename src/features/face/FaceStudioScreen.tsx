@@ -16,7 +16,7 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import Slider from "@react-native-community/slider";
 import { router } from "expo-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { DF } from "../../core/theme/colors";
 import DFHeader from "../../core/ui/DFHeader";
@@ -25,6 +25,7 @@ import { shareUrl } from "../../core/share/share";
 import { useCreatorFlow } from "../../core/flow/creatorFlowStore";
 import DFBlockingOverlay from "../../core/ui/DFBlockingOverlay";
 import { saveCreateFlowContext } from "../../core/media/createFlow";
+import { useResolvedPricingDisplay } from "../../core/pricing/resolvePricingDisplay";
 
 import {
   apiCheckFaceSourceImageSafety,
@@ -43,6 +44,12 @@ type StudioJobStage = StudioJobItem["stage"];
 import { RunReceiptCard } from "../../components/pricing/RunReceiptCard";
 import { JobPricingTimeline } from "../../components/pricing/JobPricingTimeline";
 import { PricingTopBar } from "../../components/pricing/PricingTopBar";
+import PromptEnhancerSheet, {
+  type PromptEnhancerResult,
+} from "../../components/ai/PromptEnhancerSheet";
+import StudioTipsRail, {
+  type StudioCoachTip,
+} from "../../components/ai/StudioTipsRail";
 import { useFacePricingEstimate } from "./hooks/useFacePricingEstimate";
 
 type Mode = "text-to-image" | "image-to-image";
@@ -60,6 +67,8 @@ type ImageSafetyState = "idle" | "checking" | "passed" | "blocked" | "error";
 
 const COUNTRY_LABEL = "India";
 
+
+
 const SHOT_TYPE_OPTIONS: Opt[] = [
   { code: "full_body", label: "Full-Length / Full-Body Shot" },
   { code: "portrait_headshot", label: "Portrait / Headshot" },
@@ -76,6 +85,338 @@ const SHOT_TYPE_OPTIONS: Opt[] = [
 function cleanParam(v: any): string {
   if (Array.isArray(v)) v = v[0];
   return String(v ?? "").trim().replace(/^"+|"+$/g, "");
+}
+
+
+function resolveVariantHandoffId(v?: FaceVariant | null): string {
+  return cleanParam(
+    (v as any)?.artifact_id ??
+      (v as any)?.face_artifact_id ??
+      (v as any)?.media_asset_id ??
+      (v as any)?.face_media_asset_id ??
+      ""
+  );
+}
+
+function logFaceStudioFlow(step: string, payload: any) {
+  try {
+    console.log("[DF_FLOW][FaceStudio]", step, JSON.stringify(payload, null, 2));
+  } catch {
+    console.log("[DF_FLOW][FaceStudio]", step, payload);
+  }
+}
+
+
+function normalizeFaceSafetyError(error: any): string {
+  const status = Number(error?.status ?? error?.response?.status ?? error?.body?.status ?? NaN);
+  const detail =
+    cleanParam(error?.body?.detail) ||
+    cleanParam(error?.body?.message) ||
+    cleanParam(error?.body?.error) ||
+    cleanParam(error?.reason) ||
+    cleanParam(error?.message);
+
+  const lower = detail.toLowerCase();
+
+  if (status == 401 || lower.includes("auth_required") || lower.includes("unauthorized") || lower.includes("invalid_token") || lower.includes("session expired")) {
+    return "Your session expired while checking image safety. Please log in again and retry.";
+  }
+
+  if (status == 404 || lower.includes("not found")) {
+    return "Image safety check route is missing in the active deployment. The frontend should call /api/face/creator/i2i/content-safety/check.";
+  }
+
+  if (status == 415 || lower.includes("unsupported media type")) {
+    return "This file type is not supported for image safety validation. Please choose a JPG or PNG image.";
+  }
+
+  if (status == 413 || lower.includes("too large") || lower.includes("payload too large")) {
+    return "This image is too large for content safety validation. Please choose a smaller JPG or PNG image.";
+  }
+
+  if (status == 422 || lower.includes("field required") || lower.includes("validation error")) {
+    return detail ? `Image safety check request was rejected: ${detail}` : "Image safety check request was rejected by the backend.";
+  }
+
+  if (!Number.isNaN(status) && detail) {
+    return `Image safety check failed (${status}): ${detail}`;
+  }
+
+  return detail || "Image safety validation failed. Please try again with another photo.";
+}
+
+type FacePromptEnhancePayload = {
+  mode: Mode;
+  user_input: string;
+  locked_fields?: Record<string, any>;
+  context?: Record<string, any>;
+  locale?: string;
+  max_alternatives?: number;
+};
+
+type FaceTipsPayload = {
+  mode: Mode;
+  prompt?: string;
+  form_state?: Record<string, any>;
+  context?: Record<string, any>;
+  locale?: string;
+  limit?: number;
+};
+
+function friendlyLabel(v: any): string {
+  const raw = cleanParam(v);
+  if (!raw) return "";
+  if (raw.toLowerCase() === "optional") return "";
+  return raw.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function dedupeParts(parts: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of parts) {
+    const value = cleanParam(part);
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
+function getFaceApiBaseUrl(): string {
+  const env = ((globalThis as any)?.process?.env ?? {}) as Record<string, string | undefined>;
+  const raw =
+    cleanParam(env.EXPO_PUBLIC_FACE_BASE_URL) ||
+    cleanParam(env.EXPO_PUBLIC_API_FACE_URL) ||
+    cleanParam(env.FACE_BASE_URL) ||
+    "";
+  return raw.replace(/\/+$/, "");
+}
+
+function resolveFaceApiUrl(path: string): string {
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  const base = getFaceApiBaseUrl();
+
+  if (!base) return `/api/face${suffix}`;
+  if (/\/api\/face$/i.test(base) || /\/face$/i.test(base)) return `${base}${suffix}`;
+  return `${base}/api/face${suffix}`;
+}
+
+function buildFaceAiHeaders(authLike: any): Record<string, string> {
+  const token =
+    cleanParam(authLike?.token) ||
+    cleanParam(authLike?.accessToken) ||
+    cleanParam(authLike?.authToken) ||
+    cleanParam(authLike?.session?.accessToken) ||
+    cleanParam(authLike?.authState?.accessToken);
+
+  const userId =
+    cleanParam(authLike?.userId) ||
+    cleanParam(authLike?.user?.id) ||
+    cleanParam(authLike?.session?.user?.id) ||
+    cleanParam(authLike?.authState?.user?.id);
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  if (token) headers.Authorization = token.toLowerCase().startsWith("bearer ") ? token : `Bearer ${token}`;
+  if (userId) headers["X-User-Id"] = userId;
+  return headers;
+}
+
+async function postFaceAiJson<T>(path: string, body: any, authLike: any): Promise<T> {
+  const response = await fetch(resolveFaceApiUrl(path), {
+    method: "POST",
+    headers: buildFaceAiHeaders(authLike),
+    body: JSON.stringify(body ?? {}),
+  });
+
+  const rawText = await response.text();
+  let parsed: any = null;
+  try {
+    parsed = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    parsed = rawText;
+  }
+
+  if (!response.ok) {
+    const detail =
+      cleanParam(parsed?.detail?.message) ||
+      cleanParam(parsed?.detail?.error) ||
+      cleanParam(parsed?.detail) ||
+      cleanParam(parsed?.message) ||
+      `Request failed (${response.status})`;
+    throw new Error(detail);
+  }
+
+  return parsed as T;
+}
+
+function buildLocalFacePrompt(
+  userInput: string,
+  lockedFields: Record<string, any>,
+  flavor: "primary" | "commercial" | "natural" | "premium"
+): string {
+  const shot = friendlyLabel(lockedFields?.shot_type_label);
+  const region = friendlyLabel(lockedFields?.region_label);
+  const zone = friendlyLabel(lockedFields?.zone_label);
+  const context = friendlyLabel(lockedFields?.context_label);
+  const useCase = friendlyLabel(lockedFields?.use_case_label);
+  const aspect = cleanParam(lockedFields?.aspect_ratio);
+  const modeValue = cleanParam(lockedFields?.mode);
+  const gender = cleanParam(lockedFields?.gender);
+
+  const styleByFlavor =
+    flavor === "commercial"
+      ? "premium commercial photography, crisp composition, polished styling, realistic lighting"
+      : flavor === "natural"
+        ? "natural lifestyle realism, candid energy, believable styling, soft authentic light"
+        : flavor === "premium"
+          ? "premium editorial portrait, refined styling, cinematic realism, elegant lighting"
+          : "high-quality portrait, realistic lighting, clean composition, culturally respectful";
+
+  const identityGuard =
+    modeValue === "image-to-image"
+      ? "same person and identity preserved from the source photo"
+      : gender
+        ? `${gender} presentation preserved`
+        : "";
+
+  return dedupeParts([
+    userInput,
+    identityGuard,
+    region ? `authentic ${region} visual cues` : zone ? `authentic ${zone} regional cues` : "",
+    context ? `${context} context` : "",
+    useCase ? `${useCase} use case` : "",
+    shot ? `${shot} framing` : "",
+    aspect ? `optimized for ${aspect} aspect ratio` : "",
+    styleByFlavor,
+    "family-friendly, culturally respectful",
+  ]).join(", ");
+}
+
+function buildLocalFaceEnhancement(
+  userInput: string,
+  lockedFields: Record<string, any>,
+  context: Record<string, any>
+): PromptEnhancerResult {
+  const variants = Number(lockedFields?.num_variants ?? context?.num_variants ?? 4);
+  const preservation = Number(lockedFields?.preservation_strength ?? 0);
+  const sourceHint =
+    cleanParam(lockedFields?.mode) === "image-to-image"
+      ? `Identity strength ${preservation.toFixed(2)} keeps the same person while allowing styling change.`
+      : "The rewrite adds explicit framing, quality, and scene direction without changing your chosen identity inputs.";
+
+  return {
+    original_input: userInput,
+    enhanced_input: buildLocalFacePrompt(userInput, lockedFields, "primary"),
+    alternatives: [
+      { label: "Commercial", text: buildLocalFacePrompt(userInput, lockedFields, "commercial") },
+      { label: "Natural lifestyle", text: buildLocalFacePrompt(userInput, lockedFields, "natural") },
+      { label: "Premium editorial", text: buildLocalFacePrompt(userInput, lockedFields, "premium") },
+    ],
+    tips: dedupeParts([
+      friendlyLabel(lockedFields?.shot_type_label) ? "" : "Add one framing cue like close-up, medium shot, or full-body.",
+      friendlyLabel(lockedFields?.context_label) ? "" : "Add a clear setting so the background looks intentional instead of generic.",
+      variants > 4 ? "Run 2 to 4 variants first when you are testing a new idea to save credits." : "",
+      cleanParam(lockedFields?.mode) === "image-to-image" ? "Keep the prompt focused on styling and scene changes when identity lock is on." : "Call out attire, lighting, and mood together for more reliable results.",
+      sourceHint,
+    ]),
+    why_this_is_better: sourceHint,
+    source: "fallback",
+    fallback_used: true,
+    structured: {
+      shot_type: friendlyLabel(lockedFields?.shot_type_label),
+      region: friendlyLabel(lockedFields?.region_label),
+      context: friendlyLabel(lockedFields?.context_label),
+      use_case: friendlyLabel(lockedFields?.use_case_label),
+      aspect_ratio: cleanParam(lockedFields?.aspect_ratio),
+      num_variants: variants,
+    },
+  };
+}
+
+function buildLocalFaceTips(input: {
+  mode: Mode;
+  prompt: string;
+  shotTypeLabel: string;
+  contextLabel: string;
+  useCaseLabel: string;
+  aspectRatio: string;
+  numVariants: number;
+  imageSafetyState: ImageSafetyState;
+  planLabel?: string | null;
+  availableLabel?: string | null;
+}): StudioCoachTip[] {
+  const tips: StudioCoachTip[] = [];
+  const plan = cleanParam(input.planLabel).toLowerCase();
+
+  if (!friendlyLabel(input.shotTypeLabel)) {
+    tips.push({
+      id: "face-tip-framing",
+      title: "Lock the framing",
+      body: "Use one framing term like headshot, medium shot, or full-body so composition stays consistent.",
+      tone: "premium",
+    });
+  }
+
+  if (!friendlyLabel(input.contextLabel)) {
+    tips.push({
+      id: "face-tip-context",
+      title: "Name the setting",
+      body: "Adding a clear environment helps the background feel intentional instead of generic.",
+      tone: "neutral",
+    });
+  }
+
+  if (!friendlyLabel(input.useCaseLabel)) {
+    tips.push({
+      id: "face-tip-usecase",
+      title: "Match the use case",
+      body: "Describe whether this is for profile, promo, editorial, or social so the styling fits the end use.",
+      tone: "neutral",
+    });
+  }
+
+  if (input.mode === "image-to-image") {
+    tips.push({
+      id: "face-tip-i2i",
+      title: "Preserve identity cleanly",
+      body:
+        input.imageSafetyState === "passed"
+          ? "With identity lock, ask for styling, lighting, attire, and background changes instead of changing the person."
+          : "Use a clean, well-lit source photo facing the camera to improve Edit Face reliability.",
+      tone: "success",
+    });
+  } else {
+    tips.push({
+      id: "face-tip-prompt",
+      title: "Bundle mood and light",
+      body: "Put attire, mood, and lighting in the same sentence to reduce flat or generic outputs.",
+      tone: "premium",
+    });
+  }
+
+  if (input.numVariants > 4 || plan.includes("free")) {
+    tips.push({
+      id: "face-tip-cost",
+      title: "Save credits while testing",
+      body: "Try 2 to 4 variants first, then scale up only after the prompt direction feels right.",
+      tone: "warning",
+    });
+  }
+
+  tips.push({
+    id: "face-tip-aspect",
+    title: "Choose the downstream frame",
+    body: `You are currently building for ${input.aspectRatio}. Keep the face composition centered if you plan to continue into Audio and Fusion.`,
+    tone: "neutral",
+  });
+
+  return tips.slice(0, 4);
 }
 
 function findPreferredOption(options: Opt[], preferredCodes: string[]) {
@@ -119,29 +460,66 @@ function nextProgress(prev: number, stage: StudioJobStage): number {
 }
 
 function pickPricingLabel(resp: any): string | undefined {
-  const summary = resp?.pricing_summary ?? null;
-  if (summary?.finalLabel) return String(summary.finalLabel);
-  if (summary?.final_label) return String(summary.final_label);
-  if (summary?.receiptLabel) return String(summary.receiptLabel);
-  if (summary?.receipt_label) return String(summary.receipt_label);
-  if (summary?.estimateLabel) return String(summary.estimateLabel);
-  if (summary?.estimate_label) return String(summary.estimate_label);
-
   const pricing = resp?.pricing ?? null;
-  if (pricing?.amount != null && pricing?.currency) {
-    return `${pricing.currency} ${pricing.amount}`;
+  const summary = resp?.pricing_summary ?? pricing?.summary ?? null;
+  const state = String(pricing?.state ?? summary?.state ?? "").toLowerCase();
+  const billingMode = String(pricing?.billing_mode ?? "").toLowerCase();
+  const settlementMode = String(pricing?.settlement_mode ?? "").toLowerCase();
+
+  if (
+    state === "suppressed" ||
+    billingMode === "internal" ||
+    settlementMode === "internal" ||
+    pricing?.suppressed === true ||
+    pricing?.pricing_suppressed === true ||
+    pricing?.suppress_pricing === true
+  ) {
+    return undefined;
   }
-  return undefined;
+
+  if (state === "released") {
+    return (
+      summary?.display_final ||
+      summary?.finalLabel ||
+      summary?.final_label ||
+      (pricing?.currency ? `${pricing.currency} 0.00` : "0.00")
+    );
+  }
+
+  if (state === "committed") {
+    return (
+      summary?.display_final ||
+      summary?.finalLabel ||
+      summary?.final_label ||
+      summary?.receiptLabel ||
+      summary?.receipt_label ||
+      (pricing?.final_amount != null && pricing?.currency ? `${pricing.currency} ${pricing.final_amount}` : undefined) ||
+      (pricing?.amount != null && pricing?.currency ? `${pricing.currency} ${pricing.amount}` : undefined)
+    );
+  }
+
+  return (
+    summary?.display_estimate ||
+    summary?.estimateLabel ||
+    summary?.estimate_label ||
+    summary?.display_final ||
+    (pricing?.estimated_amount != null && pricing?.currency ? `${pricing.currency} ${pricing.estimated_amount}` : undefined) ||
+    (pricing?.amount != null && pricing?.currency ? `${pricing.currency} ${pricing.amount}` : undefined)
+  );
 }
 
 function pickFinalPricingMessage(resp: any): string | null {
-  const summary = resp?.pricing_summary ?? null;
+  const pricing = resp?.pricing ?? null;
+  const summary = resp?.pricing_summary ?? pricing?.summary ?? null;
+  const state = String(pricing?.state ?? summary?.state ?? "").toLowerCase();
+
+  if (typeof summary?.display_note === "string" && summary.display_note.trim()) return summary.display_note;
   if (typeof summary?.message === "string" && summary.message.trim()) return summary.message;
   if (typeof summary?.detail === "string" && summary.detail.trim()) return summary.detail;
 
-  const pricing = resp?.pricing ?? null;
-  if (pricing?.state === "released") return "Reservation released. No final charge was applied.";
-  if (pricing?.state === "committed") return "Final pricing snapshot captured from the completed run.";
+  if (state === "suppressed") return null;
+  if (state === "released") return "Reservation released. No final charge was applied.";
+  if (state === "committed") return "Final charge recorded after execution.";
 
   return null;
 }
@@ -243,15 +621,21 @@ function SelectorChip({
   value,
   onPress,
   disabled,
-  width = "48.5%",
+  width,
+  flex,
+  emphasis = "default",
 }: {
   label: string;
   value: string;
   onPress?: () => void;
   disabled?: boolean;
   width?: any;
+  flex?: number;
+  emphasis?: "default" | "wide" | "fixed";
 }) {
   const clickable = !!onPress && !disabled;
+  const isWide = emphasis === "wide";
+  const isFixed = emphasis === "fixed";
 
   return (
     <Pressable
@@ -259,16 +643,23 @@ function SelectorChip({
       onPress={onPress}
       style={{
         width,
+        flex,
+        minHeight: isWide ? 72 : 64,
         borderRadius: 14,
         borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.10)",
-        backgroundColor: disabled ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.05)",
+        borderColor: isWide ? "rgba(248,184,72,0.18)" : "rgba(255,255,255,0.10)",
+        backgroundColor: disabled
+          ? "rgba(255,255,255,0.03)"
+          : isWide
+            ? "rgba(248,184,72,0.08)"
+            : "rgba(255,255,255,0.05)",
         paddingVertical: 10,
         paddingHorizontal: 12,
-        opacity: disabled ? 0.7 : 1,
+        justifyContent: "center",
+        opacity: disabled ? 0.72 : 1,
       }}
     >
-      <Text style={{ color: "rgba(255,255,255,0.55)", fontWeight: "800", fontSize: 10 }}>
+      <Text style={{ color: isFixed ? "rgba(255,255,255,0.48)" : "rgba(255,255,255,0.58)", fontWeight: "900", fontSize: 10 }}>
         {label}
       </Text>
 
@@ -282,11 +673,12 @@ function SelectorChip({
         }}
       >
         <Text
-          numberOfLines={1}
+          numberOfLines={2}
           style={{
             color: DF.text,
             fontWeight: "900",
-            fontSize: 12,
+            fontSize: isWide ? 13 : 12,
+            lineHeight: isWide ? 16 : 15,
             flex: 1,
           }}
         >
@@ -666,6 +1058,7 @@ function ImageViewerModal({
               key={cleanUri}
               source={{ uri: cleanUri }}
               style={{ width, height }}
+              cachePolicy="none"
               contentFit="contain"
               transition={180}
             />
@@ -743,15 +1136,72 @@ function ImageViewerModal({
 }
 
 export default function FaceStudioScreen() {
-  const { isReady, isAuthed } = useAuth();
+  const auth = useAuth() as any;
+  const queryClient = useQueryClient();
+  const { isReady, isAuthed } = auth;
+  const faceAiAuth = useMemo(
+    () => ({
+      token:
+        cleanParam(auth?.token) ||
+        cleanParam(auth?.accessToken) ||
+        cleanParam(auth?.authToken) ||
+        cleanParam(auth?.session?.accessToken) ||
+        cleanParam(auth?.authState?.accessToken) ||
+        "",
+      userId:
+        cleanParam(auth?.userId) ||
+        cleanParam(auth?.user?.id) ||
+        cleanParam(auth?.session?.user?.id) ||
+        cleanParam(auth?.authState?.user?.id) ||
+        "",
+    }),
+    [
+      auth?.token,
+      auth?.accessToken,
+      auth?.authToken,
+      auth?.session?.accessToken,
+      auth?.authState?.accessToken,
+      auth?.userId,
+      auth?.user?.id,
+      auth?.session?.user?.id,
+      auth?.authState?.user?.id,
+    ]
+  );
+
+  const refreshPricingCaches = useCallback(() => {
+    const predicate = (query: any) => {
+      const key = JSON.stringify(query?.queryKey ?? "").toLowerCase();
+      return (
+        key.includes("pricing") ||
+        key.includes("credit") ||
+        key.includes("balance") ||
+        key.includes("dashboard") ||
+        key.includes("subscription") ||
+        key.includes("plan")
+      );
+    };
+
+    void queryClient.invalidateQueries({ predicate });
+    void queryClient.refetchQueries({ predicate, type: "active" as any });
+  }, [queryClient]);
 
   const flow = useCreatorFlow() as any;
-  const { setFaceSelection, resetCreatorFlow } = flow;
+  const { setFaceSelection } = flow;
+  const resetCreatorFlow = flow?.resetCreatorFlow as undefined | ((nextOwnerKey?: string) => void);
+  const setCreatorFlowOwner = flow?.setCreatorFlowOwner as undefined | ((ownerKey?: string) => void);
+  const authUserId = faceAiAuth.userId || "";
+  const hasFacePricingAuth = Boolean(faceAiAuth.token && faceAiAuth.userId);
+  const authSessionKey = authUserId || "anon";
   const setFusionSettings = flow?.setFusionSettings as undefined | ((x: any) => void);
 
   const BG = (DF as any)?.night ?? "#0E0F14";
   const BG2 = (DF as any)?.night2 ?? "#141824";
   const screenWidth = Dimensions.get("window").width;
+  const pageHorizontalPadding = 14;
+  const cardHorizontalPadding = 14;
+  const creativeGridGap = 10;
+  const creativeSingleColumn = screenWidth < 360;
+  const creativeAspectInline = screenWidth >= 382;
   const variantCardWidth = Math.min(Math.max(screenWidth * 0.72, 236), screenWidth - 76);
 
   const [mode, setMode] = useState<Mode>("text-to-image");
@@ -787,6 +1237,58 @@ export default function FaceStudioScreen() {
   const [inlineStatus, setInlineStatus] = useState<string | null>(null);
 
   const [variants, setVariants] = useState<FaceVariant[]>([]);
+
+  const lastAuthSessionKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!isReady) return;
+
+    const prevAuthSessionKey = lastAuthSessionKeyRef.current;
+    if (prevAuthSessionKey === authSessionKey) {
+      setCreatorFlowOwner?.(authUserId || undefined);
+      return;
+    }
+
+    lastAuthSessionKeyRef.current = authSessionKey;
+    setCreatorFlowOwner?.(authUserId || undefined);
+
+    if (prevAuthSessionKey == null) return;
+
+    resetCreatorFlow?.(authUserId || undefined);
+    setVariants([]);
+    setSelectedIdx(null);
+    setPickedUri(null);
+    setSourceImageUrl(null);
+    setSourceImageAssetId(null);
+    setImageSafetyState("idle");
+    setImageSafetyReason(null);
+    setInlineStatus(null);
+    setUploadingSource(false);
+    setCreatingJob(false);
+    setFinalPricingLabel(null);
+    setFinalPricingState("estimated");
+    setFinalPricingMessage(null);
+
+    void queryClient.removeQueries({
+      predicate: (query: any) => {
+        const key = JSON.stringify(query?.queryKey ?? "").toLowerCase();
+        return (
+          key.includes("pricing") ||
+          key.includes("credit") ||
+          key.includes("balance") ||
+          key.includes("dashboard") ||
+          key.includes("subscription") ||
+          key.includes("plan")
+        );
+      },
+    });
+    void queryClient.invalidateQueries({
+      predicate: (query: any) => {
+        const key = JSON.stringify(query?.queryKey ?? "").toLowerCase();
+        return key.includes("pricing") || key.includes("credit") || key.includes("balance") || key.includes("dashboard");
+      },
+    });
+  }, [authSessionKey, authUserId, isReady, queryClient, resetCreatorFlow, setCreatorFlowOwner]);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [resultsJobId, setResultsJobId] = useState<string | null>(null);
 
@@ -802,8 +1304,16 @@ export default function FaceStudioScreen() {
   const [finalPricingState, setFinalPricingState] = useState<"estimated" | "committed" | "released">("estimated");
   const [finalPricingMessage, setFinalPricingMessage] = useState<string | null>(null);
   const [workflowSummaryOpen, setWorkflowSummaryOpen] = useState(false);
+  const [enhancerOpen, setEnhancerOpen] = useState(false);
+  const [enhancerLoading, setEnhancerLoading] = useState(false);
+  const [enhancerError, setEnhancerError] = useState<string | null>(null);
+  const [enhancerResult, setEnhancerResult] = useState<PromptEnhancerResult | null>(null);
+  const [studioTips, setStudioTips] = useState<StudioCoachTip[]>([]);
+  const [tipsLoading, setTipsLoading] = useState(false);
+  const [tipsError, setTipsError] = useState<string | null>(null);
 
   const pollingCancelledRef = useRef(false);
+  const tipsRequestSeq = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -826,7 +1336,10 @@ export default function FaceStudioScreen() {
     queryKey: ["masterdata-face", "en"],
     queryFn: () => fetchFaceMasterdata("en"),
     enabled: isReady && isAuthed,
-    staleTime: 5 * 60_000,
+    staleTime: 10 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: 0,
   });
 
@@ -947,6 +1460,44 @@ export default function FaceStudioScreen() {
   const useCaseLabel = useCaseOptions.find((x) => x.code === useCaseCode)?.label ?? "Optional";
   const shotTypeLabel = SHOT_TYPE_OPTIONS.find((x) => x.code === shotTypeCode)?.label ?? "Select";
 
+  const faceEnhancerLockedFields = useMemo(
+    () => ({
+      mode,
+      gender,
+      country: COUNTRY_LABEL,
+      zone_code: zoneCode,
+      zone_label: regionLabel,
+      region_code: regionCode,
+      region_label: stateLabel,
+      context_code: contextCode,
+      context_label: contextLabel,
+      use_case_code: useCaseCode,
+      use_case_label: useCaseLabel,
+      shot_type_code: shotTypeCode,
+      shot_type_label: shotTypeLabel,
+      aspect_ratio: aspectRatio,
+      num_variants: numVariants,
+      preservation_strength: mode === "image-to-image" ? preservationStrength : undefined,
+    }),
+    [
+      mode,
+      gender,
+      zoneCode,
+      regionLabel,
+      regionCode,
+      stateLabel,
+      contextCode,
+      contextLabel,
+      useCaseCode,
+      useCaseLabel,
+      shotTypeCode,
+      shotTypeLabel,
+      aspectRatio,
+      numVariants,
+      preservationStrength,
+    ]
+  );
+
   const hasValidI2ISource =
     mode !== "image-to-image" ||
     ((!!sourceImageUrl || !!sourceImageAssetId) && imageSafetyState === "passed");
@@ -959,13 +1510,16 @@ export default function FaceStudioScreen() {
     return true;
   }, [prompt, gender, zoneCode, regionCode, mode, hasValidI2ISource]);
 
-  const pricingPreviewEnabled =
-    isReady &&
-    isAuthed &&
+  const pricingPreviewEligible =
     prompt.trim().length > 0 &&
     !mdLoading &&
     !mdErr &&
+    !!gender &&
+    !!zoneCode &&
+    !!regionCode &&
     hasValidI2ISource;
+
+  const pricingPreviewEnabled = hasFacePricingAuth && pricingPreviewEligible;
 
   const pricingQ = useFacePricingEstimate({
     mode,
@@ -975,6 +1529,11 @@ export default function FaceStudioScreen() {
     sourceImageUrl,
     sourceImageAssetId,
     aspectRatio,
+    gender,
+    regionCode,
+    contextCode,
+    useCaseCode,
+    shotTypeCode,
     enabled: pricingPreviewEnabled,
   });
 
@@ -986,6 +1545,210 @@ export default function FaceStudioScreen() {
 
   const pricingConfirmation = pricing?.confirmation ?? null;
   const pricingReady = Boolean(pricingConfirmation?.quote_id);
+  const pricingHasResponse = pricing != null || pricingQ.data != null;
+
+  useEffect(() => {
+    if (!pricingPreviewEnabled) return;
+    if (pricingReady) return;
+    if (pricingHasResponse) return;
+    if (pricingQ.isFetching) return;
+
+    const t = setTimeout(() => {
+      pricingQ.refetch().catch(() => {});
+    }, 120);
+    return () => clearTimeout(t);
+  }, [
+    pricingPreviewEnabled,
+    pricingReady,
+    pricingHasResponse,
+    pricingQ.isFetching,
+    pricingQ.refetch,
+    mode,
+    prompt,
+    numVariants,
+    preservationStrength,
+    sourceImageUrl,
+    sourceImageAssetId,
+    aspectRatio,
+    gender,
+    regionCode,
+    contextCode,
+    useCaseCode,
+    shotTypeCode,
+  ]);
+  const displayedEstimateLabel =
+    finalPricingLabel ??
+    pricing?.primaryEstimateLabel ??
+    pricing?.estimateLabel ??
+    (pricingQ.isFetching ? "Refreshing estimate…" : "Enter prompt to see estimate");
+  const isPostpaidPricing =
+    ((() => {
+      const settlementMode = cleanParam(pricing?.pricing?.settlementMode).toLowerCase();
+      const settlement = cleanParam(pricing?.settlementLabel).toLowerCase();
+      const availability = cleanParam(pricing?.availableLabel).toLowerCase();
+      return (
+        settlementMode === "postpaid" ||
+        settlement.includes("billed after completion") ||
+        settlement.includes("enterprise invoicing") ||
+        settlement.includes("postpaid") ||
+        availability.includes("billed after completion")
+      );
+    })());
+  const visiblePrimaryEstimate = isPostpaidPricing
+    ? cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || displayedEstimateLabel
+    : pricing?.creditEstimateLabel || displayedEstimateLabel;
+  const visibleSecondaryEstimate = undefined;
+  const visibleCreditEstimate = isPostpaidPricing ? null : (pricing?.creditEstimateLabel ?? null);
+  const visibleCashEstimate = isPostpaidPricing
+    ? (cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || null)
+    : null;
+  const displayedPricingDetail = isPostpaidPricing
+    ? `Estimated bill: ${visibleCashEstimate ?? "—"}`
+    : `Credits charged: ${visibleCreditEstimate ?? "—"}`;
+  const displayedSettlementLabel =
+    isPostpaidPricing
+      ? "Billed after completion through your postpaid account."
+      : "Covered by your available credits.";
+
+  const refreshStudioTips = useCallback(async () => {
+    const requestId = ++tipsRequestSeq.current;
+    const fallbackTips = buildLocalFaceTips({
+      mode,
+      prompt,
+      shotTypeLabel,
+      contextLabel,
+      useCaseLabel,
+      aspectRatio,
+      numVariants,
+      imageSafetyState,
+      planLabel: pricing?.planLabel ?? null,
+      availableLabel: pricing?.availableLabel ?? null,
+    });
+
+    if (!isReady || !isAuthed) {
+      setStudioTips(fallbackTips);
+      setTipsError(null);
+      return;
+    }
+
+    setTipsLoading(true);
+    setTipsError(null);
+
+    try {
+      const response = await postFaceAiJson<{
+        tips?: StudioCoachTip[];
+      }>(
+        "/creator/tips",
+        {
+          mode,
+          prompt: prompt.trim(),
+          form_state: {
+            ...faceEnhancerLockedFields,
+            image_safety_state: imageSafetyState,
+          },
+          context: {
+            plan_name: pricing?.planLabel ?? null,
+            available_label: pricing?.availableLabel ?? null,
+            estimate_label: pricing?.estimateLabel ?? null,
+            insufficient_balance: pricing?.insufficientBalance ?? false,
+          },
+          locale: "en",
+          limit: 4,
+        },
+        faceAiAuth
+      );
+
+      if (requestId !== tipsRequestSeq.current) return;
+      const nextTips = Array.isArray(response?.tips) && response.tips.length > 0 ? response.tips : fallbackTips;
+      setStudioTips(nextTips);
+      setTipsError(null);
+    } catch {
+      if (requestId !== tipsRequestSeq.current) return;
+      setStudioTips(fallbackTips);
+      setTipsError(null);
+    } finally {
+      if (requestId === tipsRequestSeq.current) setTipsLoading(false);
+    }
+  }, [
+    mode,
+    prompt,
+    shotTypeLabel,
+    contextLabel,
+    useCaseLabel,
+    aspectRatio,
+    numVariants,
+    imageSafetyState,
+    pricing?.planLabel,
+    pricing?.availableLabel,
+    pricing?.estimateLabel,
+    pricing?.insufficientBalance,
+    faceEnhancerLockedFields,
+    faceAiAuth,
+    isReady,
+    isAuthed,
+  ]);
+
+  const requestPromptEnhancement = useCallback(async () => {
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      setInlineStatus("Add a prompt first, then tap Enhance.");
+      return;
+    }
+
+    setEnhancerOpen(true);
+    setEnhancerLoading(true);
+    setEnhancerError(null);
+
+    const fallbackResult = buildLocalFaceEnhancement(trimmed, faceEnhancerLockedFields, {
+      plan_name: pricing?.planLabel ?? null,
+      available_label: pricing?.availableLabel ?? null,
+      estimate_label: pricing?.estimateLabel ?? null,
+    });
+
+    try {
+      const response = await postFaceAiJson<PromptEnhancerResult>(
+        "/creator/prompt/enhance",
+        {
+          mode,
+          user_input: trimmed,
+          locked_fields: faceEnhancerLockedFields,
+          context: {
+            plan_name: pricing?.planLabel ?? null,
+            available_label: pricing?.availableLabel ?? null,
+            estimate_label: pricing?.estimateLabel ?? null,
+            image_safety_state: imageSafetyState,
+          },
+          locale: "en",
+          max_alternatives: 3,
+        },
+        faceAiAuth
+      );
+
+      setEnhancerResult(response?.enhanced_input ? response : fallbackResult);
+      setEnhancerError(null);
+    } catch {
+      setEnhancerResult(fallbackResult);
+      setEnhancerError("Live prompt enhancement is unavailable right now. Showing a smart local rewrite instead.");
+    } finally {
+      setEnhancerLoading(false);
+    }
+  }, [
+    prompt,
+    faceEnhancerLockedFields,
+    pricing?.planLabel,
+    pricing?.availableLabel,
+    pricing?.estimateLabel,
+    imageSafetyState,
+    faceAiAuth,
+  ]);
+
+  useEffect(() => {
+    if (!isReady || !isAuthed) return;
+    const timer = setTimeout(() => {
+      void refreshStudioTips();
+    }, 550);
+    return () => clearTimeout(timer);
+  }, [refreshStudioTips, isReady, isAuthed]);
 
   const openViewer = useCallback((uri: string, title?: string, index?: number) => {
     const u = cleanParam(uri);
@@ -1097,9 +1860,7 @@ export default function FaceStudioScreen() {
       setSourceImageAssetId(nextAssetId || null);
       setInlineStatus("Source image ready. Refreshing estimate…");
     } catch (e: any) {
-      const message =
-        cleanParam(e?.message) ||
-        "Image safety validation failed. Please try again with another photo.";
+      const message = normalizeFaceSafetyError(e);
 
       setImageSafetyState("error");
       setImageSafetyReason(message);
@@ -1120,16 +1881,20 @@ export default function FaceStudioScreen() {
       if (!url) return;
 
       if (selectedIdx != null && selectedIdx !== index) {
-        resetCreatorFlow();
+        resetCreatorFlow?.();
       }
 
       setSelectedIdx(index);
-      setFaceSelection({
+      setFaceSelection?.({
         sasUrl: url,
         artifactId: v.artifact_id ?? undefined,
         mediaAssetId: v.media_asset_id ?? undefined,
         variantIndex: index,
         gender,
+        ownerUserId: authUserId || undefined,
+        owner_user_id: authUserId || undefined,
+        userId: authUserId || undefined,
+        user_id: authUserId || undefined,
       } as any);
     },
     [uiLocked, variants, selectedIdx, resetCreatorFlow, setFaceSelection, gender]
@@ -1206,19 +1971,25 @@ export default function FaceStudioScreen() {
               ) as any
             );
             setFinalPricingMessage(pickFinalPricingMessage(last));
+            refreshPricingCaches();
             setInlineStatus("Done. Open the result or choose a variant below.");
-            setFaceSelection({
+            setFaceSelection?.({
               sasUrl: cleanParam(finalVars[0]?.image_url),
               artifactId: finalVars[0]?.artifact_id ?? undefined,
               mediaAssetId: finalVars[0]?.media_asset_id ?? undefined,
               variantIndex: 0,
               gender,
+              ownerUserId: authUserId || undefined,
+              owner_user_id: authUserId || undefined,
+              userId: authUserId || undefined,
+              user_id: authUserId || undefined,
             } as any);
             return;
           }
 
           if (stage === "failed") {
             setFinalPricingMessage(pickFinalPricingMessage(last));
+            refreshPricingCaches();
             setInlineStatus(String(last?.error ?? "Generate failed."));
             return;
           }
@@ -1252,7 +2023,7 @@ export default function FaceStudioScreen() {
         if (longRunningTimer) clearTimeout(longRunningTimer);
       }
     },
-    [updateJob, setFaceSelection, gender]
+    [updateJob, setFaceSelection, gender, refreshPricingCaches]
   );
 
   const generate = async () => {
@@ -1275,7 +2046,20 @@ export default function FaceStudioScreen() {
       return;
     }
 
-    resetCreatorFlow();
+    if (pricing?.insufficientBalance) {
+      setInlineStatus("You do not have enough credits for this face run. Top up or upgrade to continue.");
+      if (pricing?.topUpVisible) {
+        openTopUpScreen();
+        return;
+      }
+      if (pricing?.upgradeVisible) {
+        openUpgradeScreen();
+        return;
+      }
+      return;
+    }
+
+    resetCreatorFlow?.();
     closeViewer();
     setFinalPricingLabel(null);
     setFinalPricingState("estimated");
@@ -1335,26 +2119,46 @@ export default function FaceStudioScreen() {
       const v = vOverride ?? selectedVariant;
       const idx = typeof idxOverride === "number" ? idxOverride : selectedIdx;
       const imageUrl = cleanParam(v?.image_url);
-      const faceArtifactId = cleanParam(v?.artifact_id);
+      const faceArtifactId = resolveVariantHandoffId(v);
       if (!imageUrl) return;
-      if (!faceArtifactId) {
-        setInlineStatus("This face is not ready to continue yet. Please choose another saved face.");
-        return;
-      }
+
+      logFaceStudioFlow("proceedToAudio", {
+        authUserId,
+        selectedIdx,
+        idx,
+        imageUrl,
+        faceArtifactId,
+        face_media_asset_id: cleanParam(v?.media_asset_id),
+        face_profile_id: cleanParam(v?.face_profile_id),
+        gender,
+        aspectRatio,
+      });
 
       try {
         setUiLocked(true);
 
         if (selectedIdx != null && idx != null && idx !== selectedIdx) {
-          resetCreatorFlow();
+          resetCreatorFlow?.();
         }
 
         setSelectedIdx(idx ?? 0);
 
-        setFaceSelection({
+        setFaceSelection?.({
           sasUrl: imageUrl,
-          artifactId: v?.artifact_id ?? undefined,
+          imageUrl,
+          image_url: imageUrl,
+          face_image_url: imageUrl,
+          face_sas_url: imageUrl,
+          artifactId: faceArtifactId || undefined,
+          faceArtifactId: faceArtifactId || undefined,
+          artifact_id: faceArtifactId || undefined,
+          face_artifact_id: faceArtifactId || undefined,
           mediaAssetId: v?.media_asset_id ?? undefined,
+          faceMediaAssetId: v?.media_asset_id ?? undefined,
+          media_asset_id: v?.media_asset_id ?? undefined,
+          face_media_asset_id: v?.media_asset_id ?? undefined,
+          faceProfileId: v?.face_profile_id ?? undefined,
+          face_profile_id: v?.face_profile_id ?? undefined,
           variantIndex: idx ?? undefined,
           gender,
         } as any);
@@ -1365,11 +2169,20 @@ export default function FaceStudioScreen() {
 
         await saveCreateFlowContext({
           image_url: imageUrl,
+          face_image_url: imageUrl,
+          face_sas_url: imageUrl,
           face_artifact_id: faceArtifactId || undefined,
+          artifact_id: faceArtifactId || undefined,
           face_profile_id: v?.face_profile_id ?? undefined,
+          face_media_asset_id: v?.media_asset_id ?? undefined,
           media_asset_id: v?.media_asset_id ?? undefined,
           gender,
           aspect_ratio: aspectRatio,
+          stage: "face_done",
+          ownerUserId: authUserId || undefined,
+          owner_user_id: authUserId || undefined,
+          userId: authUserId || undefined,
+          user_id: authUserId || undefined,
         } as any);
 
         router.push({
@@ -1390,7 +2203,7 @@ export default function FaceStudioScreen() {
         setUiLocked(false);
       }
     },
-    [uiLocked, selectedVariant, selectedIdx, resetCreatorFlow, setFaceSelection, setFusionSettings, gender, aspectRatio]
+    [uiLocked, selectedVariant, selectedIdx, resetCreatorFlow, setFaceSelection, setFusionSettings, gender, aspectRatio, authUserId]
   );
 
   const openReadyJob = useCallback((job: StudioJobItem) => {
@@ -1443,10 +2256,42 @@ export default function FaceStudioScreen() {
     }
   }, [openPlanScreen, pricing?.availableLabel, pricing?.planLabel, pricing?.settlementLabel]);
 
+  const openTopUpScreen = useCallback(() => {
+    try {
+      router.push({
+        pathname: "/(tabs)/billing" as any,
+        params: {
+          intent: "top_up",
+          source: "face",
+          plan: pricing?.planLabel ?? "",
+          availability: pricing?.availableLabel ?? "",
+          settlement: pricing?.settlementLabel ?? "",
+        },
+      } as any);
+    } catch {
+      openPlanScreen();
+    }
+  }, [openPlanScreen, pricing?.availableLabel, pricing?.planLabel, pricing?.settlementLabel]);
+
   const waitingForEstimate =
     canGenerate &&
+    pricingPreviewEnabled &&
     !pricingReady &&
-    hasValidI2ISource;
+    (!pricingHasResponse || pricingQ.isFetching);
+
+  const onPrimaryAction = useCallback(() => {
+    if (pricing?.insufficientBalance) {
+      if (pricing?.topUpVisible) {
+        openTopUpScreen();
+        return;
+      }
+      if (pricing?.upgradeVisible) {
+        openUpgradeScreen();
+        return;
+      }
+    }
+    generate();
+  }, [generate, openTopUpScreen, openUpgradeScreen, pricing?.insufficientBalance, pricing?.topUpVisible, pricing?.upgradeVisible]);
 
   const generateDisabled =
     !canGenerate ||
@@ -1455,7 +2300,7 @@ export default function FaceStudioScreen() {
     uploadingSource ||
     mdLoading ||
     !!mdErr ||
-    !!pricing?.insufficientBalance ||
+    (!!pricing?.insufficientBalance && !pricing?.topUpVisible && !pricing?.upgradeVisible) ||
     (mode === "image-to-image" && imageSafetyState === "checking") ||
     (mode === "image-to-image" && imageSafetyState !== "passed");
 
@@ -1468,17 +2313,67 @@ export default function FaceStudioScreen() {
           ? imageSafetyReason || "Image safety validation failed. Please choose another photo."
           : mode === "image-to-image" && !sourceImageUrl && !sourceImageAssetId
             ? "Upload a source photo that passes content safety to unlock the estimate and enable Generate."
-            : canGenerate &&
-              !pricingReady &&
-              pricingQ.isFetching
-                ? "Refreshing estimate for your current setup…"
-                : canGenerate &&
-                  !pricingReady &&
-                  !creatingJob &&
-                  !mdLoading &&
-                  !mdErr
-                    ? "We’re still preparing the estimate for this edit. Please wait a moment."
-                    : null;
+            : canGenerate && !hasFacePricingAuth
+              ? "We’re still syncing your sign-in state for live pricing. Please wait a moment."
+              : canGenerate &&
+                pricingPreviewEnabled &&
+                !pricingReady &&
+                pricingQ.isFetching
+                  ? "Refreshing estimate for your current setup…"
+                  : canGenerate &&
+                    pricingPreviewEnabled &&
+                    !pricingReady &&
+                    !pricingHasResponse &&
+                    !creatingJob &&
+                    !mdLoading &&
+                    !mdErr
+                      ? "We’re still preparing the estimate for this edit. Please wait a moment."
+                      : canGenerate &&
+                        pricingPreviewEnabled &&
+                        !pricingReady &&
+                        !!pricingQ.error
+                        ? "We couldn’t load the live estimate. Please adjust the setup or try again."
+                        : null;
+
+  useEffect(() => {
+    console.log("[DF_FACE_PRICING_GATE]", {
+      hasFacePricingAuth,
+      pricingPreviewEligible,
+      pricingPreviewEnabled,
+      canGenerate,
+      pricingReady,
+      pricingHasResponse,
+      pricingFetching: pricingQ.isFetching,
+      pricingError: pricingQ.error ? String((pricingQ.error as any)?.message || pricingQ.error) : null,
+      mode,
+      hasPrompt: prompt.trim().length > 0,
+      gender,
+      zoneCode,
+      regionCode,
+      hasValidI2ISource,
+      sourceImageUrl: !!sourceImageUrl,
+      sourceImageAssetId: !!sourceImageAssetId,
+      imageSafetyState,
+    });
+  }, [
+    hasFacePricingAuth,
+    pricingPreviewEligible,
+    pricingPreviewEnabled,
+    canGenerate,
+    pricingReady,
+    pricingHasResponse,
+    pricingQ.isFetching,
+    pricingQ.error,
+    mode,
+    prompt,
+    gender,
+    zoneCode,
+    regionCode,
+    hasValidI2ISource,
+    sourceImageUrl,
+    sourceImageAssetId,
+    imageSafetyState,
+  ]);
 
   const imageSafetyBanner =
     mode !== "image-to-image"
@@ -1519,11 +2414,56 @@ export default function FaceStudioScreen() {
 
   const selectedVariantUri = cleanParam(selectedVariant?.image_url);
 
+
+const pricingDisplay = useResolvedPricingDisplay({ enabled: isReady && isAuthed });
+const livePlanLabel =
+  pricingDisplay.planName ||
+  pricing?.planLabel ||
+  undefined;
+const liveCreditBreakdownLabel =
+  pricingDisplay.creditDetailLabel ||
+  pricingDisplay.creditBreakdownLabel ||
+  undefined;
+const liveUsageLabel =
+  liveCreditBreakdownLabel ||
+  pricingDisplay.usageLabel ||
+  pricingDisplay.availableOutOfTotalLabel ||
+  pricingDisplay.readableAvailableLabel ||
+  pricing?.availableLabel ||
+  undefined;
+const liveAvailableLabel =
+  pricingDisplay.availableOutOfTotalLabel ||
+  pricingDisplay.readableAvailableLabel ||
+  pricing?.availableLabel ||
+  undefined;
+const liveBillingValueLabel =
+  pricingDisplay.billingValue ? `${pricingDisplay.billingValue} billing` : null;
+
+  const openHamburgerMenu = useCallback(() => {
+    const menuNonce = `${Date.now()}`;
+    router.push({
+      pathname: "/(tabs)/dashboard" as any,
+      params: {
+        openMenu: "1",
+        menu_nonce: menuNonce,
+        menu_source: "face",
+      } as any,
+    } as any);
+  }, []);
+
   return (
     <View style={{ flex: 1, backgroundColor: BG }}>
       <DFHeader
         subtitle="Face Studio"
-        onMenuPress={() => router.push("/(tabs)/dashboard" as any)}
+        planLabel={livePlanLabel}
+        usageLabel={liveUsageLabel}
+        availableCredits={pricingDisplay.availableCredits}
+        reservedCredits={pricingDisplay.reservedCredits}
+        usedCredits={pricingDisplay.usedCredits}
+        totalCredits={pricingDisplay.totalCredits}
+        displayKindOverride={pricingDisplay.displayKind}
+        billingValueLabelOverride={liveBillingValueLabel}
+        onMenuPress={openHamburgerMenu}
         onPressMeta={openPlanScreen}
       />
       <Stepper step={1} />
@@ -1535,15 +2475,38 @@ export default function FaceStudioScreen() {
         <View style={{ paddingHorizontal: 14, paddingTop: 10, gap: 10 }}>
           <PricingTopBar
             studioName="Face Studio"
-            estimate={finalPricingLabel ?? pricing?.estimateLabel ?? (pricingQ.isFetching ? "Refreshing estimate…" : "Enter prompt to see estimate")}
-            walletAfterRun={pricing?.availableLabel ?? undefined}
-            planName={pricing?.planLabel ?? undefined}
-            includedUsageLeft={pricing?.availableLabel ?? undefined}
-            availabilityLabel={pricing?.availableLabel ?? undefined}
-            settlementLabel={pricing?.settlementLabel ?? "Estimate shown before the run. Final pricing is confirmed after completion."}
-            entitlementLabel={pricing?.detailLabel ?? `${numVariants} variants${shotTypeCode ? ` • ${shotTypeLabel}` : ""}`}
+            estimate={visiblePrimaryEstimate}
+            primaryEstimateLabel={visiblePrimaryEstimate}
+            secondaryEstimateLabel={visibleSecondaryEstimate ?? undefined}
+            creditEstimateLabel={visibleCreditEstimate ?? undefined}
+            cashEstimateLabel={visibleCashEstimate ?? undefined}
+            walletAfterRun={pricingDisplay.creditDetailLabel ?? liveAvailableLabel ?? undefined}
+            planName={livePlanLabel ?? undefined}
+            includedUsageLeft={pricingDisplay.includedLabel ?? liveCreditBreakdownLabel ?? liveAvailableLabel ?? undefined}
+            availabilityLabel={pricingDisplay.creditDetailLabel ?? liveAvailableLabel ?? undefined}
+            settlementLabel={displayedSettlementLabel}
+            noteLabel={pricing?.settlementLabel ?? displayedSettlementLabel}
+            entitlementLabel={pricingDisplay.creditBreakdownLabel ?? displayedPricingDetail}
+            displayKind={isPostpaidPricing ? "postpaid" : "credits"}
+            billingValue={isPostpaidPricing ? ((pricing?.planLabel && String(pricing.planLabel).toLowerCase().includes("enterprise")) ? "Enterprise" : "Postpaid") : "Credits"}
+            canRun={pricing?.insufficientBalance ? false : null}
+            insufficientTitle="Not enough available credits"
+            insufficientMessage="You don’t have enough available credits for this run."
+            onPressTopUp={pricing?.topUpVisible ? openTopUpScreen : undefined}
+            onPressUpgrade={pricing?.upgradeVisible ? openUpgradeScreen : undefined}
             onPressBreakdown={undefined}
             onPressManagePlan={openPlanScreen}
+          />
+
+          <StudioTipsRail
+            title="Studio coach"
+            subtitle="Rolling tips based on your current Face setup."
+            tips={studioTips}
+            loading={tipsLoading}
+            error={tipsError}
+            onRefresh={() => {
+              void refreshStudioTips();
+            }}
           />
 
           <GlassCard>
@@ -1570,77 +2533,140 @@ export default function FaceStudioScreen() {
               subtitle="Use compact controls to shape location, framing, and intent."
             />
 
+            <View style={{ marginTop: 12, gap: creativeGridGap }}>
+              <View
+                style={{
+                  flexDirection: creativeSingleColumn ? "column" : "row",
+                  gap: creativeGridGap,
+                }}
+              >
+                <SelectorChip
+                  label="Country"
+                  value={COUNTRY_LABEL}
+                  disabled
+                  flex={creativeSingleColumn ? undefined : 0.78}
+                  width={creativeSingleColumn ? "100%" : undefined}
+                  emphasis="fixed"
+                />
+                <SelectorChip
+                  label="Region"
+                  value={mdLoading ? "Loading…" : regionLabel}
+                  onPress={() => setOpenZone(true)}
+                  disabled={uiLocked || mdLoading || zoneOptions.length === 0}
+                  flex={creativeSingleColumn ? undefined : 1.22}
+                  width={creativeSingleColumn ? "100%" : undefined}
+                  emphasis="wide"
+                />
+              </View>
+
+              <View
+                style={{
+                  flexDirection: creativeSingleColumn ? "column" : "row",
+                  gap: creativeGridGap,
+                }}
+              >
+                <SelectorChip
+                  label="State"
+                  value={mdLoading ? "Loading…" : stateLabel}
+                  onPress={() => setOpenRegion(true)}
+                  disabled={uiLocked || mdLoading || regionOptions.length === 0}
+                  flex={creativeSingleColumn ? undefined : 1.18}
+                  width={creativeSingleColumn ? "100%" : undefined}
+                  emphasis="wide"
+                />
+                <SelectorChip
+                  label="Image Type"
+                  value={shotTypeLabel}
+                  onPress={() => setOpenShotType(true)}
+                  disabled={uiLocked}
+                  flex={creativeSingleColumn ? undefined : 0.82}
+                  width={creativeSingleColumn ? "100%" : undefined}
+                />
+              </View>
+
+              <View
+                style={{
+                  flexDirection: creativeSingleColumn ? "column" : "row",
+                  gap: creativeGridGap,
+                }}
+              >
+                <SelectorChip
+                  label="Use Case"
+                  value={mdLoading ? "Loading…" : useCaseLabel}
+                  onPress={() => setOpenUseCase(true)}
+                  disabled={uiLocked || mdLoading || useCaseOptions.length === 0}
+                  flex={1}
+                  width={creativeSingleColumn ? "100%" : undefined}
+                />
+                <SelectorChip
+                  label="Context"
+                  value={mdLoading ? "Loading…" : contextLabel}
+                  onPress={() => setOpenContext(true)}
+                  disabled={uiLocked || mdLoading || contextOptions.length === 0}
+                  flex={1}
+                  width={creativeSingleColumn ? "100%" : undefined}
+                />
+              </View>
+            </View>
+
             <View
               style={{
                 marginTop: 12,
-                flexDirection: "row",
-                flexWrap: "wrap",
-                justifyContent: "space-between",
-                gap: 10,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: "rgba(255,255,255,0.10)",
+                backgroundColor: "rgba(255,255,255,0.045)",
+                padding: 12,
               }}
             >
-              <SelectorChip label="Country" value={COUNTRY_LABEL} disabled />
-              <SelectorChip
-                label="Region"
-                value={mdLoading ? "Loading…" : regionLabel}
-                onPress={() => setOpenZone(true)}
-                disabled={uiLocked || mdLoading || zoneOptions.length === 0}
-              />
-              <SelectorChip
-                label="State"
-                value={mdLoading ? "Loading…" : stateLabel}
-                onPress={() => setOpenRegion(true)}
-                disabled={uiLocked || mdLoading || regionOptions.length === 0}
-              />
-              <SelectorChip
-                label="Image Type"
-                value={shotTypeLabel}
-                onPress={() => setOpenShotType(true)}
-                disabled={uiLocked}
-              />
-              <SelectorChip
-                label="Use Case"
-                value={mdLoading ? "Loading…" : useCaseLabel}
-                onPress={() => setOpenUseCase(true)}
-                disabled={uiLocked || mdLoading || useCaseOptions.length === 0}
-              />
-              <SelectorChip
-                label="Context"
-                value={mdLoading ? "Loading…" : contextLabel}
-                onPress={() => setOpenContext(true)}
-                disabled={uiLocked || mdLoading || contextOptions.length === 0}
-              />
-            </View>
+              <View
+                style={{
+                  flexDirection: creativeAspectInline ? "row" : "column",
+                  alignItems: creativeAspectInline ? "center" : "stretch",
+                  justifyContent: "space-between",
+                  gap: 10,
+                }}
+              >
+                <View style={{ flex: creativeAspectInline ? 1 : undefined }}>
+                  <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>Aspect Ratio</Text>
+                  <Text
+                    numberOfLines={creativeAspectInline ? 2 : undefined}
+                    style={{ color: DF.muted, fontWeight: "700", marginTop: 4, fontSize: 12, lineHeight: 15 }}
+                  >
+                    Pick the frame to carry into Audio and Fusion.
+                  </Text>
+                </View>
 
-            <View style={{ marginTop: 12 }}>
-              <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>Aspect Ratio</Text>
-              <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 4, fontSize: 12 }}>
-                Pick the frame you want to carry forward into Audio and Fusion.
-              </Text>
-
-              <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
-                {(["9:16", "1:1", "16:9"] as const).map((ratio) => {
-                  const active = aspectRatio === ratio;
-                  return (
-                    <Pressable
-                      key={ratio}
-                      onPress={() => setAspectRatio(ratio)}
-                      disabled={uiLocked}
-                      style={{
-                        flex: 1,
-                        borderRadius: 14,
-                        paddingVertical: 12,
-                        alignItems: "center",
-                        borderWidth: 1,
-                        borderColor: active ? "rgba(248,184,72,0.40)" : "rgba(255,255,255,0.10)",
-                        backgroundColor: active ? "rgba(232,152,56,0.18)" : "rgba(255,255,255,0.05)",
-                        opacity: uiLocked ? 0.75 : 1,
-                      }}
-                    >
-                      <Text style={{ color: active ? "rgba(248,232,136,1)" : DF.text, fontWeight: "900" }}>{ratio}</Text>
-                    </Pressable>
-                  );
-                })}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    gap: 8,
+                    width: creativeAspectInline ? Math.min(186, Math.max(160, screenWidth * 0.43)) : "100%",
+                  }}
+                >
+                  {(["9:16", "1:1", "16:9"] as const).map((ratio) => {
+                    const active = aspectRatio === ratio;
+                    return (
+                      <Pressable
+                        key={ratio}
+                        onPress={() => setAspectRatio(ratio)}
+                        disabled={uiLocked}
+                        style={{
+                          flex: 1,
+                          borderRadius: 12,
+                          paddingVertical: 10,
+                          alignItems: "center",
+                          borderWidth: 1,
+                          borderColor: active ? "rgba(248,184,72,0.42)" : "rgba(255,255,255,0.10)",
+                          backgroundColor: active ? "rgba(232,152,56,0.18)" : "rgba(255,255,255,0.05)",
+                          opacity: uiLocked ? 0.75 : 1,
+                        }}
+                      >
+                        <Text style={{ color: active ? "rgba(248,232,136,1)" : DF.text, fontWeight: "900", fontSize: 12 }}>{ratio}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
               </View>
             </View>
 
@@ -1689,6 +2715,29 @@ export default function FaceStudioScreen() {
                 mode === "text-to-image"
                   ? "Describe the look, vibe, styling, lighting, and scene."
                   : "Keep the same person, then describe what should change."
+              }
+              right={
+                <Pressable
+                  onPress={() => {
+                    void requestPromptEnhancement();
+                  }}
+                  disabled={uiLocked || creatingJob || !prompt.trim()}
+                  style={{
+                    height: 36,
+                    borderRadius: 12,
+                    paddingHorizontal: 12,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderWidth: 1,
+                    borderColor: "rgba(248,184,72,0.28)",
+                    backgroundColor: prompt.trim() ? "rgba(232,152,56,0.12)" : "rgba(255,255,255,0.05)",
+                    opacity: uiLocked || creatingJob || !prompt.trim() ? 0.6 : 1,
+                  }}
+                >
+                  <Text style={{ color: prompt.trim() ? "rgba(248,232,136,0.95)" : DF.muted, fontWeight: "900", fontSize: 12 }}>
+                    Enhance
+                  </Text>
+                </Pressable>
               }
             />
 
@@ -1843,7 +2892,8 @@ export default function FaceStudioScreen() {
                   <Image
                     source={{ uri: pickedUri ?? sourceImageUrl ?? "" }}
                     style={{ width: "100%", height: "100%" }}
-                    contentFit="contain"
+                    cachePolicy="none"
+              contentFit="contain"
                     contentPosition="center"
                   />
                 </View>
@@ -1879,6 +2929,18 @@ export default function FaceStudioScreen() {
             </GlassCard>
           )}
 
+          {!!pricing && (
+            <GlassCard style={{ padding: 12 }}>
+              <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>Estimate</Text>
+              <Text style={{ color: DF.text, fontWeight: "800", marginTop: 8, fontSize: 12 }}>
+                {isPostpaidPricing ? "Estimated bill" : "Credits charged"}: {isPostpaidPricing ? (visibleCashEstimate ?? "—") : (visibleCreditEstimate ?? "—")}
+              </Text>
+              <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 6, fontSize: 12 }}>
+                {pricing.settlementLabel}
+              </Text>
+            </GlassCard>
+          )}
+
           {!!pricing?.insufficientBalance && (
             <GlassCard
               style={{
@@ -1889,27 +2951,46 @@ export default function FaceStudioScreen() {
             >
               <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>Not enough credits</Text>
               <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6, fontSize: 12 }}>
-                This face run needs more available usage than your current included balance or wallet supports.
+                {isPostpaidPricing ? `Estimated bill: ${visibleCashEstimate ?? "—"}` : `Credits charged: ${visibleCreditEstimate ?? "—"}`}
               </Text>
-              <Pressable
-                onPress={openUpgradeScreen}
-                style={{
-                  marginTop: 10,
-                  borderRadius: 14,
-                  paddingVertical: 10,
-                  alignItems: "center",
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.12)",
-                  backgroundColor: "rgba(255,255,255,0.06)",
-                }}
-              >
-                <Text style={{ color: DF.text, fontWeight: "900" }}>Upgrade or Top Up</Text>
-              </Pressable>
+              <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6, fontSize: 12 }}>
+                {pricing?.settlementLabel ?? "Not enough available credits for this run."}
+              </Text>
+              <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+                <Pressable
+                  onPress={openTopUpScreen}
+                  style={{
+                    flex: 1,
+                    borderRadius: 14,
+                    paddingVertical: 10,
+                    alignItems: "center",
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.12)",
+                    backgroundColor: "rgba(255,255,255,0.06)",
+                  }}
+                >
+                  <Text style={{ color: DF.text, fontWeight: "900" }}>Top Up</Text>
+                </Pressable>
+                <Pressable
+                  onPress={openUpgradeScreen}
+                  style={{
+                    flex: 1,
+                    borderRadius: 14,
+                    paddingVertical: 10,
+                    alignItems: "center",
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.12)",
+                    backgroundColor: "rgba(255,255,255,0.06)",
+                  }}
+                >
+                  <Text style={{ color: DF.text, fontWeight: "900" }}>Upgrade</Text>
+                </Pressable>
+              </View>
             </GlassCard>
           )}
 
           <Pressable
-            onPress={generate}
+            onPress={onPrimaryAction}
             disabled={generateDisabled}
             style={{
               borderRadius: 18,
@@ -1933,7 +3014,7 @@ export default function FaceStudioScreen() {
               </View>
             ) : (
               <Text style={{ color: DF.text, fontWeight: "900", fontSize: 15 }}>
-                {pricing?.estimateLabel ? `Create Face — ${pricing.estimateLabel}` : "Create Face"}
+                {pricing?.insufficientBalance ? (pricing?.ctaLabel ?? (pricing?.topUpVisible ? "Top up credits" : pricing?.upgradeVisible ? "Upgrade plan" : "Not enough credits")) : (displayedEstimateLabel ? `Create Face — ${displayedEstimateLabel}` : "Create Face")}
               </Text>
             )}
           </Pressable>
@@ -2020,7 +3101,8 @@ export default function FaceStudioScreen() {
                             <Image
                               source={{ uri }}
                               style={{ width: "100%", height: "100%" }}
-                              contentFit="contain"
+                              cachePolicy="none"
+              contentFit="contain"
                               contentPosition="center"
                               transition={180}
                             />
@@ -2088,7 +3170,7 @@ export default function FaceStudioScreen() {
               </ScrollView>
 
               <View style={{ padding: 14, paddingTop: 10 }}>
-                {selectedIdx != null && !cleanParam(selectedVariant?.artifact_id) && (
+                {selectedIdx != null && !resolveVariantHandoffId(selectedVariant) && (
                   <View
                     style={{
                       marginBottom: 10,
@@ -2101,13 +3183,13 @@ export default function FaceStudioScreen() {
                   >
                     <Text style={{ color: DF.text, fontWeight: "900", fontSize: 12 }}>Face artifact required</Text>
                     <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6, fontSize: 12 }}>
-                      This face is ready to preview, but it is not ready to continue yet. Please choose another saved face.
+                      This face preview is ready. You can continue to Audio now. A saved artifact is optional for Audio and recommended for later Fusion steps.
                     </Text>
                   </View>
                 )}
                 <Pressable
                   onPress={() => proceedToAudio()}
-                  disabled={selectedIdx == null || uiLocked || !cleanParam(selectedVariant?.artifact_id)}
+                  disabled={selectedIdx == null || uiLocked || !cleanParam(selectedVariant?.image_url)}
                   style={{
                     height: 52,
                     borderRadius: 14,
@@ -2116,7 +3198,7 @@ export default function FaceStudioScreen() {
                     borderWidth: 1,
                     borderColor: "rgba(248,184,72,0.35)",
                     backgroundColor: selectedIdx != null ? "rgba(232,152,56,0.22)" : "rgba(255,255,255,0.06)",
-                    opacity: uiLocked || !cleanParam(selectedVariant?.artifact_id) ? 0.85 : 1,
+                    opacity: uiLocked || !cleanParam(selectedVariant?.image_url) ? 0.85 : 1,
                   }}
                 >
                   <Text style={{ color: DF.text, fontWeight: "900" }}>
@@ -2126,7 +3208,7 @@ export default function FaceStudioScreen() {
 
                 <Pressable
                   onPress={() => setWorkflowSummaryOpen(true)}
-                  disabled={selectedIdx == null || uiLocked || !cleanParam(selectedVariant?.artifact_id)}
+                  disabled={selectedIdx == null || uiLocked || !cleanParam(selectedVariant?.image_url)}
                   style={{
                     marginTop: 10,
                     height: 48,
@@ -2279,7 +3361,8 @@ export default function FaceStudioScreen() {
                   <Image
                     source={{ uri: selectedVariantUri }}
                     style={{ width: "100%", height: 320 }}
-                    contentFit="contain"
+                    cachePolicy="none"
+              contentFit="contain"
                   />
                 </View>
               )}
@@ -2299,9 +3382,14 @@ export default function FaceStudioScreen() {
                 <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>• Selected face image saved for this workflow</Text>
                 <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>• Plan: {pricing?.planLabel ?? "Creator / Pro"}</Text>
                 {!!(finalPricingLabel ?? pricing?.estimateLabel) && (
-                  <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>
-                    • Pricing: {finalPricingLabel ?? pricing?.estimateLabel}
-                  </Text>
+                  <>
+                    <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>
+                      • {isPostpaidPricing ? "Estimated bill" : "Credits charged"}: {isPostpaidPricing ? (visibleCashEstimate ?? "—") : (visibleCreditEstimate ?? "—")}
+                    </Text>
+                    <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>
+                      • Settlement: {pricing?.settlementLabel ?? "Estimate shown before the run. Final pricing is confirmed after completion."}
+                    </Text>
+                  </>
                 )}
                 <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>
                   • Next step available: Audio Studio voice creation
@@ -2312,8 +3400,8 @@ export default function FaceStudioScreen() {
                 <RunReceiptCard
                   pricing={{ ...(pricing as any), stage: finalPricingState as any, reservationId: pricingConfirmation?.quote_id } as any}
                   pricingSummary={{
-                    estimateLabel: pricing?.estimateLabel,
-                    finalLabel: finalPricingLabel ?? pricing?.estimateLabel,
+                    estimateLabel: visiblePrimaryEstimate,
+                    finalLabel: visiblePrimaryEstimate,
                     message:
                       finalPricingMessage ??
                       (pricing?.preview
@@ -2368,6 +3456,22 @@ export default function FaceStudioScreen() {
           </ScrollView>
         </View>
       </Modal>
+
+      <PromptEnhancerSheet
+        visible={enhancerOpen}
+        loading={enhancerLoading}
+        error={enhancerError}
+        result={enhancerResult}
+        onClose={() => setEnhancerOpen(false)}
+        onRefresh={() => {
+          void requestPromptEnhancement();
+        }}
+        onApply={(nextText) => {
+          setPrompt(nextText);
+          setEnhancerOpen(false);
+          setInlineStatus("Enhanced prompt applied. Review it and generate when ready.");
+        }}
+      />
 
       <GlobalJobsTray
         jobs={jobs}

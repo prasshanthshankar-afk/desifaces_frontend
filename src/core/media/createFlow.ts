@@ -18,10 +18,17 @@ export type CreateFlowContext = {
   audio_duration_ms?: number;
 
   updated_at?: number;
+  owner_key?: string;
 };
 
 const KEY = "df_create_flow_ctx_v1";
 let mem: CreateFlowContext | null = null;
+
+
+function normalizeOwnerKey(value: unknown): string | undefined {
+  const s = String(value ?? "").trim().toLowerCase();
+  return s || undefined;
+}
 
 async function getAsyncStorage(): Promise<any | null> {
   try {
@@ -42,17 +49,23 @@ function compactDefined<T extends Record<string, any>>(obj: T): Partial<T> {
   return out;
 }
 
-export async function saveCreateFlowContext(ctx: CreateFlowContext) {
-  const next = compactDefined(ctx);
+export async function saveCreateFlowContext(ctx: CreateFlowContext, ownerKey?: string) {
+  const normalizedOwnerKey = normalizeOwnerKey(ownerKey ?? ctx.owner_key ?? (ctx as any).ownerUserId ?? (ctx as any).owner_user_id ?? (ctx as any).userId ?? (ctx as any).user_id);
+  const next = compactDefined({ ...ctx, owner_key: normalizedOwnerKey });
 
+  const loaded = await loadCreateFlowContext(normalizedOwnerKey).catch(() => null);
   const base =
     mem ||
-    (await loadCreateFlowContext().catch(() => null)) ||
+    loaded ||
     {};
 
+  const baseOwnerKey = normalizeOwnerKey((base as CreateFlowContext)?.owner_key);
+  const shouldResetBase = !!normalizedOwnerKey && !!baseOwnerKey && baseOwnerKey !== normalizedOwnerKey;
+
   const payload: CreateFlowContext = {
-    ...(base as CreateFlowContext),
+    ...((shouldResetBase ? {} : base) as CreateFlowContext),
     ...next,
+    owner_key: normalizedOwnerKey,
     updated_at: Date.now(),
   };
 
@@ -68,8 +81,16 @@ export async function saveCreateFlowContext(ctx: CreateFlowContext) {
   }
 }
 
-export async function loadCreateFlowContext(): Promise<CreateFlowContext | null> {
-  if (mem) return mem;
+export async function loadCreateFlowContext(ownerKey?: string): Promise<CreateFlowContext | null> {
+  const normalizedOwnerKey = normalizeOwnerKey(ownerKey);
+
+  if (mem) {
+    const memOwnerKey = normalizeOwnerKey(mem.owner_key);
+    if (!normalizedOwnerKey || !memOwnerKey || memOwnerKey === normalizedOwnerKey) {
+      return mem;
+    }
+    return null;
+  }
 
   const AS = await getAsyncStorage();
   if (!AS) return null;
@@ -78,11 +99,27 @@ export async function loadCreateFlowContext(): Promise<CreateFlowContext | null>
     const raw = await AS.getItem(KEY);
     if (!raw) return null;
     const j = JSON.parse(raw);
-    mem = j;
-    return j;
+    const payload = j as CreateFlowContext;
+    const payloadOwnerKey = normalizeOwnerKey(payload?.owner_key);
+    if (normalizedOwnerKey && payloadOwnerKey && payloadOwnerKey !== normalizedOwnerKey) {
+      return null;
+    }
+    mem = payload;
+    return payload;
   } catch {
     return null;
   }
+}
+
+export async function clearCreateFlowContextForOwnerMismatch(ownerKey?: string) {
+  const normalizedOwnerKey = normalizeOwnerKey(ownerKey);
+  if (!normalizedOwnerKey) return;
+
+  const current = mem || (await loadCreateFlowContext().catch(() => null));
+  const currentOwnerKey = normalizeOwnerKey(current?.owner_key);
+  if (!currentOwnerKey || currentOwnerKey === normalizedOwnerKey) return;
+
+  await clearCreateFlowContext();
 }
 
 export async function clearCreateFlowContext() {

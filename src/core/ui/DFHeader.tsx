@@ -1,14 +1,12 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import { View, Text, StyleSheet, Platform, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 
+import { NotificationBell } from "../../components/notifications/NotificationBell";
 import { DF, Gradients } from "../theme/colors";
-import {
-  useAccountPricingSnapshot,
-  isMeaningfulPricingLabel,
-} from "../pricing/useAccountPricingSnapshot";
+import { useResolvedPricingDisplay } from "../pricing/resolvePricingDisplay";
 import { useAuth } from "../auth/AuthContext";
 
 type StatusTone = "green" | "amber" | "red";
@@ -51,13 +49,6 @@ function clamp01(n: number) {
   return Math.max(0, Math.min(1, n));
 }
 
-function looksLikeBareNumber(value: string | null | undefined) {
-  if (!value) return false;
-  const s = String(value).trim();
-  return /^-?\d+(?:\.\d+)?$/.test(s.replace(/,/g, ""));
-}
-
-
 function cleanText(value: unknown): string | null {
   if (typeof value !== "string" && typeof value !== "number") return null;
 
@@ -65,14 +56,6 @@ function cleanText(value: unknown): string | null {
   if (!text) return null;
   if (/^function\b/i.test(text)) return null;
   return text;
-}
-
-function pickText(...values: unknown[]): string | null {
-  for (const value of values) {
-    const text = cleanText(value);
-    if (text) return text;
-  }
-  return null;
 }
 
 function getNested(obj: any, path: string): unknown {
@@ -88,6 +71,11 @@ function pickFromPaths(obj: any, paths: string[]): string | null {
     if (text) return text;
   }
   return null;
+}
+
+function formatWhole(value: number | null | undefined, fallback = "0") {
+  if (value == null || !Number.isFinite(value)) return fallback;
+  return `${Math.max(0, Math.round(value))}`;
 }
 
 function resolveDisplayName(auth: any): string | null {
@@ -222,6 +210,14 @@ export default function DFHeader({
   statusTone = "green",
   onMenuPress,
   onPressMeta,
+  availableCredits,
+  reservedCredits,
+  usedCredits,
+  totalCredits,
+  displayKindOverride,
+  billingValueLabelOverride,
+  scheduledChangeLabel,
+  scheduledChangeCompactLabel,
 }: {
   subtitle?: string;
   rightPill?: string;
@@ -230,92 +226,235 @@ export default function DFHeader({
   statusTone?: StatusTone;
   onMenuPress?: () => void;
   onPressMeta?: () => void;
+  availableCredits?: number | null;
+  reservedCredits?: number | null;
+  usedCredits?: number | null;
+  totalCredits?: number | null;
+  displayKindOverride?: "credits" | "postpaid";
+  billingValueLabelOverride?: string | null;
+  scheduledChangeLabel?: string | null;
+  scheduledChangeCompactLabel?: string | null;
 }) {
-  const snapshot = useAccountPricingSnapshot() as any;
   const auth = useAuth() as any;
+  const isAuthReady = Boolean(auth?.isReady);
+  const isAuthed = Boolean(auth?.isAuthed && auth?.token);
+  const shouldShowNotificationBell = isAuthReady && isAuthed;
 
-  const planName =
-    cleanText(snapshot?.planName) ||
-    (isMeaningfulPricingLabel(planLabel) ? String(planLabel).trim() : null);
+  const resolved = useResolvedPricingDisplay({
+    fallbackPlanName: cleanText(planLabel) ?? undefined,
+  });
 
   const displayName = resolveDisplayName(auth);
 
-  const planAndUser = [planName, displayName].filter(Boolean).join(" • ") || null;
+  const effectivePlanName =
+    resolved.planName || cleanText(planLabel) || "Loading";
 
-  const availableCredits = firstNumericValue(
-    snapshot?.availableCredits,
-    snapshot?.available_credits,
-    snapshot?.pricingSummary?.available_credits,
-    snapshot?.usageSummary?.available_credits,
-    snapshot?.gauges?.fuel?.credits_remaining,
-    snapshot?.availableLabel
-  );
+  const effectiveDisplayKind = displayKindOverride || resolved.displayKind;
 
-  const reservedCredits = firstNumericValue(
-    snapshot?.reservedCredits,
-    snapshot?.reserved_credits,
-    snapshot?.pricingSummary?.reserved_credits,
-    snapshot?.usageSummary?.reserved_credits
-  );
+  const explicitAvailable = firstNumericValue(availableCredits);
+  const explicitReserved = firstNumericValue(reservedCredits);
+  const explicitUsed = firstNumericValue(usedCredits);
+  const explicitTotal = firstNumericValue(totalCredits);
 
-  const usedCredits = firstNumericValue(
-    snapshot?.usedCredits,
-    snapshot?.used_credits,
-    snapshot?.usageSummary?.used_credits,
-    snapshot?.usedLabel
-  );
+  const hasExplicitCredits =
+    explicitAvailable != null ||
+    explicitReserved != null ||
+    explicitUsed != null ||
+    explicitTotal != null;
 
-  const totalCredits = firstNumericValue(
-    snapshot?.totalCredits,
-    snapshot?.total_credits,
-    snapshot?.pricingSummary?.total_credits,
-    snapshot?.usageSummary?.total_credits,
-    snapshot?.includedCredits,
-    snapshot?.included_credits,
-    snapshot?.usageSummary?.included_credits,
-    (availableCredits ?? 0) + (reservedCredits ?? 0) + (usedCredits ?? 0) > 0
-      ? (availableCredits ?? 0) + (reservedCredits ?? 0) + (usedCredits ?? 0)
-      : null
-  );
+  const hasResolvedCredits =
+    resolved.availableCredits != null ||
+    resolved.reservedCredits != null ||
+    resolved.usedCredits != null ||
+    resolved.totalCredits != null;
 
-  const cleanAvailableLabel = cleanText(snapshot?.availableLabel);
-  const readableAvailableLabel =
-    cleanAvailableLabel && !looksLikeBareNumber(cleanAvailableLabel)
-      ? cleanAvailableLabel
+  const shouldUseExplicitCredits = hasExplicitCredits && !hasResolvedCredits;
+
+  const effectiveAvailableCredits = shouldUseExplicitCredits
+    ? Math.max(0, explicitAvailable ?? 0)
+    : Math.max(0, resolved.availableCredits ?? explicitAvailable ?? 0);
+
+  const effectiveReservedCredits = shouldUseExplicitCredits
+    ? Math.max(0, explicitReserved ?? 0)
+    : Math.max(0, resolved.reservedCredits ?? explicitReserved ?? 0);
+
+  const effectiveUsedCredits = shouldUseExplicitCredits
+    ? Math.max(0, explicitUsed ?? 0)
+    : Math.max(0, resolved.usedCredits ?? explicitUsed ?? 0);
+
+  const effectiveTotalCredits =
+    resolved.totalCredits != null && resolved.totalCredits > 0
+      ? resolved.totalCredits
+      : shouldUseExplicitCredits && explicitTotal != null && explicitTotal > 0
+        ? explicitTotal
+        : null;
+
+  const defaultPlanAndUser =
+    [effectivePlanName, displayName].filter(Boolean).join(" • ") || null;
+
+  const compactCreditHeaderLabel =
+    effectiveDisplayKind === "credits" &&
+    (effectiveAvailableCredits != null || effectiveReservedCredits != null)
+      ? `${formatWhole(effectiveAvailableCredits, "0")} available • ${formatWhole(
+          effectiveReservedCredits,
+          "0"
+        )} reserved`
       : null;
-  const cleanUsageLabel = isMeaningfulPricingLabel(usageLabel)
-    ? String(usageLabel).trim()
-    : null;
+
+  const compactUsageText =
+    effectiveDisplayKind === "postpaid"
+      ? resolved.usageLabel ||
+        resolved.compactUsageLabel ||
+        cleanText(usageLabel) ||
+        null
+      : compactCreditHeaderLabel ||
+        resolved.readableAvailableLabel ||
+        resolved.compactUsageLabel ||
+        cleanText(usageLabel) ||
+        null;
 
   const batteryMetrics = useMemo(() => {
-    if (totalCredits == null || totalCredits <= 0 || availableCredits == null) {
-      return null;
-    }
+    if (effectiveDisplayKind !== "credits") return null;
 
-    const safeReserved = Math.max(0, reservedCredits ?? 0);
-    const safeAvailable = Math.max(0, availableCredits);
-    const availablePct = clamp01(safeAvailable / totalCredits);
-    const reservedPct = clamp01(safeReserved / totalCredits);
-    const pctLeft = Math.round(availablePct * 100);
+    const safeAvailable = Math.max(0, effectiveAvailableCredits ?? 0);
+    const total = effectiveTotalCredits;
+
+    const availablePct =
+      total && total > 0
+        ? clamp01(safeAvailable / total)
+        : clamp01(1 - (resolved.usagePercent ?? 0));
 
     const chargeColor =
-      pctLeft <= 10 ? "#FF453A" : pctLeft <= 25 ? "#FFD60A" : "#32D74B";
-
-    const roundedAvailable = Math.round(safeAvailable);
+      availablePct < 0.2
+        ? "#FF453A"
+        : availablePct < 0.5
+          ? "#FFD60A"
+          : "#32D74B";
 
     return {
       availablePct,
-      reservedPct: Math.min(reservedPct, Math.max(0, 1 - availablePct)),
-      reservedOffsetPct: availablePct,
       chargeColor,
-      valueLabel: readableAvailableLabel || `${roundedAvailable} credits available`,
+      valueLabel:
+        compactUsageText ||
+        (total && total > 0
+          ? `${formatWhole(safeAvailable, "0")} / ${formatWhole(
+              total,
+              "0"
+            )} credits available`
+          : `${formatWhole(safeAvailable, "0")} credits available`),
     };
-  }, [totalCredits, availableCredits, reservedCredits, readableAvailableLabel]);
+  }, [
+    effectiveDisplayKind,
+    effectiveAvailableCredits,
+    effectiveTotalCredits,
+    resolved.usagePercent,
+    compactUsageText,
+  ]);
 
-  const compactUsageText =
-    readableAvailableLabel ||
-    (availableCredits != null ? `${Math.round(Math.max(0, availableCredits))} credits available` : null) ||
-    cleanUsageLabel;
+  const postpaidMetrics = useMemo(() => {
+    if (effectiveDisplayKind !== "postpaid") return null;
+
+    const safeUsed = Math.max(0, effectiveUsedCredits ?? 0);
+    const safeReserved = Math.max(0, effectiveReservedCredits ?? 0);
+    const totalActivity = safeUsed + safeReserved;
+
+    const usedPct = totalActivity > 0 ? clamp01(safeUsed / totalActivity) : 0.72;
+    const reservedPct =
+      totalActivity > 0 ? clamp01(safeReserved / totalActivity) : 0;
+
+    return {
+      usedPct,
+      reservedPct,
+      reservedOffsetPct: usedPct,
+      valueLabel:
+        cleanText(billingValueLabelOverride) ||
+        (resolved.billingValue ? `${resolved.billingValue} billing` : "Postpaid billing"),
+      caption:
+        compactUsageText ||
+        (totalActivity > 0
+          ? `${formatWhole(safeUsed, "0")} used • ${formatWhole(
+              safeReserved,
+              "0"
+            )} reserved`
+          : "Usage billed after completion"),
+    };
+  }, [
+    effectiveDisplayKind,
+    effectiveUsedCredits,
+    effectiveReservedCredits,
+    resolved.billingValue,
+    billingValueLabelOverride,
+    compactUsageText,
+  ]);
+
+  const headerTopLabel =
+    cleanText(scheduledChangeLabel) || defaultPlanAndUser;
+
+  const headerBottomLabel =
+    cleanText(scheduledChangeCompactLabel) ||
+    compactUsageText ||
+    batteryMetrics?.valueLabel ||
+    postpaidMetrics?.valueLabel ||
+    null;
+
+  useEffect(() => {
+    if (!__DEV__) return;
+    const screenTag = cleanText(subtitle) || cleanText(rightPill) || "header";
+    try {
+      console.log(
+        `[DF_PRICING][DFHeader:${screenTag}]`,
+        JSON.stringify(
+          {
+            resolved: {
+              source: resolved.source,
+              accountTruthSource: (resolved as any).accountTruthSource ?? null,
+              planName: resolved.planName,
+              displayKind: resolved.displayKind,
+              settlementKind: resolved.settlementKind,
+              availableCredits: resolved.availableCredits,
+              reservedCredits: resolved.reservedCredits,
+              usedCredits: resolved.usedCredits,
+              totalCredits: resolved.totalCredits,
+              usageLabel: resolved.usageLabel,
+            },
+            rendered: {
+              effectivePlanName,
+              effectiveDisplayKind,
+              effectiveAvailableCredits,
+              effectiveReservedCredits,
+              effectiveUsedCredits,
+              effectiveTotalCredits,
+              compactUsageText,
+              shouldUseExplicitCredits,
+            },
+          },
+          null,
+          2
+        )
+      );
+    } catch {}
+  }, [
+    subtitle,
+    rightPill,
+    resolved.source,
+    (resolved as any).accountTruthSource,
+    resolved.planName,
+    resolved.displayKind,
+    resolved.settlementKind,
+    resolved.availableCredits,
+    resolved.reservedCredits,
+    resolved.usedCredits,
+    resolved.totalCredits,
+    resolved.usageLabel,
+    effectivePlanName,
+    effectiveDisplayKind,
+    effectiveAvailableCredits,
+    effectiveReservedCredits,
+    effectiveUsedCredits,
+    effectiveTotalCredits,
+    compactUsageText,
+    shouldUseExplicitCredits,
+  ]);
 
   const fallbackStatusColor =
     statusTone === "red"
@@ -324,7 +463,9 @@ export default function DFHeader({
         ? DF.gold ?? "#D2B07A"
         : "#39FF14";
 
-  const showMetaBlock = Boolean(planAndUser || batteryMetrics || compactUsageText);
+  const showMetaBlock = Boolean(
+    headerTopLabel || headerBottomLabel || batteryMetrics || postpaidMetrics
+  );
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safe}>
@@ -350,7 +491,13 @@ export default function DFHeader({
 
           <View style={styles.textBlock}>
             <View style={styles.wordmarkRow}>
-              <Text style={styles.wordmarkText} ellipsizeMode="clip">
+              <Text
+                style={styles.wordmarkText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.78}
+                ellipsizeMode="clip"
+              >
                 <Text style={styles.wordmarkMain}>desifaces</Text>
                 <Text style={styles.wordmarkDot}>.</Text>
                 <Text style={styles.wordmarkAi}>ai</Text>
@@ -366,59 +513,102 @@ export default function DFHeader({
         </View>
 
         <View style={styles.rightWrap}>
+          <View style={styles.topRightRow}>
+            {batteryMetrics ? (
+              <Pressable
+                style={styles.topIconAction}
+                onPress={onPressMeta}
+                disabled={!onPressMeta}
+                hitSlop={8}
+              >
+                <View style={styles.batteryWrapCompact}>
+                  <View style={styles.batteryBodyCompact}>
+                    <View
+                      style={[
+                        styles.batteryFill,
+                        {
+                          width: `${batteryMetrics.availablePct * 100}%`,
+                          backgroundColor: batteryMetrics.chargeColor,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <View style={styles.batteryCapCompact} />
+                </View>
+              </Pressable>
+            ) : postpaidMetrics ? (
+              <Pressable
+                style={styles.topIconAction}
+                onPress={onPressMeta}
+                disabled={!onPressMeta}
+                hitSlop={8}
+              >
+                <View style={styles.batteryWrapCompact}>
+                  <View style={styles.batteryBodyCompact}>
+                    <View
+                      style={[
+                        styles.postpaidUsedFill,
+                        { width: `${postpaidMetrics.usedPct * 100}%` },
+                      ]}
+                    />
+                    {postpaidMetrics.reservedPct > 0 ? (
+                      <View
+                        style={[
+                          styles.postpaidReservedFill,
+                          {
+                            left: `${postpaidMetrics.reservedOffsetPct * 100}%`,
+                            width: `${postpaidMetrics.reservedPct * 100}%`,
+                          },
+                        ]}
+                      />
+                    ) : null}
+                  </View>
+                  <View style={[styles.batteryCapCompact, styles.postpaidCap]} />
+                </View>
+              </Pressable>
+            ) : null}
+
+            {shouldShowNotificationBell ? (
+              <View style={styles.topIconAction}>
+                <NotificationBell />
+              </View>
+            ) : null}
+          </View>
+
           {showMetaBlock ? (
-            <Pressable style={styles.rightTextBlock} onPress={onPressMeta}>
-              {!!planAndUser && (
-                <Text numberOfLines={1} style={styles.rightTop}>
-                  {planAndUser}
+            <Pressable style={styles.rightTextBlock} onPress={onPressMeta} disabled={!onPressMeta}>
+              {!!headerTopLabel && (
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.76}
+                  ellipsizeMode="clip"
+                  style={styles.rightTop}
+                >
+                  {headerTopLabel}
                 </Text>
               )}
 
-              {batteryMetrics ? (
-                <View style={styles.batteryBlock}>
-                  <View style={styles.batteryRow}>
-                    <View style={styles.batteryWrap}>
-                      <View style={styles.batteryBody}>
-                        <View
-                          style={[
-                            styles.batteryFill,
-                            {
-                              width: `${batteryMetrics.availablePct * 100}%`,
-                              backgroundColor: batteryMetrics.chargeColor,
-                            },
-                          ]}
-                        />
-
-                        {batteryMetrics.reservedPct > 0 ? (
-                          <View
-                            style={[
-                              styles.batteryReserved,
-                              {
-                                left: `${batteryMetrics.reservedOffsetPct * 100}%`,
-                                width: `${batteryMetrics.reservedPct * 100}%`,
-                              },
-                            ]}
-                          />
-                        ) : null}
-                      </View>
-
-                      <View style={styles.batteryCap} />
-                    </View>
-                  </View>
-
-                  <Text numberOfLines={1} style={styles.batteryValue}>
-                    {batteryMetrics.valueLabel}
-                  </Text>
-                </View>
-              ) : !!compactUsageText ? (
-                <Text numberOfLines={1} style={styles.rightBottom}>
-                  {compactUsageText}
+              {!!headerBottomLabel ? (
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.74}
+                  ellipsizeMode="clip"
+                  style={styles.rightBottom}
+                >
+                  {headerBottomLabel}
                 </Text>
               ) : null}
             </Pressable>
           ) : !!rightPill ? (
             <View style={styles.fallbackWrap}>
-              <View style={[styles.fallbackDot, { backgroundColor: fallbackStatusColor }]} />
+              <View
+                style={[
+                  styles.fallbackDot,
+                  { backgroundColor: fallbackStatusColor },
+                ]}
+              />
               <Text numberOfLines={1} style={styles.fallbackText}>
                 {rightPill}
               </Text>
@@ -449,12 +639,12 @@ const styles = StyleSheet.create({
   wrap: {
     paddingHorizontal: 16,
     paddingTop: 2,
-    paddingBottom: 8,
-    minHeight: 62,
+    paddingBottom: 6,
+    minHeight: 54,
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 10,
+    gap: 6,
   },
 
   left: {
@@ -462,17 +652,34 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     flex: 1,
     minWidth: 0,
-    paddingRight: 6,
+    paddingRight: 2,
   },
 
   rightWrap: {
     flexShrink: 1,
     alignItems: "flex-end",
     justifyContent: "flex-start",
-    width: 170,
-    minWidth: 138,
-    maxWidth: "46%",
-    paddingTop: 1,
+    minWidth: 108,
+    maxWidth: "42%",
+    paddingTop: 0,
+    marginLeft: 4,
+  },
+
+  topRightRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 6,
+    minHeight: 22,
+    width: "100%",
+    marginBottom: 2,
+  },
+
+  topIconAction: {
+    minWidth: 18,
+    minHeight: 18,
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   menuBtn: {
@@ -531,7 +738,9 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flex: 1,
     minWidth: 0,
+    flexShrink: 1,
     paddingTop: 0,
+    paddingRight: 4,
   },
 
   wordmarkRow: {
@@ -540,10 +749,13 @@ const styles = StyleSheet.create({
     flexWrap: "nowrap",
     flexShrink: 0,
     alignSelf: "flex-start",
+    minWidth: 0,
   },
 
   wordmarkText: {
-    flexShrink: 0,
+    flexShrink: 1,
+    flexGrow: 1,
+    flexWrap: "nowrap",
     includeFontPadding: false,
   },
 
@@ -551,7 +763,7 @@ const styles = StyleSheet.create({
     color: DF.brandWordmark ?? "#D4A017",
     fontSize: 15,
     fontWeight: "900",
-    letterSpacing: 0.2,
+    letterSpacing: 0.1,
     textTransform: "lowercase",
   },
 
@@ -559,7 +771,7 @@ const styles = StyleSheet.create({
     color: DF.aiWordmark ?? "#B22222",
     fontSize: 15,
     fontWeight: "900",
-    letterSpacing: 0.2,
+    letterSpacing: 0.1,
     textTransform: "lowercase",
   },
 
@@ -567,17 +779,17 @@ const styles = StyleSheet.create({
     color: DF.aiWordmark ?? "#B22222",
     fontSize: 15,
     fontWeight: "900",
-    letterSpacing: 0.2,
+    letterSpacing: 0.1,
     textTransform: "lowercase",
   },
 
   subtitle: {
     marginTop: 2,
     color: DF.textSoft ?? DF.muted,
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: "700",
-    letterSpacing: 0.15,
-    lineHeight: 14,
+    letterSpacing: 0.1,
+    lineHeight: 13,
     paddingRight: 2,
   },
 
@@ -596,10 +808,10 @@ const styles = StyleSheet.create({
 
   rightTop: {
     color: DF.text ?? "#FFFFFF",
-    fontSize: 10.5,
+    fontSize: 9.2,
     fontWeight: "800",
     textAlign: "right",
-    lineHeight: 13,
+    lineHeight: 10.5,
     width: "100%",
   },
 
@@ -618,6 +830,12 @@ const styles = StyleSheet.create({
     marginRight: 0,
   },
 
+  batteryWrapCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   batteryBody: {
     width: 34,
     height: 16,
@@ -625,6 +843,17 @@ const styles = StyleSheet.create({
     borderWidth: 1.4,
     borderColor: DF.textSoft ?? "rgba(255,255,255,0.62)",
     backgroundColor: "rgba(255,255,255,0.08)",
+    overflow: "hidden",
+    position: "relative",
+  },
+
+  batteryBodyCompact: {
+    width: 20,
+    height: 9,
+    borderRadius: 3,
+    borderWidth: 1.1,
+    borderColor: DF.textSoft ?? "rgba(255,255,255,0.62)",
+    backgroundColor: "transparent",
     overflow: "hidden",
     position: "relative",
   },
@@ -644,6 +873,21 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 214, 10, 0.72)",
   },
 
+  postpaidUsedFill: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: "#64D2FF",
+  },
+
+  postpaidReservedFill: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255, 214, 10, 0.82)",
+  },
+
   batteryCap: {
     width: 3,
     height: 8,
@@ -651,6 +895,19 @@ const styles = StyleSheet.create({
     marginLeft: 2,
     backgroundColor: DF.textSoft ?? "rgba(255,255,255,0.62)",
     opacity: 0.9,
+  },
+
+  batteryCapCompact: {
+    width: 2,
+    height: 5,
+    borderRadius: 1,
+    marginLeft: 2,
+    backgroundColor: DF.textSoft ?? "rgba(255,255,255,0.62)",
+    opacity: 0.9,
+  },
+
+  postpaidCap: {
+    backgroundColor: "#64D2FF",
   },
 
   batteryValue: {
@@ -663,13 +920,23 @@ const styles = StyleSheet.create({
     width: "100%",
   },
 
-  rightBottom: {
-    marginTop: 4,
+  batteryCaption: {
     color: DF.textSoft ?? DF.text,
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: "800",
     textAlign: "right",
-    lineHeight: 13,
+    lineHeight: 12,
+    marginTop: 2,
+    width: "100%",
+  },
+
+  rightBottom: {
+    marginTop: 1,
+    color: DF.textSoft ?? DF.text,
+    fontSize: 9,
+    fontWeight: "800",
+    textAlign: "right",
+    lineHeight: 11,
     width: "100%",
   },
 

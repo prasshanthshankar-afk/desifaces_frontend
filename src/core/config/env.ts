@@ -27,13 +27,10 @@ type Extra = {
   PRICING_ANDROID?: string;
   PRICING?: string;
 
-  // Longform / fusion-extension base.
-  // This MUST point to svc-fusion-extension, not svc-fusion.
   FUSION_EXTENSION_IOS?: string;
   FUSION_EXTENSION_ANDROID?: string;
   FUSION_EXTENSION?: string;
 
-  // Optional aliases to reduce config churn across environments.
   LONGFORM_IOS?: string;
   LONGFORM_ANDROID?: string;
   LONGFORM?: string;
@@ -41,29 +38,23 @@ type Extra = {
 
 const extra = (Constants.expoConfig?.extra ?? {}) as Extra;
 
-// Nonprod gateway defaults.
-// For local dev, set these via app.config.ts / app.json extra.
-// Current backend ports you confirmed:
-//   VIDEO_IOS / VIDEO_ANDROID:               http://localhost:8002   (svc-fusion)
-//   FUSION_EXTENSION_IOS / _ANDROID:         http://localhost:8006   (svc-fusion-extension)
-// Typical ports in your stack:
-//   CORE_IOS / CORE_ANDROID:                 http://localhost:8001
-//   FACE_IOS / FACE_ANDROID:                 http://localhost:8004
-//   AUDIO_IOS / AUDIO_ANDROID:               http://localhost:8005
-//   DASH_IOS / DASH_ANDROID:                 http://localhost:8007 or gateway
-//   PRICING_IOS / PRICING_ANDROID:           http://localhost:8009
+/**
+ * Production gateway defaults.
+ * All frontend API traffic is aligned to https://api.desifaces.ai
+ *
+ * Override with app.config.ts / app.json extra values only when intentionally needed.
+ */
 const DEFAULTS = {
-  CORE: "https://api-nonprod.desifaces.ai/core",
-  FACE: "https://api-nonprod.desifaces.ai/face",
-  AUDIO: "https://api-nonprod.desifaces.ai/audio",
-  VIDEO: "https://api-nonprod.desifaces.ai/video",
-  DASH: "https://api-nonprod.desifaces.ai/dashboard",
-  PRICING: "https://api-nonprod.desifaces.ai/pricing",
+  CORE: "https://api.desifaces.ai/core",
+  FACE: "https://api.desifaces.ai/face",
+  AUDIO: "https://api.desifaces.ai/audio",
+  VIDEO: "https://api.desifaces.ai/video",
+  DASH: "https://api.desifaces.ai/dashboard",
+  PRICING: "https://api.desifaces.ai/pricing",
 
-  // IMPORTANT:
-  // Change this if your gateway mounts fusion-extension under a different prefix.
-  // It must resolve to svc-fusion-extension for /api/longform/*.
-  FUSION_EXTENSION: "https://api-nonprod.desifaces.ai/fusion-extension",
+  // Keep this explicit so longform / fusion-extension can be routed separately
+  // when the public gateway exposes it.
+  FUSION_EXTENSION: "https://api.desifaces.ai/fusion-extension",
 } as const;
 
 function normalizeBase(value: string) {
@@ -122,8 +113,8 @@ export const PRICING_BASE = pick(
 );
 
 // Longform / fusion-extension base.
-// This is intentionally separate from VIDEO_BASE because /api/longform/*
-// must go to svc-fusion-extension, while /jobs typically goes to svc-fusion.
+// Keep separate from VIDEO_BASE because direct fusion (/jobs) and
+// longform (/api/longform/*) may be exposed differently.
 export const FUSION_EXTENSION_BASE = pick(
   extra.FUSION_EXTENSION_IOS || extra.LONGFORM_IOS,
   extra.FUSION_EXTENSION_ANDROID || extra.LONGFORM_ANDROID,
@@ -131,7 +122,7 @@ export const FUSION_EXTENSION_BASE = pick(
   DEFAULTS.FUSION_EXTENSION
 );
 
-// Optional aliases used by some helpers.
+// Optional aliases used elsewhere to reduce refactor churn.
 export const FUSION_EXT_BASE = FUSION_EXTENSION_BASE;
 export const LONGFORM_BASE = FUSION_EXTENSION_BASE;
 export const FUSION_LONGFORM_BASE = FUSION_EXTENSION_BASE;
@@ -141,7 +132,7 @@ export const SVC_FUSION_EXTENSION_BASE = FUSION_EXTENSION_BASE;
 export const DASHBOARD_BASE = DASH_BASE;
 
 // Explicit svc-fusion base.
-// NOTE: svc-fusion uses /jobs and is NOT the longform service.
+// NOTE: direct fusion uses /jobs on VIDEO_BASE.
 export const FUSION_BASE = VIDEO_BASE;
 
 console.log("DF BASES", {

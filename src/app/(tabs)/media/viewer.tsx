@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect, useRef, useState, useCallback } from "react";
+import React, { useMemo, useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -11,22 +11,41 @@ import {
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { Image } from "expo-image";
-import {
-  Video,
-  ResizeMode,
-  Audio,
-  InterruptionModeIOS,
-  InterruptionModeAndroid,
-  AVPlaybackStatus,
-} from "expo-av";
 
 import { DF } from "../../../core/theme/colors";
 import DFHeader from "../../../core/ui/DFHeader";
-import * as ShareModule from "../../../core/share/share";
+import { useAuth } from "../../../core/auth/AuthContext";
 import { useCreatorFlow } from "../../../core/flow/creatorFlowStore";
 import { saveCreateFlowContext } from "../../../core/media/createFlow";
 
+let ExpoAudio: any = null;
+let ExpoVideo: any = null;
+let ExpoCore: any = null;
+let ShareModule: any = null;
+
+try {
+  ExpoAudio = require("expo-audio");
+} catch (e) {
+  console.warn("[MediaViewer] expo-audio unavailable", e);
+}
+try {
+  ExpoVideo = require("expo-video");
+} catch (e) {
+  console.warn("[MediaViewer] expo-video unavailable", e);
+}
+try {
+  ExpoCore = require("expo");
+} catch (e) {
+  console.warn("[MediaViewer] expo core unavailable", e);
+}
+try {
+  ShareModule = require("../../../core/share/share");
+} catch (e) {
+  console.warn("[MediaViewer] share module unavailable", e);
+}
+
 type Stage = "face_done" | "audio_done" | "video_done";
+type MediaType = "image" | "video" | "audio";
 
 function firstParam(v: unknown, fallback = ""): string {
   return Array.isArray(v) ? String(v[0] ?? fallback) : String(v ?? fallback);
@@ -34,8 +53,7 @@ function firstParam(v: unknown, fallback = ""): string {
 
 function cleanUrl(v: unknown): string {
   const s = firstParam(v, "").trim().replace(/^"+|"+$/g, "");
-  if (!s) return "";
-  if (s === "undefined" || s === "null") return "";
+  if (!s || s === "undefined" || s === "null") return "";
   return s;
 }
 
@@ -49,10 +67,6 @@ function looksLikeVideoUrl(u: string) {
   return /\.(mp4|mov|m4v|webm)(\?|$)/i.test(u);
 }
 
-/**
- * Decode only until it becomes a real URL.
- * This avoids double-decoding an already-correct SAS (which breaks sig).
- */
 function decodeNavUrl(v: unknown): string {
   let s = cleanUrl(v);
   if (!s) return "";
@@ -68,19 +82,10 @@ function decodeNavUrl(v: unknown): string {
   return s;
 }
 
-/**
- * If SAS URL was passed unencoded, Expo Router can split it into separate params.
- * Example:
- *   image_url = "...?se=..."
- *   sp="r" sv="..." sr="b" sig="..."
- * This reconstructs a complete query string.
- */
 function rebuildSasIfSplit(rawUrl: string, params: Record<string, any>) {
   const u0 = cleanUrl(rawUrl);
   if (!u0) return "";
-
-  const hasQuery = u0.includes("?");
-  if (!hasQuery) return u0;
+  if (!u0.includes("?")) return u0;
 
   const [base, qs] = u0.split("?");
   if (!qs) return u0;
@@ -113,11 +118,6 @@ function rebuildSasIfSplit(rawUrl: string, params: Record<string, any>) {
   return `${base}?${parts.join("&")}`;
 }
 
-/**
- * Ensure Azure SAS signature is URL-encoded.
- * If sig is already encoded (contains %xx), leave it alone.
- * If it's raw base64 with / + =, encode it.
- */
 function ensureAzureSigEncoded(url: string) {
   const u = cleanUrl(url);
   const qIdx = u.indexOf("?");
@@ -134,24 +134,43 @@ function ensureAzureSigEncoded(url: string) {
 
     if (k !== "sig") return p;
     if (!v) return p;
-
     if (/%[0-9A-Fa-f]{2}/.test(v)) return p;
-
     return `sig=${encodeURIComponent(v)}`;
   });
 
   return `${base}?${out.join("&")}`;
 }
 
-function encodeNavUrl(url: string) {
-  const clean = String(url ?? "").trim().replace(/^"+|"+$/g, "");
-  return encodeURIComponent(clean);
+function logMediaViewerFlow(step: string, payload: any) {
+  try {
+    console.log("[DF_FLOW][MediaViewer]", step, JSON.stringify(payload, null, 2));
+  } catch {
+    console.log("[DF_FLOW][MediaViewer]", step, payload);
+  }
 }
 
-async function shareMediaToSheet(url: string, type: "image" | "video") {
+function readVideoEventError(errorLike: unknown): string {
+  if (!errorLike) return "";
+  if (typeof errorLike === "string") return errorLike.trim();
+
+  const asAny = errorLike as any;
+  return (
+    cleanValue(asAny?.message) ||
+    cleanValue(asAny?.description) ||
+    cleanValue(asAny?.code) ||
+    cleanValue(asAny)
+  );
+}
+
+async function shareMediaToSheet(url: string, type: MediaType) {
   const safeUrl = cleanUrl(url);
   if (!safeUrl) {
     Alert.alert("Missing media URL", "There is no valid media URL to share.");
+    return;
+  }
+
+  if (!ShareModule) {
+    Alert.alert("Share unavailable", "Sharing is not available in the current development build.");
     return;
   }
 
@@ -181,17 +200,19 @@ async function shareMediaToSheet(url: string, type: "image" | "video") {
   }
 }
 
-/**
- * Media Viewer
- * - type=image => guided pipeline (Face -> Voice -> Video)
- * - type=video => final product viewer (share-first, no pipeline CTAs)
- */
 export default function MediaViewer() {
   const params = useLocalSearchParams();
   const flow = useCreatorFlow() as any;
-  const { setFaceSelection, setFusionSettings } = flow;
+  const { setFaceSelection, setFusionSettings, setAudioSelection } = flow;
+  const auth = useAuth() as any;
+  const authUserId =
+    cleanValue(auth?.userId) ||
+    cleanValue(auth?.user?.id) ||
+    cleanValue(auth?.session?.user?.id) ||
+    cleanValue(auth?.authState?.user?.id) ||
+    "";
 
-  const urlParam = decodeNavUrl(params.url);
+  const urlParam = decodeNavUrl((params as any).url);
 
   const imageUrlParam =
     decodeNavUrl((params as any).image_url) ||
@@ -209,33 +230,49 @@ export default function MediaViewer() {
     decodeNavUrl((params as any).artifact_url) ||
     "";
 
-  const rawType = firstParam(params.type, "").trim().toLowerCase();
-  const type: "image" | "video" =
-    rawType === "video"
+  const audioUrlParam =
+    decodeNavUrl((params as any).audio_url) ||
+    decodeNavUrl((params as any).audio_sas_url) ||
+    decodeNavUrl((params as any).audio) ||
+    "";
+
+  const rawType = firstParam((params as any).type, "").trim().toLowerCase();
+  const type: MediaType =
+    rawType === "audio"
+      ? "audio"
+      : rawType === "video"
       ? "video"
       : rawType === "image"
-        ? "image"
-        : videoUrlParam
-          ? "video"
-          : looksLikeVideoUrl(urlParam)
-            ? "video"
-            : "image";
+      ? "image"
+      : audioUrlParam
+      ? "audio"
+      : videoUrlParam
+      ? "video"
+      : looksLikeVideoUrl(urlParam)
+      ? "video"
+      : "image";
 
   const safeUrl = useMemo(() => {
     const picked =
-      type === "video"
-        ? videoUrlParam || urlParam || imageUrlParam
-        : imageUrlParam || urlParam || videoUrlParam;
+      type === "audio"
+        ? audioUrlParam || urlParam || imageUrlParam || videoUrlParam
+        : type === "video"
+        ? videoUrlParam || urlParam || imageUrlParam || audioUrlParam
+        : imageUrlParam || urlParam || videoUrlParam || audioUrlParam;
 
     const rebuilt = rebuildSasIfSplit(picked, params as any);
     return ensureAzureSigEncoded(rebuilt);
-  }, [type, videoUrlParam, urlParam, imageUrlParam, params]);
+  }, [type, audioUrlParam, videoUrlParam, urlParam, imageUrlParam, params]);
 
-  const title = firstParam(params.title, type === "video" ? "Fusion Video" : "Face Preview");
-  const subtitle = firstParam(params.subtitle, "");
+  const title = firstParam(
+    (params as any).title,
+    type === "video" ? "Fusion Video" : type === "audio" ? "Audio Preview" : "Face Preview"
+  );
+  const subtitle = firstParam((params as any).subtitle, "");
 
-  const stageDefault: Stage = type === "video" ? "video_done" : "face_done";
-  const stageParam = firstParam(params.stage, stageDefault);
+  const stageDefault: Stage =
+    type === "video" ? "video_done" : type === "audio" ? "audio_done" : "face_done";
+  const stageParam = firstParam((params as any).stage, stageDefault);
   const stage: Stage =
     stageParam === "face_done" || stageParam === "audio_done" || stageParam === "video_done"
       ? (stageParam as Stage)
@@ -280,23 +317,90 @@ export default function MediaViewer() {
     cleanValue(flow?.fusionAspectRatio) ||
     "";
 
+  const audioArtifactId =
+    cleanValue((params as any).audio_artifact_id) ||
+    cleanValue((params as any).artifact_id) ||
+    "";
+
+  const audioVoice =
+    cleanValue((params as any).audio_voice) ||
+    cleanValue((params as any).voice) ||
+    "";
+
+  const audioLocale =
+    cleanValue((params as any).audio_locale) ||
+    cleanValue((params as any).locale) ||
+    "";
+
+  const audioDurationSec =
+    cleanValue((params as any).audio_duration_sec) ||
+    cleanValue((params as any).duration_sec) ||
+    "";
+
+  const buildViewerFaceSelection = useCallback(
+    (imageUrl: string) =>
+      ({
+        sasUrl: imageUrl,
+        imageUrl,
+        image_url: imageUrl,
+        face_image_url: imageUrl,
+        face_sas_url: imageUrl,
+        artifactId: faceArtifactId || undefined,
+        faceArtifactId: faceArtifactId || undefined,
+        artifact_id: faceArtifactId || undefined,
+        face_artifact_id: faceArtifactId || undefined,
+        mediaAssetId: faceMediaAssetId || undefined,
+        faceMediaAssetId: faceMediaAssetId || undefined,
+        media_asset_id: faceMediaAssetId || undefined,
+        face_media_asset_id: faceMediaAssetId || undefined,
+        faceProfileId: faceProfileId || undefined,
+        face_profile_id: faceProfileId || undefined,
+        gender: gender || undefined,
+        ownerUserId: authUserId || undefined,
+        owner_user_id: authUserId || undefined,
+        userId: authUserId || undefined,
+        user_id: authUserId || undefined,
+      } as any),
+    [faceArtifactId, faceMediaAssetId, faceProfileId, gender, authUserId]
+  );
+
+  const buildViewerAudioSelection = useCallback(
+    (audioUrl: string) =>
+      ({
+        audioUrl,
+        sasUrl: audioUrl,
+        audio_url: audioUrl,
+        artifactId: audioArtifactId || undefined,
+        audioArtifactId: audioArtifactId || undefined,
+        artifact_id: audioArtifactId || undefined,
+        audio_artifact_id: audioArtifactId || undefined,
+        locale: audioLocale || undefined,
+        voice: audioVoice || undefined,
+        durationSec: audioDurationSec ? Number(audioDurationSec) : undefined,
+        title: title || undefined,
+        ownerUserId: authUserId || undefined,
+        owner_user_id: authUserId || undefined,
+        userId: authUserId || undefined,
+        user_id: authUserId || undefined,
+      } as any),
+    [audioArtifactId, audioLocale, audioVoice, audioDurationSec, title, authUserId]
+  );
+
   const BG = (DF as any)?.night ?? "#0E0F14";
   const BG2 = (DF as any)?.night2 ?? "#141824";
 
-  const showStepper = type !== "video";
+  const showStepper = type === "image";
   const currentStep: 1 | 2 | 3 = stage === "video_done" ? 3 : stage === "audio_done" ? 2 : 1;
 
   useEffect(() => {
+    if (!ExpoAudio?.setAudioModeAsync) return;
     (async () => {
       try {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: false,
-          interruptionModeIOS: InterruptionModeIOS.MixWithOthers,
-          interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-          shouldDuckAndroid: true,
-          playThroughEarpieceAndroid: false,
+        await ExpoAudio.setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+          shouldPlayInBackground: false,
+          interruptionMode: "mixWithOthers",
         });
       } catch (e) {
         console.log("configureAppAudio failed", e);
@@ -308,14 +412,7 @@ export default function MediaViewer() {
     if (type !== "image") return;
     if (!safeUrl) return;
 
-    setFaceSelection?.({
-      sasUrl: safeUrl,
-      imageUrl: safeUrl,
-      artifactId: faceArtifactId || undefined,
-      mediaAssetId: faceMediaAssetId || undefined,
-      faceProfileId: faceProfileId || undefined,
-      gender: gender || undefined,
-    });
+    setFaceSelection?.(buildViewerFaceSelection(safeUrl));
 
     if (aspectRatio) {
       setFusionSettings?.({
@@ -325,11 +422,19 @@ export default function MediaViewer() {
 
     saveCreateFlowContext({
       image_url: safeUrl,
+      face_image_url: safeUrl,
+      face_sas_url: safeUrl,
       face_artifact_id: faceArtifactId || undefined,
+      artifact_id: faceArtifactId || undefined,
       face_profile_id: faceProfileId || undefined,
+      face_media_asset_id: faceMediaAssetId || undefined,
       media_asset_id: faceMediaAssetId || undefined,
       gender: gender || undefined,
       aspect_ratio: aspectRatio || undefined,
+      ownerUserId: authUserId || undefined,
+      owner_user_id: authUserId || undefined,
+      userId: authUserId || undefined,
+      user_id: authUserId || undefined,
     } as any).catch(() => {});
   }, [
     type,
@@ -339,8 +444,10 @@ export default function MediaViewer() {
     faceProfileId,
     gender,
     aspectRatio,
+    authUserId,
     setFaceSelection,
     setFusionSettings,
+    buildViewerFaceSelection,
   ]);
 
   const goToAudio = useCallback(() => {
@@ -352,33 +459,46 @@ export default function MediaViewer() {
       return;
     }
 
-    setFaceSelection?.({
-      sasUrl: safeUrl,
-      imageUrl: safeUrl,
-      artifactId: faceArtifactId || undefined,
-      mediaAssetId: faceMediaAssetId || undefined,
-      faceProfileId: faceProfileId || undefined,
-      gender: gender || undefined,
+    logMediaViewerFlow("goToAudio.before_routerPush", {
+      authUserId,
+      safeUrl,
+      faceArtifactId,
+      faceMediaAssetId,
+      faceProfileId,
+      gender,
+      aspectRatio,
     });
+
+    setFaceSelection?.(buildViewerFaceSelection(safeUrl));
 
     saveCreateFlowContext({
       image_url: safeUrl,
+      face_image_url: safeUrl,
+      face_sas_url: safeUrl,
       face_artifact_id: faceArtifactId || undefined,
+      artifact_id: faceArtifactId || undefined,
       face_profile_id: faceProfileId || undefined,
+      face_media_asset_id: faceMediaAssetId || undefined,
       media_asset_id: faceMediaAssetId || undefined,
       gender: gender || undefined,
       aspect_ratio: aspectRatio || undefined,
+      ownerUserId: authUserId || undefined,
+      owner_user_id: authUserId || undefined,
+      userId: authUserId || undefined,
+      user_id: authUserId || undefined,
     } as any).catch(() => {});
 
     router.push({
       pathname: "/(tabs)/audio",
       params: {
-        face_sas_url: encodeNavUrl(safeUrl),
-        face_image_url: encodeNavUrl(safeUrl),
-        image_url: encodeNavUrl(safeUrl),
+        face_sas_url: safeUrl,
+        face_image_url: safeUrl,
+        image_url: safeUrl,
         face_artifact_id: faceArtifactId || "",
+        artifact_id: faceArtifactId || "",
         face_profile_id: faceProfileId || "",
         face_media_asset_id: faceMediaAssetId || "",
+        media_asset_id: faceMediaAssetId || "",
         gender: gender || "",
         aspect_ratio: aspectRatio || "",
         stage: "face_done",
@@ -391,8 +511,75 @@ export default function MediaViewer() {
     faceProfileId,
     gender,
     aspectRatio,
+    authUserId,
     setFaceSelection,
+    buildViewerFaceSelection,
   ]);
+
+  const useAudioInStudio = useCallback(() => {
+    if (!safeUrl) {
+      Alert.alert("Missing media URL", "Viewer did not receive a valid audio URL.");
+      return;
+    }
+
+    logMediaViewerFlow("useAudioInStudio.before_routerPush", {
+      authUserId,
+      safeUrl,
+      audioArtifactId,
+      audioLocale,
+      audioVoice,
+      audioDurationSec,
+    });
+
+    setAudioSelection?.(buildViewerAudioSelection(safeUrl));
+
+    saveCreateFlowContext({
+      audio_url: safeUrl,
+      audio_sas_url: safeUrl,
+      audio_artifact_id: audioArtifactId || undefined,
+      artifact_id: audioArtifactId || undefined,
+      audio_locale: audioLocale || undefined,
+      audio_voice: audioVoice || undefined,
+      audio_duration_sec: audioDurationSec ? Number(audioDurationSec) : undefined,
+      ownerUserId: authUserId || undefined,
+      owner_user_id: authUserId || undefined,
+      userId: authUserId || undefined,
+      user_id: authUserId || undefined,
+    } as any).catch(() => {});
+
+    router.push({
+      pathname: "/(tabs)/audio",
+      params: {
+        audio_sas_url: safeUrl,
+        audio_url: safeUrl,
+        audio_artifact_id: audioArtifactId || "",
+        artifact_id: audioArtifactId || "",
+        audio_locale: audioLocale || "",
+        audio_voice: audioVoice || "",
+        audio_duration_sec: audioDurationSec || "",
+        stage: "audio_done",
+      },
+    } as any);
+  }, [
+    safeUrl,
+    setAudioSelection,
+    audioArtifactId,
+    audioLocale,
+    audioVoice,
+    audioDurationSec,
+    authUserId,
+    buildViewerAudioSelection,
+  ]);
+
+  const handleBackPress = useCallback(() => {
+    try {
+      if (typeof (router as any)?.canGoBack === "function" && (router as any).canGoBack()) {
+        router.back();
+        return;
+      }
+    } catch {}
+    router.replace("/(tabs)/media" as any);
+  }, []);
 
   const handleShare = useCallback(async () => {
     await shareMediaToSheet(safeUrl, type);
@@ -403,7 +590,7 @@ export default function MediaViewer() {
       <DFHeader subtitle={subtitle ? `${title} • ${subtitle}` : title} />
 
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={handleBackPress} style={styles.backBtn}>
           <Text style={styles.backText}>‹</Text>
         </Pressable>
 
@@ -414,7 +601,9 @@ export default function MediaViewer() {
         ) : (
           <View style={{ paddingLeft: 54 }}>
             <View style={styles.finalPill}>
-              <Text style={styles.finalPillText}>Final Video</Text>
+              <Text style={styles.finalPillText}>
+                {type === "audio" ? "Audio Preview" : "Final Video"}
+              </Text>
             </View>
           </View>
         )}
@@ -429,8 +618,7 @@ export default function MediaViewer() {
                   Missing media URL
                 </Text>
                 <Text style={{ color: "rgba(255,255,255,0.75)", marginTop: 8, fontWeight: "800" }}>
-                  Expected <Text style={{ fontWeight: "900" }}>image_url</Text> or{" "}
-                  <Text style={{ fontWeight: "900" }}>url</Text>.
+                  Expected <Text style={{ fontWeight: "900" }}>image_url</Text>, <Text style={{ fontWeight: "900" }}>video_url</Text>, <Text style={{ fontWeight: "900" }}>audio_url</Text> or <Text style={{ fontWeight: "900" }}>url</Text>.
                 </Text>
                 <Text
                   style={{
@@ -455,23 +643,25 @@ export default function MediaViewer() {
                 onLoad={() => console.log("MediaViewer: image loaded")}
                 onError={(e) => console.warn("MediaViewer: image error", e, { safeUrl })}
               />
+            ) : type === "audio" ? (
+              <AudioHero url={safeUrl} bg={BG2} />
             ) : (
               <VideoHero url={safeUrl} bg={BG2} />
             )}
           </View>
 
           {!!safeUrl && (
-            <Text
-              style={{
-                color: "rgba(255,255,255,0.55)",
-                marginTop: 8,
-                fontWeight: "800",
-                fontSize: 11,
-              }}
-              numberOfLines={2}
-            >
-              {safeUrl}
-            </Text>
+            <>
+              <Text style={{ color: "rgba(255,255,255,0.70)", marginTop: 8, fontWeight: "900", fontSize: 11 }}>
+                Active media URL
+              </Text>
+              <Text
+                style={{ color: "rgba(255,255,255,0.55)", marginTop: 4, fontWeight: "800", fontSize: 11 }}
+                numberOfLines={3}
+              >
+                {safeUrl}
+              </Text>
+            </>
           )}
 
           {type === "video" ? (
@@ -480,15 +670,25 @@ export default function MediaViewer() {
               <Text style={styles.stepDesc}>Share it instantly or create your next one.</Text>
 
               <View style={styles.actionGrid}>
-                <ActionButton
-                  label="Share"
-                  icon="⤴"
-                  primary
-                  onPress={handleShare}
-                />
-                <ActionButton label="Dashboard" icon="⌂" onPress={() => router.push("/(tabs)/dashboard")} />
-                <ActionButton label="Create Face" icon="＋" onPress={() => router.push("/(tabs)/face")} />
-                <ActionButton label="Make Video" icon="⚡" onPress={() => router.push("/(tabs)/fusion")} />
+                <ActionButton label="Share" icon="⤴" primary onPress={handleShare} />
+                <ActionButton label="Dashboard" icon="⌂" onPress={() => router.push("/(tabs)/dashboard" as any)} />
+                <ActionButton label="Create Face" icon="＋" onPress={() => router.push("/(tabs)/face" as any)} />
+                <ActionButton label="Make Video" icon="⚡" onPress={() => router.push("/(tabs)/fusion" as any)} />
+              </View>
+            </>
+          ) : type === "audio" ? (
+            <>
+              <Text style={styles.stepTitle}>Audio preview</Text>
+              <Text style={styles.stepDesc}>
+                {[audioVoice ? `Voice: ${audioVoice}` : "", audioLocale ? `Locale: ${audioLocale}` : "", audioDurationSec ? `${audioDurationSec}s` : ""]
+                  .filter(Boolean)
+                  .join(" • ") || "Play this audio and use it in Audio Studio if you like it."}
+              </Text>
+
+              <View style={styles.actionGrid}>
+                <ActionButton label="Use in Audio" icon="♪" primary onPress={useAudioInStudio} />
+                <ActionButton label="Share" icon="⤴" onPress={handleShare} />
+                <ActionButton label="Dashboard" icon="⌂" onPress={() => router.push("/(tabs)/dashboard" as any)} />
               </View>
             </>
           ) : (
@@ -498,13 +698,9 @@ export default function MediaViewer() {
 
               <View style={styles.actionGrid}>
                 <ActionButton label="Add Voice" icon="♪" primary onPress={goToAudio} />
-                <ActionButton label="Remix" icon="✎" onPress={() => router.push("/(tabs)/face")} />
-                <ActionButton
-                  label="Share"
-                  icon="⤴"
-                  onPress={handleShare}
-                />
-                <ActionButton label="Dashboard" icon="⌂" onPress={() => router.push("/(tabs)/dashboard")} />
+                <ActionButton label="Remix" icon="✎" onPress={() => router.push("/(tabs)/face" as any)} />
+                <ActionButton label="Share" icon="⤴" onPress={handleShare} />
+                <ActionButton label="Dashboard" icon="⌂" onPress={() => router.push("/(tabs)/dashboard" as any)} />
               </View>
             </>
           )}
@@ -515,91 +711,75 @@ export default function MediaViewer() {
 }
 
 function VideoHero({ url, bg }: { url: string; bg: string }) {
-  const ref = useRef<Video>(null);
+  if (!ExpoVideo || !ExpoCore) {
+    return (
+      <View style={[styles.heroFallback, { backgroundColor: bg }]}>
+        <Text style={{ color: "white", fontWeight: "900", fontSize: 16 }}>Video unavailable</Text>
+        <Text style={{ color: "rgba(255,255,255,0.75)", marginTop: 8, fontWeight: "800", textAlign: "center" }}>
+          Video playback is unavailable in the current development build.
+        </Text>
+      </View>
+    );
+  }
 
-  const [loading, setLoading] = useState(true);
-  const [playing, setPlaying] = useState(false);
+  const player = ExpoVideo.useVideoPlayer(url, (instance: any) => {
+    instance.loop = false;
+    instance.muted = false;
+    instance.staysActiveInBackground = false;
+  });
+
+  const statusEvent = ExpoCore.useEvent(player, "statusChange", { status: player.status });
+  const playingEvent = ExpoCore.useEvent(player, "playingChange", { isPlaying: player.playing });
+
+  const status = statusEvent?.status;
+  const statusErrorText = readVideoEventError((statusEvent as any)?.error);
+  const isPlaying = !!playingEvent?.isPlaying;
   const [err, setErr] = useState<string | null>(null);
 
+  useEffect(() => {
+    setErr(null);
+    player.pause();
+    player.currentTime = 0;
+  }, [url, player]);
+
+  useEffect(() => {
+    if (status === "error") {
+      setErr(statusErrorText || "Video failed to load");
+      return;
+    }
+    if (status === "readyToPlay") {
+      setErr(null);
+    }
+  }, [status, statusErrorText]);
+
+  const loading = status === "loading" || status === "idle";
+  const playing = isPlaying;
+
   const toggle = async () => {
-    if (!ref.current) return;
     try {
       if (playing) {
-        await ref.current.pauseAsync();
-      } else {
-        await ref.current.playAsync();
+        player.pause();
+        return;
       }
+      if (player.duration && player.currentTime >= Math.max(player.duration - 0.25, 0)) {
+        player.currentTime = 0;
+      }
+      player.play();
     } catch (e: any) {
       setErr(String(e?.message ?? e ?? "Playback failed"));
     }
   };
 
-  const onStatus = (st: AVPlaybackStatus) => {
-    if (!st.isLoaded) {
-      if (st.error) setErr(String(st.error));
-      return;
-    }
-    if (loading) setLoading(false);
-
-    if (st.didJustFinish) {
-      setPlaying(false);
-      ref.current?.pauseAsync?.().catch?.(() => {});
-      ref.current?.setPositionAsync?.(0).catch?.(() => {});
-      return;
-    }
-
-    setPlaying(!!st.isPlaying);
-  };
-
-  useEffect(() => {
-    setLoading(true);
-    setPlaying(false);
-    setErr(null);
-  }, [url]);
-
-  useEffect(() => {
-    return () => {
-      (ref.current as any)?.stopAsync?.().catch?.(() => {});
-    };
-  }, []);
-
   return (
     <View style={{ flex: 1, backgroundColor: bg }}>
-      <Video
-        ref={ref}
-        style={{ width: "100%", height: "100%" }}
-        source={{ uri: url }}
-        resizeMode={ResizeMode.CONTAIN}
-        isLooping={false}
-        useNativeControls={false}
-        shouldPlay={false}
-        isMuted={false}
-        volume={1.0}
-        onLoadStart={() => {
-          setLoading(true);
-          setErr(null);
-        }}
-        onLoad={() => {
-          setLoading(false);
-          setErr(null);
-        }}
-        onError={(e) => {
-          const msg = (e as any)?.error ?? "Video failed to load";
-          setErr(String(msg));
-          setLoading(false);
-          console.warn("MediaViewer VideoHero onError:", msg, { url });
-        }}
-        onPlaybackStatusUpdate={onStatus}
-      />
+      <ExpoVideo.VideoView player={player} style={{ width: "100%", height: "100%" }} nativeControls={false} contentFit="contain" />
 
-      <Pressable onPress={toggle} style={styles.videoOverlay}>
+      <Pressable onPress={() => void toggle()} style={styles.videoOverlay}>
         {loading ? (
           <ActivityIndicator />
         ) : err ? (
           <View style={{ paddingHorizontal: 18 }}>
-            <Text style={{ color: "white", fontWeight: "900", fontSize: 14, textAlign: "center" }}>
-              Video failed to load
-            </Text>
+            <Text style={{ color: "white", fontWeight: "900", fontSize: 14, textAlign: "center" }}>Video failed to load</Text>
             <Text
               style={{
                 color: "rgba(255,255,255,0.75)",
@@ -625,9 +805,7 @@ function VideoHero({ url, bg }: { url: string; bg: string }) {
             </Text>
           </View>
         ) : (
-          <Text style={{ color: "white", fontWeight: "900", fontSize: 14 }}>
-            {playing ? "Pause" : "Play"}
-          </Text>
+          <Text style={{ color: "white", fontWeight: "900", fontSize: 14 }}>{playing ? "Pause" : "Play"}</Text>
         )}
       </Pressable>
 
@@ -638,6 +816,110 @@ function VideoHero({ url, bg }: { url: string; bg: string }) {
           </Text>
         </View>
       )}
+    </View>
+  );
+}
+
+function AudioHero({ url, bg }: { url: string; bg: string }) {
+  if (!ExpoAudio) {
+    return (
+      <View style={{ flex: 1, backgroundColor: bg, alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <Text style={{ color: "white", fontWeight: "900", fontSize: 16 }}>Audio unavailable</Text>
+        <Text style={{ color: "rgba(255,255,255,0.75)", marginTop: 8, fontWeight: "800", textAlign: "center" }}>
+          Audio playback is unavailable in the current development build.
+        </Text>
+      </View>
+    );
+  }
+
+  const player = ExpoAudio.useAudioPlayer(url, { updateInterval: 250 });
+  const status = ExpoAudio.useAudioPlayerStatus(player);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    setErr(null);
+    player.pause();
+    void player.seekTo(0).catch(() => undefined);
+  }, [url, player]);
+
+  useEffect(() => {
+    if (status.isLoaded) {
+      setErr(null);
+    }
+  }, [status.isLoaded]);
+
+  const loading = !status.isLoaded || !!status.isBuffering;
+  const playing = !!status.playing;
+
+  const toggle = useCallback(async () => {
+    try {
+      if (playing) {
+        player.pause();
+        return;
+      }
+
+      if ((status.duration ?? 0) > 0 && (status.currentTime ?? 0) >= Math.max((status.duration ?? 0) - 0.1, 0)) {
+        await player.seekTo(0);
+      }
+
+      player.play();
+    } catch (e: any) {
+      setErr(String(e?.message ?? e ?? "Audio failed to load"));
+    }
+  }, [player, playing, status.duration, status.currentTime]);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: bg, alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <View
+        style={{
+          width: 132,
+          height: 132,
+          borderRadius: 999,
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.10)",
+          backgroundColor: "rgba(255,255,255,0.06)",
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: 18,
+        }}
+      >
+        <Text style={{ color: "rgba(255,255,255,0.92)", fontWeight: "900", fontSize: 28 }}>♪</Text>
+      </View>
+
+      <Pressable onPress={() => void toggle()} style={styles.videoOverlay}>
+        {loading ? (
+          <ActivityIndicator />
+        ) : err ? (
+          <View style={{ paddingHorizontal: 18 }}>
+            <Text style={{ color: "white", fontWeight: "900", fontSize: 14, textAlign: "center" }}>Audio failed to load</Text>
+            <Text
+              style={{
+                color: "rgba(255,255,255,0.75)",
+                fontWeight: "800",
+                fontSize: 12,
+                marginTop: 6,
+                textAlign: "center",
+              }}
+              numberOfLines={3}
+            >
+              {err}
+            </Text>
+            <Text
+              style={{
+                color: "rgba(255,255,255,0.80)",
+                fontWeight: "900",
+                fontSize: 12,
+                marginTop: 10,
+                textAlign: "center",
+              }}
+            >
+              Tap to retry
+            </Text>
+          </View>
+        ) : (
+          <Text style={{ color: "white", fontWeight: "900", fontSize: 14 }}>{playing ? "Pause" : "Play"}</Text>
+        )}
+      </Pressable>
     </View>
   );
 }
@@ -686,7 +968,6 @@ function ActionButton({
 
 const styles = StyleSheet.create({
   topBar: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
-
   backBtn: {
     position: "absolute",
     left: 12,
@@ -702,7 +983,6 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   backText: { color: "rgba(255,255,255,0.8)", fontWeight: "900", fontSize: 20 },
-
   finalPill: {
     alignSelf: "flex-start",
     paddingHorizontal: 12,
@@ -718,7 +998,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 0.2,
   },
-
   flowWrap: {
     paddingVertical: 10,
     paddingHorizontal: 12,
@@ -731,7 +1010,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   flowDot: { width: 6, height: 6, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.16)" },
-
   stepPill: {
     paddingHorizontal: 10,
     paddingVertical: 8,
@@ -748,9 +1026,7 @@ const styles = StyleSheet.create({
   stepPillText: { color: "rgba(255,255,255,0.68)", fontWeight: "900", fontSize: 12 },
   stepPillTextActive: { color: "rgba(255,255,255,0.92)" },
   stepPillTextDone: { color: "rgba(255,255,255,0.78)" },
-
   centerWrap: { paddingHorizontal: 16, paddingTop: 6 },
-
   heroCard: {
     height: 420,
     borderRadius: 26,
@@ -759,7 +1035,6 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.10)",
   },
   heroFallback: { flex: 1, alignItems: "center", justifyContent: "center", padding: 16 },
-
   videoOverlay: {
     position: "absolute",
     left: 0,
@@ -770,7 +1045,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(0,0,0,0.18)",
   },
-
   iosHint: {
     position: "absolute",
     left: 12,
@@ -789,7 +1063,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: "center",
   },
-
   stepTitle: {
     marginTop: 14,
     color: "rgba(255,255,255,0.90)",
@@ -804,7 +1077,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
   },
-
   actionGrid: {
     marginTop: 14,
     flexDirection: "row",

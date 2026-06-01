@@ -10,7 +10,7 @@ export function AuthBrandHeader({
   subtitle?: string;
 }) {
   return (
-    <View style={{ alignItems: "center", marginBottom: 20 }}>
+    <View style={{ alignItems: "center", marginBottom: 20, width: "100%" }}>
       <Image
         source={require("../../../assets/brand/desifaces-logo.png")}
         style={{
@@ -21,8 +21,19 @@ export function AuthBrandHeader({
         }}
       />
 
-      <View style={{ flexDirection: "row", alignItems: "baseline" }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "baseline",
+          justifyContent: "center",
+          flexWrap: "nowrap",
+          maxWidth: "100%",
+        }}
+      >
         <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.82}
           style={{
             color: DF.brandWordmark ?? "#84EFA2",
             fontSize: 24,
@@ -33,6 +44,9 @@ export function AuthBrandHeader({
           desifaces.
         </Text>
         <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.82}
           style={{
             color: DF.aiWordmark ?? DF.magenta ?? "#D86CFF",
             fontSize: 24,
@@ -52,6 +66,7 @@ export function AuthBrandHeader({
           letterSpacing: 0.15,
           textAlign: "center",
           marginTop: 10,
+          paddingHorizontal: 8,
         }}
       >
         {title}
@@ -63,7 +78,9 @@ export function AuthBrandHeader({
             color: DF.textSoft ?? DF.muted,
             marginTop: 6,
             fontSize: 12,
+            lineHeight: 17,
             textAlign: "center",
+            paddingHorizontal: 12,
           }}
         >
           {subtitle}

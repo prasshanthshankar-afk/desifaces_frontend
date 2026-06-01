@@ -104,7 +104,7 @@ export function LoginScreen() {
       >
         <AuthBrandHeader
           title="Sign in"
-          subtitle="Access your desifaces.ai workspace"
+          subtitle="Access your DesiFaces workspace securely"
         />
 
         <View

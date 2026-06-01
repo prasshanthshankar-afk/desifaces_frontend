@@ -1,10 +1,6 @@
 import React from "react";
-import { Stack } from "expo-router";
+import { Slot } from "expo-router";
 
 export default function FusionLayout() {
-  return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" />
-    </Stack>
-  );
+  return <Slot />;
 }

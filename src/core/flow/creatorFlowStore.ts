@@ -38,6 +38,7 @@ export type VideoSelection = {
 };
 
 export type CreatorFlowState = {
+  ownerKey?: string;
   face?: FaceSelection;
   audio?: AudioSelection;
   video?: VideoSelection;
@@ -95,6 +96,11 @@ function cleanText(value: unknown): string | undefined {
   return s || undefined;
 }
 
+function normalizeOwnerKey(value: unknown): string | undefined {
+  const s = String(value ?? "").trim().toLowerCase();
+  return s || undefined;
+}
+
 // ---- Actions ----
 function setFaceSelection(face: Omit<FaceSelection, "createdAtMs"> & Partial<Pick<FaceSelection, "createdAtMs">>) {
   const createdAtMs = face.createdAtMs ?? Date.now();
@@ -111,6 +117,7 @@ function setFaceSelection(face: Omit<FaceSelection, "createdAtMs"> & Partial<Pic
   };
   setState({
     ...state,
+    ownerKey: state.ownerKey,
     face: normalized,
     faceGender: normalized.gender ?? state.faceGender,
     audio: undefined,
@@ -122,6 +129,7 @@ function setAudioSelection(audio: Omit<AudioSelection, "createdAtMs"> & Partial<
   const createdAtMs = audio.createdAtMs ?? Date.now();
   setState({
     ...state,
+    ownerKey: state.ownerKey,
     audio: {
       ...audio,
       sasUrl: cleanText(audio.sasUrl ?? audio.audioUrl),
@@ -144,6 +152,7 @@ function setVideoSelection(video: Omit<VideoSelection, "createdAtMs"> & Partial<
   const createdAtMs = video.createdAtMs ?? Date.now();
   setState({
     ...state,
+    ownerKey: state.ownerKey,
     video: {
       ...video,
       artifactId: cleanText(video.artifactId),
@@ -159,6 +168,7 @@ function setFusionPrompt(prompt: string) {
   const next = String(prompt ?? "").trim();
   setState({
     ...state,
+    ownerKey: state.ownerKey,
     fusionPrompt: next,
     fusionVideoPrompt: next,
     videoPrompt: next,
@@ -176,12 +186,34 @@ function setVideoPrompt(prompt: string) {
 function setFusionSettings(settings: Partial<CreatorFlowState>) {
   setState({
     ...state,
+    ownerKey: state.ownerKey,
     ...settings,
   });
 }
 
-function resetCreatorFlow() {
-  setState({});
+export function resetCreatorFlow(nextOwnerKey?: string) {
+  const ownerKey = normalizeOwnerKey(nextOwnerKey);
+  setState(ownerKey ? { ownerKey } : {});
+}
+
+export function setCreatorFlowOwner(ownerKey?: string) {
+  const normalizedOwnerKey = normalizeOwnerKey(ownerKey);
+  if (!normalizedOwnerKey) {
+    resetCreatorFlow();
+    return;
+  }
+
+  const currentOwnerKey = normalizeOwnerKey(state.ownerKey);
+  if (currentOwnerKey && currentOwnerKey !== normalizedOwnerKey) {
+    resetCreatorFlow(normalizedOwnerKey);
+    return;
+  }
+
+  if (currentOwnerKey === normalizedOwnerKey) return;
+  setState({
+    ...state,
+    ownerKey: normalizedOwnerKey,
+  });
 }
 
 // ---- Helpers for screens to accept legacy route params (optional) ----
@@ -287,6 +319,7 @@ export function useCreatorFlow() {
       setVideoPrompt,
       setFusionSettings,
       resetCreatorFlow,
+      setCreatorFlowOwner,
       hydrateFaceFromParams,
       hydrateAudioFromParams,
     }),

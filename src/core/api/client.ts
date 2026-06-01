@@ -7,6 +7,7 @@ type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export class ApiError extends Error {
   status: number;
   body?: unknown;
+
   constructor(message: string, status: number, body?: unknown) {
     super(message);
     this.status = status;
@@ -37,6 +38,34 @@ function withTimeout(ms: number) {
 
 function isFormData(body: unknown): body is FormData {
   return typeof FormData !== "undefined" && body instanceof FormData;
+}
+
+function isStringBody(body: unknown): body is string {
+  return typeof body === "string";
+}
+
+function isUrlSearchParamsBody(body: unknown): body is URLSearchParams {
+  return (
+    typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams
+  );
+}
+
+function isBlobBody(body: unknown): body is Blob {
+  return typeof Blob !== "undefined" && body instanceof Blob;
+}
+
+function isArrayBufferBody(body: unknown): body is ArrayBuffer {
+  return typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer;
+}
+
+function isRawBody(body: unknown) {
+  return (
+    isFormData(body) ||
+    isStringBody(body) ||
+    isUrlSearchParamsBody(body) ||
+    isBlobBody(body) ||
+    isArrayBufferBody(body)
+  );
 }
 
 /** Try to extract a human readable error from FastAPI-ish responses. */
@@ -103,14 +132,81 @@ function isAuthFailureResponse(status: number, parsed: any, rawText: string) {
   );
 }
 
+function hasHeader(headers: Record<string, string>, name: string) {
+  const target = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === target);
+}
+
+type RequestHeadersLike = NonNullable<RequestInit["headers"]> | undefined;
+
+function headersInitToRecord(headers?: RequestHeadersLike): Record<string, string> {
+  if (!headers) return {};
+
+  if (typeof Headers !== "undefined" && headers instanceof Headers) {
+    const out: Record<string, string> = {};
+    headers.forEach((value, key) => {
+      out[key] = value;
+    });
+    return out;
+  }
+
+  if (Array.isArray(headers)) {
+    return headers.reduce<Record<string, string>>((acc, [key, value]) => {
+      acc[key] = value;
+      return acc;
+    }, {});
+  }
+
+  return { ...(headers as Record<string, string>) };
+}
+
+function normalizeMethod(method?: string): HttpMethod {
+  const m = (method || "GET").toUpperCase();
+
+  if (
+    m === "GET" ||
+    m === "POST" ||
+    m === "PUT" ||
+    m === "PATCH" ||
+    m === "DELETE"
+  ) {
+    return m;
+  }
+
+  return "GET";
+}
+
 // --------------------
 // Auth lifecycle hooks
 // --------------------
 
 let refreshInFlight: Promise<boolean> | null = null;
-let onAuthFailed: (() => void) | null = null;
+let onAuthFailed: (() => void | Promise<void>) | null = null;
 
-export function setOnAuthFailed(cb: (() => void) | null) {
+const SOFT_AUTH_FAILURE_PATTERNS = [
+  "/api/notifications/unread-count",
+];
+
+function normalizeRequestPath(pathOrUrl: string) {
+  const value = String(pathOrUrl || "").trim();
+  if (!value) return "";
+
+  try {
+    const parsed = new URL(value);
+    return parsed.pathname || value;
+  } catch {
+    return value.startsWith("/") ? value : `/${value}`;
+  }
+}
+
+function isSoftAuthFailurePath(pathOrUrl: string) {
+  const normalized = normalizeRequestPath(pathOrUrl);
+  return SOFT_AUTH_FAILURE_PATTERNS.some((pattern) =>
+    normalized.includes(pattern)
+  );
+}
+
+export function setOnAuthFailed(cb: (() => void | Promise<void>) | null) {
   onAuthFailed = cb;
 }
 
@@ -121,6 +217,7 @@ export function apiSetAuthReady(ready: boolean) {
 
 async function waitForAuthReady(maxMs = 1200) {
   if (authReady) return;
+
   const started = Date.now();
   while (!authReady && Date.now() - started < maxMs) {
     await new Promise((r) => setTimeout(r, 50));
@@ -203,24 +300,33 @@ async function requestRaw<T>(
   const { controller, cancel } = withTimeout(timeoutMs);
   const url = joinUrl(baseUrl, path);
 
-  const bodyIsForm = isFormData(body);
+  const bodyIsRaw = isRawBody(body);
 
   const headers: Record<string, string> = {
     ...(options?.headers ?? {}),
   };
 
-  if (token) headers.Authorization = `Bearer ${token}`;
-  if (body !== undefined && !bodyIsForm) headers["Content-Type"] = "application/json";
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  if (body !== undefined && !bodyIsRaw && !hasHeader(headers, "Content-Type")) {
+    headers["Content-Type"] = "application/json";
+  }
 
   const fetchBody =
-    body === undefined ? undefined : bodyIsForm ? (body as any) : JSON.stringify(body);
+    body === undefined
+      ? undefined
+      : bodyIsRaw
+        ? (body as any)
+        : JSON.stringify(body);
 
   try {
     const res = await fetch(url, {
       method,
       signal: controller.signal,
       headers,
-      body: fetchBody,
+      body: fetchBody as any,
     });
 
     const text = await res.text();
@@ -228,6 +334,30 @@ async function requestRaw<T>(
 
     const parsed = text ? safeJson(text) : null;
     const authFailure = isAuthFailureResponse(res.status, parsed, text);
+    const softAuthFailure =
+      authFailure && (isSoftAuthFailurePath(path) || isSoftAuthFailurePath(url));
+
+    if (authFailure && softAuthFailure) {
+      if (retry401 && token) {
+        const refreshed = await refreshAccessToken();
+        if (refreshed) {
+          return requestRaw<T>(baseUrl, method, path, body, {
+            ...options,
+            retry401: false,
+          });
+        }
+      }
+
+      return {
+        ok: res.ok,
+        status: res.status,
+        url,
+        headers: res.headers,
+        text,
+        parsed,
+        data: (parsed ?? null) as T | null,
+      };
+    }
 
     if (authFailure && retry401) {
       const ok = await refreshAccessToken();
@@ -240,7 +370,7 @@ async function requestRaw<T>(
 
       await tokenStore.clearAll();
       try {
-        onAuthFailed?.();
+        await onAuthFailed?.();
       } catch {
         // ignore
       }
@@ -250,7 +380,7 @@ async function requestRaw<T>(
     if (authFailure) {
       await tokenStore.clearAll();
       try {
-        onAuthFailed?.();
+        await onAuthFailed?.();
       } catch {
         // ignore
       }
@@ -276,7 +406,8 @@ async function requestRaw<T>(
     const detail = e?.message || String(e);
     const isAbort =
       typeof detail === "string" &&
-      (detail.toLowerCase().includes("aborted") || detail.toLowerCase().includes("aborterror"));
+      (detail.toLowerCase().includes("aborted") ||
+        detail.toLowerCase().includes("aborterror"));
 
     throw new ApiError(
       isAbort
@@ -321,25 +452,81 @@ async function request<T>(
 }
 
 // --------------------
+// requestJson convenience helpers
+// --------------------
+
+export type JsonRequestInit = RequestInit & {
+  timeoutMs?: number;
+};
+
+export async function requestJsonAt<T>(
+  baseUrl: string,
+  path: string,
+  init?: JsonRequestInit
+): Promise<T> {
+  const method = normalizeMethod(init?.method);
+  const headers = headersInitToRecord(init?.headers);
+  const body = init?.body ?? undefined;
+
+  return request<T>(baseUrl, method, path, body, {
+    headers,
+    timeoutMs: init?.timeoutMs,
+  });
+}
+
+export async function requestJson<T>(
+  path: string,
+  init?: JsonRequestInit,
+  options?: { baseUrl?: string }
+): Promise<T> {
+  return requestJsonAt<T>(options?.baseUrl ?? CORE_BASE, path, init);
+}
+
+// --------------------
 // Public API surface
 // --------------------
 
 export const api = {
-  get: <T>(baseUrl: string, path: string, opts?: { headers?: Record<string, string>; timeoutMs?: number }) =>
-    request<T>(baseUrl, "GET", path, undefined, opts),
+  get: <T>(
+    baseUrl: string,
+    path: string,
+    opts?: { headers?: Record<string, string>; timeoutMs?: number }
+  ) => request<T>(baseUrl, "GET", path, undefined, opts),
 
-  post: <T>(baseUrl: string, path: string, body?: unknown, opts?: { headers?: Record<string, string>; timeoutMs?: number }) =>
-    request<T>(baseUrl, "POST", path, body, opts),
+  post: <T>(
+    baseUrl: string,
+    path: string,
+    body?: unknown,
+    opts?: { headers?: Record<string, string>; timeoutMs?: number }
+  ) => request<T>(baseUrl, "POST", path, body, opts),
 
-  put: <T>(baseUrl: string, path: string, body?: unknown, opts?: { headers?: Record<string, string>; timeoutMs?: number }) =>
-    request<T>(baseUrl, "PUT", path, body, opts),
+  put: <T>(
+    baseUrl: string,
+    path: string,
+    body?: unknown,
+    opts?: { headers?: Record<string, string>; timeoutMs?: number }
+  ) => request<T>(baseUrl, "PUT", path, body, opts),
 
-  patch: <T>(baseUrl: string, path: string, body?: unknown, opts?: { headers?: Record<string, string>; timeoutMs?: number }) =>
-    request<T>(baseUrl, "PATCH", path, body, opts),
+  patch: <T>(
+    baseUrl: string,
+    path: string,
+    body?: unknown,
+    opts?: { headers?: Record<string, string>; timeoutMs?: number }
+  ) => request<T>(baseUrl, "PATCH", path, body, opts),
 
-  del: <T>(baseUrl: string, path: string, opts?: { headers?: Record<string, string>; timeoutMs?: number }) =>
-    request<T>(baseUrl, "DELETE", path, undefined, opts),
+  del: <T>(
+    baseUrl: string,
+    path: string,
+    opts?: { headers?: Record<string, string>; timeoutMs?: number }
+  ) => request<T>(baseUrl, "DELETE", path, undefined, opts),
 
-  getRaw: <T>(baseUrl: string, path: string, opts?: { headers?: Record<string, string>; timeoutMs?: number }) =>
-    requestRaw<T>(baseUrl, "GET", path, undefined, { headers: opts?.headers, timeoutMs: opts?.timeoutMs }),
+  getRaw: <T>(
+    baseUrl: string,
+    path: string,
+    opts?: { headers?: Record<string, string>; timeoutMs?: number }
+  ) =>
+    requestRaw<T>(baseUrl, "GET", path, undefined, {
+      headers: opts?.headers,
+      timeoutMs: opts?.timeoutMs,
+    }),
 };

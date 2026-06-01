@@ -15,22 +15,31 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { useLocalSearchParams, router } from "expo-router";
-import { useQuery } from "@tanstack/react-query";
-import { Audio } from "expo-av";
+import { useIsFocused } from "@react-navigation/native";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 
 import { DF } from "../../core/theme/colors";
 import DFHeader from "../../core/ui/DFHeader";
 import { useAuth } from "../../core/auth/AuthContext";
 import { shareUrl } from "../../core/share/share";
 import { saveCreateFlowContext } from "../../core/media/createFlow";
+import { useResolvedPricingDisplay } from "../../core/pricing/resolvePricingDisplay";
 import { api } from "../../core/api/client";
 import { endpoints } from "../../core/api/endpoints";
 import { AUDIO_BASE, FACE_BASE } from "../../core/config/env";
 import { derivePricingUiSummary } from "../../core/pricing/pricingSummary";
+import { computeAffordabilityDecision } from "../../core/pricing/studioAffordability";
 
 import { useCreatorFlow } from "../../core/flow/creatorFlowStore";
 import DFBlockingOverlay from "../../core/ui/DFBlockingOverlay";
 import { PricingTopBar } from "../../components/pricing/PricingTopBar";
+import PromptEnhancerSheet, {
+  type PromptEnhancerResult,
+} from "../../components/ai/PromptEnhancerSheet";
+import StudioTipsRail, {
+  type StudioCoachTip,
+} from "../../components/ai/StudioTipsRail";
 import { UpgradePromptSheet } from "../../components/pricing/UpgradePromptSheet";
 import { PricingBreakdownSheet } from "../../components/pricing/PricingBreakdownSheet";
 import { RunReceiptCard } from "../../components/pricing/RunReceiptCard";
@@ -61,6 +70,103 @@ function cleanParam(v: any): string {
   return String(v ?? "").trim().replace(/^"+|"+$/g, "");
 }
 
+function encodeNavUrl(url: string) {
+  const clean = String(url ?? "").trim().replace(/^"+|"+$/g, "");
+  return encodeURIComponent(clean);
+}
+
+
+function decodeNavUrl(v: unknown): string {
+  let s = cleanParam(v);
+  if (!s) return "";
+
+  for (let i = 0; i < 2; i++) {
+    if (/^https?:\/\//i.test(s)) break;
+    try {
+      s = decodeURIComponent(s);
+    } catch {
+      break;
+    }
+  }
+  return s;
+}
+
+function rebuildSasIfSplit(rawUrl: string, params: Record<string, any>) {
+  const u0 = cleanParam(rawUrl);
+  if (!u0) return "";
+
+  const hasQuery = u0.includes("?");
+  if (!hasQuery) return u0;
+
+  const [base, qs] = u0.split("?");
+  if (!qs) return u0;
+
+  const sp = cleanParam((params as any).sp);
+  const sv = cleanParam((params as any).sv);
+  const sr = cleanParam((params as any).sr);
+  const se = cleanParam((params as any).se);
+  const sig = cleanParam((params as any).sig);
+
+  if (!(sp || sv || sr || se || sig)) return u0;
+
+  const parts = qs.split("&").filter(Boolean);
+  const seen = new Set(parts.map((p) => p.split("=")[0]));
+
+  const addIfMissing = (k: string, v: string) => {
+    if (!v) return;
+    if (!seen.has(k)) {
+      parts.push(`${k}=${v}`);
+      seen.add(k);
+    }
+  };
+
+  addIfMissing("sp", sp);
+  addIfMissing("sv", sv);
+  addIfMissing("sr", sr);
+  addIfMissing("se", se);
+  addIfMissing("sig", sig);
+
+  return `${base}?${parts.join("&")}`;
+}
+
+function ensureAzureSigEncoded(url: string) {
+  const u = cleanParam(url);
+  const qIdx = u.indexOf("?");
+  if (qIdx < 0) return u;
+
+  const base = u.slice(0, qIdx);
+  const qs = u.slice(qIdx + 1);
+
+  const parts = qs.split("&").filter(Boolean);
+  const out = parts.map((p) => {
+    const eq = p.indexOf("=");
+    const k = eq >= 0 ? p.slice(0, eq) : p;
+    const v = eq >= 0 ? p.slice(eq + 1) : "";
+
+    if (k !== "sig") return p;
+    if (!v) return p;
+    if (/%[0-9A-Fa-f]{2}/.test(v)) return p;
+    return `sig=${encodeURIComponent(v)}`;
+  });
+
+  return `${base}?${out.join("&")}`;
+}
+
+function normalizeIncomingMediaUrl(raw: unknown, params: Record<string, any>) {
+  const decoded = decodeNavUrl(raw);
+  const rebuilt = rebuildSasIfSplit(decoded, params);
+  return ensureAzureSigEncoded(rebuilt);
+}
+
+function logAudioStudioFlow(step: string, payload: any) {
+  try {
+    console.log("[DF_FLOW][AudioStudio]", step, JSON.stringify(payload, null, 2));
+  } catch {
+    console.log("[DF_FLOW][AudioStudio]", step, payload);
+  }
+}
+
+
 function normalizeAspectRatio(v: any): "9:16" | "16:9" | "1:1" {
   const s = String(v ?? "").trim().toLowerCase();
   if (s === "16:9" || s === "landscape") return "16:9";
@@ -68,34 +174,43 @@ function normalizeAspectRatio(v: any): "9:16" | "16:9" | "1:1" {
   return "9:16";
 }
 
-function isAllowedLocale(code: string) {
-  const c = (code || "").trim();
-  if (!c) return false;
-  return c.endsWith("-IN") || c === "en-US" || c === "en-GB";
+function readBackendLocaleOrder(locale: UiLocale | null | undefined): number | null {
+  if (!locale) return null;
+
+  const raw = (locale as any)?.raw ?? {};
+  const candidates = [
+    (locale as any)?.display_rank,
+    (locale as any)?.displayRank,
+    (locale as any)?.sort_order,
+    (locale as any)?.sortOrder,
+    (locale as any)?.rank,
+    (locale as any)?.priority,
+    raw?.display_rank,
+    raw?.displayRank,
+    raw?.sort_order,
+    raw?.sortOrder,
+    raw?.rank,
+    raw?.priority,
+    raw?.order,
+    raw?.position,
+  ];
+
+  for (const candidate of candidates) {
+    const n = Number(candidate);
+    if (Number.isFinite(n)) return n;
+  }
+
+  return null;
 }
 
-const LOCALE_RANK: Record<string, number> = {
-  "en-IN": 0,
-  "hi-IN": 1,
-  "ta-IN": 2,
-  "te-IN": 3,
-  "kn-IN": 4,
-  "ml-IN": 5,
-  "bn-IN": 6,
-  "mr-IN": 7,
-  "gu-IN": 8,
-  "pa-IN": 9,
-  "ur-IN": 10,
-  "or-IN": 11,
-  "as-IN": 12,
-  "en-US": 90,
-  "en-GB": 91,
-};
 
 type UiAudioDuration = {
   duration_sec?: number;
   duration_ms?: number;
 };
+
+type AudioPlayerHandle = ReturnType<typeof createAudioPlayer>;
+type AudioPlayerSubscription = { remove?: () => void } | null;
 
 function asPositiveNumber(value: any): number | undefined {
   if (value == null) return undefined;
@@ -149,22 +264,51 @@ function formatDurationLabel(duration: UiAudioDuration | null | undefined): stri
   return minutes > 0 ? `${minutes}:${String(seconds).padStart(2, "0")}` : `${seconds}s`;
 }
 
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForAudioPlayerToLoad(player: AudioPlayerHandle, timeoutMs = 4000): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const loaded = Boolean((player as any)?.isLoaded);
+    const durationSeconds = asPositiveNumber((player as any)?.duration);
+    if (loaded || durationSeconds) return;
+    await delay(100);
+  }
+}
+
+async function releaseAudioPlayer(player: AudioPlayerHandle | null | undefined): Promise<void> {
+  if (!player) return;
+  try {
+    await Promise.resolve((player as any)?.pause?.());
+  } catch {}
+  try {
+    await Promise.resolve((player as any)?.seekTo?.(0));
+  } catch {}
+  try {
+    await Promise.resolve((player as any)?.release?.());
+  } catch {}
+}
+
 async function probeRemoteAudioDuration(audioUrl: string): Promise<UiAudioDuration> {
   const url = cleanParam(audioUrl);
   if (!url) return {};
-  let sound: Audio.Sound | null = null;
+
+  let player: AudioPlayerHandle | null = null;
   try {
-    const created = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: false });
-    sound = created.sound;
-    const status: any = await sound.getStatusAsync();
-    if (status?.isLoaded && asPositiveNumber(status.durationMillis)) {
-      return toDuration(status.durationMillis, status.durationMillis / 1000);
+    player = createAudioPlayer(url, {
+      updateInterval: 250,
+      downloadFirst: true,
+    });
+    await waitForAudioPlayerToLoad(player, 3000);
+    const durationSeconds = asPositiveNumber((player as any)?.duration);
+    if (durationSeconds) {
+      return toDuration(durationSeconds * 1000, durationSeconds);
     }
   } catch {}
   finally {
-    try {
-      await sound?.unloadAsync();
-    } catch {}
+    await releaseAudioPlayer(player);
   }
   return {};
 }
@@ -253,16 +397,22 @@ function GlassCard({ children, style }: { children: React.ReactNode; style?: any
 }
 
 function ProgressBar({ progress01, label }: { progress01: Animated.Value; label?: string | null }) {
+  const [progressPct, setProgressPct] = useState(0);
+
+  useEffect(() => {
+    const id = progress01.addListener(({ value }) => {
+      setProgressPct(Math.round(clamp01(value) * 100));
+    });
+    return () => {
+      progress01.removeListener(id);
+    };
+  }, [progress01]);
+
   return (
     <GlassCard style={{ marginTop: 12 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
         <Text style={{ color: DF.text, fontWeight: "900" }}>{label ?? "Progress"}</Text>
-        <Animated.Text style={{ color: DF.muted, fontWeight: "800" }}>
-          {progress01.interpolate({
-            inputRange: [0, 1],
-            outputRange: ["0%", "100%"],
-          })}
-        </Animated.Text>
+        <Text style={{ color: DF.muted, fontWeight: "800" }}>{progressPct}%</Text>
       </View>
 
       <View
@@ -429,27 +579,67 @@ function readVoiceGender(v: UiVoice | undefined | null): string {
 }
 
 function pickPricingLabel(resp: any): string | undefined {
-  const summary = resp?.pricing_summary ?? null;
-  if (summary?.finalLabel) return String(summary.finalLabel);
-  if (summary?.final_label) return String(summary.final_label);
-  if (summary?.receiptLabel) return String(summary.receiptLabel);
-  if (summary?.receipt_label) return String(summary.receipt_label);
-  if (summary?.estimateLabel) return String(summary.estimateLabel);
-  if (summary?.estimate_label) return String(summary.estimate_label);
-
   const pricing = resp?.pricing ?? null;
-  if (pricing?.amount != null && pricing?.currency) return `${pricing.currency} ${pricing.amount}`;
-  return undefined;
+  const summary = resp?.pricing_summary ?? pricing?.summary ?? null;
+  const state = String(pricing?.state ?? summary?.state ?? "").toLowerCase();
+  const billingMode = String(pricing?.billing_mode ?? "").toLowerCase();
+  const settlementMode = String(pricing?.settlement_mode ?? "").toLowerCase();
+
+  if (
+    state === "suppressed" ||
+    billingMode === "internal" ||
+    settlementMode === "internal" ||
+    pricing?.suppressed === true ||
+    pricing?.pricing_suppressed === true ||
+    pricing?.suppress_pricing === true
+  ) {
+    return undefined;
+  }
+
+  if (state === "released") {
+    return (
+      summary?.display_final ||
+      summary?.finalLabel ||
+      summary?.final_label ||
+      (pricing?.currency ? `${pricing.currency} 0.00` : "0.00")
+    );
+  }
+
+  if (state === "committed") {
+    return (
+      summary?.display_final ||
+      summary?.finalLabel ||
+      summary?.final_label ||
+      summary?.receiptLabel ||
+      summary?.receipt_label ||
+      (pricing?.final_amount != null && pricing?.currency ? `${pricing.currency} ${pricing.final_amount}` : undefined) ||
+      (pricing?.amount != null && pricing?.currency ? `${pricing.currency} ${pricing.amount}` : undefined)
+    );
+  }
+
+  return (
+    summary?.display_estimate ||
+    summary?.estimateLabel ||
+    summary?.estimate_label ||
+    summary?.display_final ||
+    (pricing?.estimated_amount != null && pricing?.currency ? `${pricing.currency} ${pricing.estimated_amount}` : undefined) ||
+    (pricing?.amount != null && pricing?.currency ? `${pricing.currency} ${pricing.amount}` : undefined)
+  );
 }
 
 function pickFinalPricingMessage(resp: any): string | null {
-  const summary = resp?.pricing_summary ?? null;
+  const pricing = resp?.pricing ?? null;
+  const summary = resp?.pricing_summary ?? pricing?.summary ?? null;
+  const state = String(pricing?.state ?? summary?.state ?? "").toLowerCase();
+
+  if (typeof summary?.display_note === "string" && summary.display_note.trim()) return summary.display_note;
   if (typeof summary?.message === "string" && summary.message.trim()) return summary.message;
   if (typeof summary?.detail === "string" && summary.detail.trim()) return summary.detail;
 
-  const pricing = resp?.pricing ?? null;
-  if (pricing?.state === "released") return "Reservation released. No final charge was applied.";
-  if (pricing?.state === "committed") return "Final pricing snapshot captured from the completed run.";
+  if (state === "suppressed") return null;
+  if (state === "released") return "Reservation released. No final charge was applied.";
+  if (state === "committed") return "Final charge recorded after execution.";
+
   return null;
 }
 
@@ -458,6 +648,399 @@ function readFinalPricingState(resp: any): "estimated" | "committed" | "released
   if (state === "committed") return "committed";
   if (state === "released") return "released";
   return "estimated";
+}
+
+function formatMoney(amount: number, currency = "USD"): string {
+  const safeCurrency = cleanParam(currency).toUpperCase() || "USD";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: safeCurrency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${safeCurrency} ${amount.toFixed(2)}`;
+  }
+}
+
+function asEstimateNumber(value: any): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function chooseAudioSettlementLabel(pricing: any, insufficientBalance: boolean): string {
+  const settlementMode = cleanParam(pricing?.settlementMode).toLowerCase();
+
+  if (insufficientBalance) return "Not enough available credits for this run.";
+  if (settlementMode === "postpaid") {
+    return "Billed after completion through enterprise invoicing.";
+  }
+  return "Covered by your available credits.";
+}
+
+function normalizeSpeechScript(input: string): string {
+  return cleanParam(input)
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/([,.;:!?])(?!\s|$)/g, "$1 ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksMostlyLatinScript(input: string): boolean {
+  const sample = cleanParam(input);
+  if (!sample) return true;
+  const letters = sample.match(/[A-Za-z]/g)?.length ?? 0;
+  const nonSpace = sample.replace(/\s+/g, "").length;
+  if (!nonSpace) return true;
+  return letters / nonSpace >= 0.45;
+}
+
+function shortenLongEnglishClauses(input: string): string {
+  const normalized = normalizeSpeechScript(input);
+  if (!normalized || !looksMostlyLatinScript(normalized)) return normalized;
+
+  return normalized
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => {
+      const words = sentence.trim().split(/\s+/).filter(Boolean);
+      if (words.length <= 20 || !sentence.includes(',')) return sentence.trim();
+      const parts = sentence.split(/,\s+/).map((part) => part.trim()).filter(Boolean);
+      if (parts.length < 2) return sentence.trim();
+      return parts.join('. ');
+    })
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function ensureTerminalPunctuation(input: string): string {
+  const normalized = normalizeSpeechScript(input);
+  if (!normalized) return normalized;
+  return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
+}
+
+function buildAudioSpeechRewrite(
+  userInput: string,
+  flavor: "primary" | "clear" | "warm" | "expressive"
+): string {
+  const normalized = normalizeSpeechScript(userInput);
+  if (!normalized) return "";
+
+  const base = flavor === "clear"
+    ? shortenLongEnglishClauses(normalized)
+    : normalized;
+
+  const withEnding = ensureTerminalPunctuation(base);
+
+  if (!looksMostlyLatinScript(withEnding)) return withEnding;
+
+  if (flavor === "expressive") {
+    return withEnding
+      .replace(/\bwe're\b/gi, "we are")
+      .replace(/\bi'm\b/gi, "I am");
+  }
+
+  if (flavor === "warm") {
+    return withEnding
+      .replace(/\bcan't\b/gi, "cannot")
+      .replace(/\bwon't\b/gi, "will not");
+  }
+
+  return withEnding;
+}
+
+function getAudioApiBaseUrl(): string {
+  const env = ((globalThis as any)?.process?.env ?? {}) as Record<string, string | undefined>;
+  const raw =
+    cleanParam(AUDIO_BASE) ||
+    cleanParam(env.EXPO_PUBLIC_AUDIO_BASE_URL) ||
+    cleanParam(env.EXPO_PUBLIC_API_AUDIO_URL) ||
+    cleanParam(env.AUDIO_BASE_URL) ||
+    "";
+  return raw.replace(/\/+$/, "");
+}
+
+function resolveAudioApiUrl(path: string): string {
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  const base = getAudioApiBaseUrl();
+
+  if (!base) return `/api/audio${suffix}`;
+  if (/\/api\/audio$/i.test(base) || /\/audio$/i.test(base)) return `${base}${suffix}`;
+  return `${base}/api/audio${suffix}`;
+}
+
+function buildAudioAiHeaders(authLike: any): Record<string, string> {
+  const token =
+    cleanParam(authLike?.token) ||
+    cleanParam(authLike?.accessToken) ||
+    cleanParam(authLike?.authToken) ||
+    cleanParam(authLike?.session?.accessToken) ||
+    cleanParam(authLike?.authState?.accessToken);
+
+  const userId =
+    cleanParam(authLike?.userId) ||
+    cleanParam(authLike?.user?.id) ||
+    cleanParam(authLike?.session?.user?.id) ||
+    cleanParam(authLike?.authState?.user?.id);
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  if (token) headers.Authorization = token.toLowerCase().startsWith("bearer ") ? token : `Bearer ${token}`;
+  if (userId) headers["X-User-Id"] = userId;
+  return headers;
+}
+
+async function postAudioAiJson<T>(paths: string | string[], body: any, authLike: any): Promise<T> {
+  const candidates = Array.isArray(paths) ? paths : [paths];
+  let lastError: Error | null = null;
+
+  for (const path of candidates) {
+    try {
+      const response = await fetch(resolveAudioApiUrl(path), {
+        method: "POST",
+        headers: buildAudioAiHeaders(authLike),
+        body: JSON.stringify(body ?? {}),
+      });
+
+      const rawText = await response.text();
+      let parsed: any = null;
+      try {
+        parsed = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        parsed = rawText;
+      }
+
+      if (!response.ok) {
+        const detail =
+          cleanParam(parsed?.detail?.message) ||
+          cleanParam(parsed?.detail?.error) ||
+          cleanParam(parsed?.detail) ||
+          cleanParam(parsed?.message) ||
+          `Request failed (${response.status})`;
+
+        if (response.status === 404 || response.status === 405 || response.status === 501) {
+          lastError = new Error(detail);
+          continue;
+        }
+        throw new Error(detail);
+      }
+
+      return parsed as T;
+    } catch (error: any) {
+      lastError = error instanceof Error ? error : new Error(String(error ?? "Request failed"));
+    }
+  }
+
+  throw lastError ?? new Error("Request failed");
+}
+
+function normalizeAudioEnhancerResult(raw: any, fallback: PromptEnhancerResult): PromptEnhancerResult {
+  const enhancedInput =
+    cleanParam(raw?.enhanced_input) ||
+    cleanParam(raw?.enhanced_script) ||
+    cleanParam(raw?.enhanced_text) ||
+    cleanParam(raw?.rewrite) ||
+    cleanParam(raw?.result?.enhanced_input) ||
+    cleanParam(raw?.result?.enhanced_script) ||
+    cleanParam(raw?.result?.enhanced_text);
+
+  const rawAlternatives = Array.isArray(raw?.alternatives)
+    ? raw.alternatives
+    : Array.isArray(raw?.result?.alternatives)
+      ? raw.result.alternatives
+      : Array.isArray(raw?.variants)
+        ? raw.variants
+        : [];
+
+  const alternatives = rawAlternatives
+    .map((item: any, index: number) => {
+      const label = cleanParam(item?.label) || cleanParam(item?.title) || `Option ${index + 1}`;
+      const text =
+        cleanParam(item?.text) ||
+        cleanParam(item?.value) ||
+        cleanParam(item?.enhanced_input) ||
+        cleanParam(item?.enhanced_script) ||
+        cleanParam(item?.enhanced_text);
+      return text ? { label, text } : null;
+    })
+    .filter(Boolean) as Array<{ label: string; text: string }>;
+
+  const tips = Array.isArray(raw?.tips)
+    ? raw.tips.map((tip: any) => cleanParam(tip?.body ?? tip?.text ?? tip)).filter(Boolean)
+    : Array.isArray(raw?.result?.tips)
+      ? raw.result.tips.map((tip: any) => cleanParam(tip?.body ?? tip?.text ?? tip)).filter(Boolean)
+      : fallback.tips;
+
+  return {
+    ...fallback,
+    ...raw,
+    enhanced_input: enhancedInput || fallback.enhanced_input,
+    alternatives: alternatives.length ? alternatives : fallback.alternatives,
+    tips: tips.length ? tips : fallback.tips,
+    why_this_is_better:
+      cleanParam(raw?.why_this_is_better) ||
+      cleanParam(raw?.message) ||
+      cleanParam(raw?.detail) ||
+      fallback.why_this_is_better,
+    source: enhancedInput ? cleanParam(raw?.source) || "llm" : fallback.source,
+    fallback_used: !enhancedInput,
+  };
+}
+
+function normalizeStudioCoachTips(raw: any, fallback: StudioCoachTip[]): StudioCoachTip[] {
+  const source = Array.isArray(raw?.tips) ? raw.tips : Array.isArray(raw) ? raw : [];
+  const tips = source
+    .map((tip: any, index: number) => {
+      if (typeof tip === "string") {
+        const body = cleanParam(tip);
+        return body
+          ? {
+              id: `audio-tip-llm-${index + 1}`,
+              title: `Tip ${index + 1}`,
+              body,
+              tone: "neutral" as const,
+            }
+          : null;
+      }
+
+      const title = cleanParam(tip?.title) || `Tip ${index + 1}`;
+      const body = cleanParam(tip?.body) || cleanParam(tip?.text) || cleanParam(tip?.message);
+      if (!body) return null;
+      const toneRaw = cleanParam(tip?.tone).toLowerCase();
+      const tone = ["neutral", "premium", "success", "warning"].includes(toneRaw) ? (toneRaw as StudioCoachTip["tone"]) : "neutral";
+      return {
+        id: cleanParam(tip?.id) || `audio-tip-llm-${index + 1}`,
+        title,
+        body,
+        tone,
+      };
+    })
+    .filter(Boolean) as StudioCoachTip[];
+
+  return tips.length ? tips.slice(0, 4) : fallback;
+}
+
+function buildLocalAudioEnhancement(
+  userInput: string,
+  lockedFields: Record<string, any>
+): PromptEnhancerResult {
+  const chars = cleanParam(userInput).length;
+  const locale = cleanParam(lockedFields?.target_locale_label || lockedFields?.target_locale);
+  const voiceLabel = cleanParam(lockedFields?.voice_label);
+  const context = cleanParam(lockedFields?.context);
+  const why = chars > 280
+    ? "The rewrite tightens pacing and punctuation so the script sounds cleaner when spoken aloud."
+    : "The rewrite preserves your words while making the spoken delivery sound more natural.";
+
+  return {
+    original_input: userInput,
+    enhanced_input: buildAudioSpeechRewrite(userInput, "primary"),
+    alternatives: [
+      { label: "Clear narration", text: buildAudioSpeechRewrite(userInput, "clear") },
+      { label: "Warm delivery", text: buildAudioSpeechRewrite(userInput, "warm") },
+      { label: "Expressive", text: buildAudioSpeechRewrite(userInput, "expressive") },
+    ],
+    tips: [
+      chars > 360 ? "Shorter sentences usually sound better in generated speech." : "Use short sentences for cleaner speech pacing.",
+      locale ? `Keep pronunciation-sensitive words natural for ${locale}.` : "Choose the target locale before generate so pronunciation stays predictable.",
+      voiceLabel ? `Review the rewritten script against the ${voiceLabel} voice before you apply it.` : "Choose a voice before you enhance so the script matches the performer.",
+      context ? `Keep the spoken wording aligned with the ${context} tone you selected.` : "Add a tone cue like warm, energetic, premium, or calm if you want stronger delivery control.",
+      why,
+    ].filter(Boolean),
+    why_this_is_better: why,
+    source: "fallback",
+    fallback_used: true,
+    structured: {
+      target_locale: cleanParam(lockedFields?.target_locale),
+      voice: cleanParam(lockedFields?.voice_label),
+      translate: Boolean(lockedFields?.translate),
+      context,
+      script_length: chars,
+    },
+  };
+}
+
+function buildLocalAudioTips(input: {
+  text: string;
+  localeLabel: string;
+  voiceLabel: string;
+  translate: boolean;
+  context: string;
+  hasFacePreview: boolean;
+  planLabel?: string | null;
+}): StudioCoachTip[] {
+  const tips: StudioCoachTip[] = [];
+  const chars = cleanParam(input.text).length;
+  const plan = cleanParam(input.planLabel).toLowerCase();
+
+  if (!input.hasFacePreview) {
+    tips.push({
+      id: "audio-tip-face",
+      title: "Carry over a face first",
+      body: "Audio Studio works best when it starts from a Face Studio selection so the voice matches the final video flow.",
+      tone: "warning",
+    });
+  }
+
+  if (!cleanParam(input.voiceLabel) || cleanParam(input.voiceLabel) === "Select") {
+    tips.push({
+      id: "audio-tip-voice",
+      title: "Pick the voice first",
+      body: "Choose a voice before refining the script so delivery cues match the final performer.",
+      tone: "neutral",
+    });
+  }
+
+  if (chars > 360) {
+    tips.push({
+      id: "audio-tip-length",
+      title: "Tighten long scripts",
+      body: "Longer scripts can sound flatter. Break them into shorter lines for cleaner pacing and emphasis.",
+      tone: "premium",
+    });
+  } else {
+    tips.push({
+      id: "audio-tip-rhythm",
+      title: "Add spoken rhythm",
+      body: "Use short sentences and clear pauses so the output sounds more natural when spoken aloud.",
+      tone: "premium",
+    });
+  }
+
+  if (!cleanParam(input.context)) {
+    tips.push({
+      id: "audio-tip-context",
+      title: "Name the delivery tone",
+      body: "Add a context cue like warm, festive, premium, calm, or energetic to shape delivery style.",
+      tone: "neutral",
+    });
+  }
+
+  if (input.translate) {
+    tips.push({
+      id: "audio-tip-translate",
+      title: "Translation is on",
+      body: `Review proper nouns and brand names before generate so they sound correct in ${input.localeLabel || "the target locale"}.`,
+      tone: "success",
+    });
+  }
+
+  if (plan.includes("free")) {
+    tips.push({
+      id: "audio-tip-cost",
+      title: "Refine before you run",
+      body: "Use enhancement and script tightening before generate so you spend credits only on the strongest version.",
+      tone: "warning",
+    });
+  }
+
+  return tips.slice(0, 4);
 }
 
 function stageFromAudioStatus(status: any): StudioJobItem["stage"] {
@@ -490,13 +1073,22 @@ function nextProgress(current: number, stage: StudioJobItem["stage"]): number {
 type AudioEstimateResult = {
   preview: boolean;
   estimateLabel: string;
+  primaryEstimateLabel: string;
+  secondaryEstimateLabel: string;
+  creditEstimateLabel: string;
+  moneyEstimateLabel: string;
+  noteLabel: string;
   detailLabel: string;
   settlementLabel: string;
+  settlementMode?: string;
+  tierCode?: string;
   planLabel: string;
   availableLabel: string;
   holdLabel?: string;
   ctaLabel: string;
   insufficientBalance: boolean;
+  topUpVisible: boolean;
+  upgradeVisible: boolean;
   confirmation?: { quote_id?: string; preview_fingerprint?: string } | null;
   raw?: any;
   pricing?: ReturnType<typeof normalizePricing>;
@@ -507,11 +1099,44 @@ export default function AudioStudioScreen() {
   const auth = useAuth() as any;
   const { isReady, isAuthed, token } = auth;
   const tokenReady = !!token && isReady && isAuthed;
+  const audioAiAuth = useMemo(
+    () => ({
+      token:
+        cleanParam(auth?.token) ||
+        cleanParam(auth?.accessToken) ||
+        cleanParam(auth?.authToken) ||
+        cleanParam(auth?.session?.accessToken) ||
+        cleanParam(auth?.authState?.accessToken) ||
+        "",
+      userId:
+        cleanParam(auth?.userId) ||
+        cleanParam(auth?.user?.id) ||
+        cleanParam(auth?.session?.user?.id) ||
+        cleanParam(auth?.authState?.user?.id) ||
+        "",
+    }),
+    [
+      auth?.token,
+      auth?.accessToken,
+      auth?.authToken,
+      auth?.session?.accessToken,
+      auth?.authState?.accessToken,
+      auth?.userId,
+      auth?.user?.id,
+      auth?.session?.user?.id,
+      auth?.authState?.user?.id,
+    ]
+  );
 
+  const queryClient = useQueryClient();
   const flow = useCreatorFlow() as any;
   const setFaceSelection = flow?.setFaceSelection as undefined | ((x: any) => void);
   const setAudioSelection = flow?.setAudioSelection as undefined | ((x: any) => void);
   const setFusionSettings = flow?.setFusionSettings as undefined | ((x: any) => void);
+  const resetCreatorFlow = flow?.resetCreatorFlow as undefined | ((nextOwnerKey?: string) => void);
+  const setCreatorFlowOwner = flow?.setCreatorFlowOwner as undefined | ((ownerKey?: string) => void);
+  const authUserId = audioAiAuth.userId || "";
+  const authSessionKey = authUserId || "anon";
 
   const params = useLocalSearchParams<{
     face_job_id?: string | string[];
@@ -536,8 +1161,10 @@ export default function AudioStudioScreen() {
     cleanParam(params.media_asset_id) ||
     "";
   const faceArtifactIdParam = cleanParam(params.face_artifact_id) || "";
-  const faceImageUrlParam =
-    cleanParam(params.face_sas_url) || cleanParam(params.face_image_url) || cleanParam(params.image_url) || "";
+  const faceImageUrlParam = normalizeIncomingMediaUrl(
+    cleanParam(params.face_sas_url) || cleanParam(params.face_image_url) || cleanParam(params.image_url) || "",
+    params as any
+  );
   const faceGenderParam = cleanParam(params.gender) || "";
   const selectedAspectRatio = normalizeAspectRatio(cleanParam(params.aspect_ratio) || cleanParam(params.resolution) || flow?.fusionAspectRatio || "9:16");
 
@@ -555,6 +1182,14 @@ export default function AudioStudioScreen() {
   const [finalPricingState, setFinalPricingState] = useState<"estimated" | "committed" | "released">("estimated");
   const [showPricingBreakdown, setShowPricingBreakdown] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [enhancerOpen, setEnhancerOpen] = useState(false);
+  const [enhancerLoading, setEnhancerLoading] = useState(false);
+  const [enhancerError, setEnhancerError] = useState<string | null>(null);
+  const [enhancerResult, setEnhancerResult] = useState<PromptEnhancerResult | null>(null);
+  const [studioTips, setStudioTips] = useState<StudioCoachTip[]>([]);
+  const [tipsLoading, setTipsLoading] = useState(false);
+  const [tipsError, setTipsError] = useState<string | null>(null);
+  const isFocused = useIsFocused();
 
   const [text, setText] = useState("");
   const [targetLocale, setTargetLocale] = useState("hi-IN");
@@ -563,9 +1198,56 @@ export default function AudioStudioScreen() {
 
   const [voice, setVoice] = useState<string | null>(null);
   const [context, setContext] = useState<string>("");
+  const [debouncedText, setDebouncedText] = useState("");
+  const [debouncedContext, setDebouncedContext] = useState("");
 
   const [variants, setVariants] = useState<VariantAudio[]>([]);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+
+  const lastAuthSessionKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!isReady) return;
+
+    const prevAuthSessionKey = lastAuthSessionKeyRef.current;
+    if (prevAuthSessionKey === authSessionKey) {
+      setCreatorFlowOwner?.(authUserId || undefined);
+      return;
+    }
+
+    lastAuthSessionKeyRef.current = authSessionKey;
+    setCreatorFlowOwner?.(authUserId || undefined);
+
+    if (prevAuthSessionKey == null) return;
+
+    resetCreatorFlow?.();
+    setVariants([]);
+    setSelectedIdx(null);
+    setStatusText(null);
+    setNeedsLogin(false);
+    setFinalPricingLabel(null);
+    setFinalPricingMessage(null);
+    setFinalPricingState("estimated");
+    setBackgroundNotice(null);
+
+    void queryClient.removeQueries({
+      predicate: (query: any) => {
+        const key = JSON.stringify(query?.queryKey ?? "").toLowerCase();
+        return (
+          key.includes("pricing") ||
+          key.includes("credit") ||
+          key.includes("balance") ||
+          key.includes("dashboard") ||
+          key.includes("subscription") ||
+          key.includes("plan") ||
+          key.includes("face-status") ||
+          key.includes("audio-")
+        );
+      },
+    });
+
+    router.replace("/(tabs)/audio" as any);
+  }, [authSessionKey, authUserId, isReady, queryClient, resetCreatorFlow, setCreatorFlowOwner]);
 
   const [openLocale, setOpenLocale] = useState(false);
   const [openSource, setOpenSource] = useState(false);
@@ -595,23 +1277,83 @@ export default function AudioStudioScreen() {
     return () => clearTimeout(t);
   }, [backgroundNotice]);
 
-  const flowFace = flow?.faceSelection ?? flow?.face ?? null;
-  const flowFaceUrl = cleanParam(flowFace?.sasUrl ?? flowFace?.imageUrl ?? flowFace?.image_url ?? "");
-  const flowFaceMediaAssetId = cleanParam(flowFace?.mediaAssetId ?? flowFace?.media_asset_id ?? "");
-  const flowFaceArtifactId = cleanParam(flowFace?.artifactId ?? flowFace?.artifact_id ?? "");
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedText(text.trim());
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [text]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedContext(context.trim());
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [context]);
+
+  const rawFlowFace = flow?.faceSelection ?? flow?.face ?? null;
+  const flowFaceOwnerUserId = cleanParam(
+    rawFlowFace?.ownerUserId ??
+      rawFlowFace?.owner_user_id ??
+      rawFlowFace?.userId ??
+      rawFlowFace?.user_id ??
+      ""
+  );
+  const flowFace =
+    authUserId && flowFaceOwnerUserId && flowFaceOwnerUserId !== authUserId ? null : rawFlowFace;
+  const flowFaceUrl = cleanParam(
+    flowFace?.sasUrl ?? flowFace?.imageUrl ?? flowFace?.image_url ?? flowFace?.face_image_url ?? ""
+  );
+  const flowFaceMediaAssetId = cleanParam(
+    flowFace?.mediaAssetId ?? flowFace?.faceMediaAssetId ?? flowFace?.media_asset_id ?? flowFace?.face_media_asset_id ?? ""
+  );
+  const flowFaceArtifactId = cleanParam(
+    flowFace?.artifactId ??
+      flowFace?.faceArtifactId ??
+      flowFace?.artifact_id ??
+      flowFace?.face_artifact_id ??
+      ""
+  );
   const flowFaceGender = cleanParam(flowFace?.gender ?? "");
 
   const effectiveFaceMediaAssetId = flowFaceMediaAssetId || faceMediaAssetIdParam;
   const effectiveFaceGender = flowFaceGender || faceGenderParam || "";
   const effectiveFaceArtifactId = flowFaceArtifactId || faceArtifactIdParam;
 
+  const rawFlowAudio = flow?.audioSelection ?? flow?.audio ?? null;
+  const flowAudioOwnerUserId = cleanParam(
+    rawFlowAudio?.ownerUserId ??
+      rawFlowAudio?.owner_user_id ??
+      rawFlowAudio?.userId ??
+      rawFlowAudio?.user_id ??
+      ""
+  );
+  const flowAudio =
+    authUserId && flowAudioOwnerUserId && flowAudioOwnerUserId !== authUserId ? null : rawFlowAudio;
+  const existingAudioUrl = cleanParam(flowAudio?.audioUrl ?? flowAudio?.sasUrl ?? "");
+  const existingAudioArtifactId = cleanParam(
+    flowAudio?.artifactId ??
+      flowAudio?.audioArtifactId ??
+      flowAudio?.artifact_id ??
+      flowAudio?.audio_artifact_id ??
+      ""
+  );
+  const existingAudioTitle = cleanParam(flowAudio?.title ?? "");
+  const existingAudioDuration = toDuration(
+    asPositiveNumber(flowAudio?.durationMs ?? flowAudio?.duration_ms),
+    asPositiveNumber(flowAudio?.durationSec ?? flowAudio?.duration_sec)
+  );
+  const hasExistingLibraryAudio = !!existingAudioUrl;
+
   type FaceStatus = { variants?: Array<{ media_asset_id?: string; image_url?: string }> };
 
   const faceStatusQ = useQuery({
-    queryKey: ["face-status", faceJobId],
+    queryKey: ["face-status", authSessionKey, faceJobId],
     queryFn: () => api.get<FaceStatus>(FACE_BASE, `/api/face/creator/jobs/${faceJobId}/status`),
     enabled: tokenReady && !!faceJobId && !flowFaceUrl && !faceImageUrlParam,
     staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnReconnect: true,
     retry: 0,
   });
 
@@ -632,7 +1374,7 @@ export default function AudioStudioScreen() {
     return url || null;
   }, [flowFaceUrl, faceImageUrlParam, faceStatusQ.data, effectiveFaceMediaAssetId]);
 
-  const hasFacePreview = !!faceImageUrl;
+  const hasFacePreview = !!faceImageUrl || !!effectiveFaceArtifactId;
   const hasFaceArtifact = !!effectiveFaceArtifactId;
 
   useEffect(() => {
@@ -642,12 +1384,30 @@ export default function AudioStudioScreen() {
 
     setFaceSelection({
       artifactId: effectiveFaceArtifactId || undefined,
+      faceArtifactId: effectiveFaceArtifactId || undefined,
+      artifact_id: effectiveFaceArtifactId || undefined,
+      face_artifact_id: effectiveFaceArtifactId || undefined,
+
       mediaAssetId: effectiveFaceMediaAssetId || undefined,
+      faceMediaAssetId: effectiveFaceMediaAssetId || undefined,
+      media_asset_id: effectiveFaceMediaAssetId || undefined,
+      face_media_asset_id: effectiveFaceMediaAssetId || undefined,
+
       faceProfileId: faceProfileId || undefined,
+      face_profile_id: faceProfileId || undefined,
+
       sasUrl: faceImageUrl,
       imageUrl: faceImageUrl,
+      image_url: faceImageUrl,
+      face_image_url: faceImageUrl,
+      face_sas_url: faceImageUrl,
+
       variantIndex: undefined,
       ...(effectiveFaceGender ? ({ gender: effectiveFaceGender } as any) : {}),
+      ownerUserId: authUserId || undefined,
+      owner_user_id: authUserId || undefined,
+      userId: authUserId || undefined,
+      user_id: authUserId || undefined,
     } as any);
   }, [faceImageUrl, setFaceSelection, flowFaceUrl, effectiveFaceArtifactId, effectiveFaceMediaAssetId, effectiveFaceGender]);
 
@@ -655,19 +1415,32 @@ export default function AudioStudioScreen() {
     if (!faceImageUrl) return;
     saveCreateFlowContext({
       image_url: faceImageUrl || undefined,
+      face_image_url: faceImageUrl || undefined,
+      face_sas_url: faceImageUrl || undefined,
+
       face_artifact_id: effectiveFaceArtifactId || undefined,
+      artifact_id: effectiveFaceArtifactId || undefined,
+
       face_profile_id: faceProfileId || undefined,
+      face_media_asset_id: effectiveFaceMediaAssetId || undefined,
       media_asset_id: effectiveFaceMediaAssetId || undefined,
+
       aspect_ratio: selectedAspectRatio,
       ...(effectiveFaceGender ? ({ gender: effectiveFaceGender } as any) : {}),
+      ownerUserId: authUserId || undefined,
+      owner_user_id: authUserId || undefined,
+      userId: authUserId || undefined,
+      user_id: authUserId || undefined,
     } as any).catch(() => {});
   }, [faceImageUrl, effectiveFaceArtifactId, faceProfileId, effectiveFaceMediaAssetId, effectiveFaceGender, selectedAspectRatio]);
 
   const localesQ = useQuery({
-    queryKey: ["audio-locales"],
+    queryKey: ["audio-locales", authSessionKey],
     queryFn: () => fetchAudioLocales(token),
     enabled: tokenReady,
-    staleTime: 5 * 60_000,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnReconnect: true,
     retry: 0,
   });
 
@@ -675,15 +1448,71 @@ export default function AudioStudioScreen() {
   const uiLocales: UiLocale[] = useMemo(() => normalizeLocales(localesQ.data as any), [localesQ.data]);
 
   const filteredLocales: UiLocale[] = useMemo(() => {
-    const list = uiLocales.filter((l) => isAllowedLocale(l.code));
-    list.sort((a, b) => {
-      const ra = LOCALE_RANK[a.code] ?? 50;
-      const rb = LOCALE_RANK[b.code] ?? 50;
-      if (ra !== rb) return ra - rb;
-      return String(a.label).localeCompare(String(b.label)) || String(a.code).localeCompare(String(b.code));
+    const list = uiLocales.filter((l) => cleanParam(l.code));
+
+    const withIndex = list.map((locale, index) => ({
+      locale,
+      index,
+      backendOrder: readBackendLocaleOrder(locale),
+    }));
+
+    const hasBackendOrdering = withIndex.some((item) => item.backendOrder != null);
+
+    if (!hasBackendOrdering) {
+      return withIndex.map((item) => item.locale);
+    }
+
+    withIndex.sort((a, b) => {
+      if (a.backendOrder == null && b.backendOrder == null) return a.index - b.index;
+      if (a.backendOrder == null) return 1;
+      if (b.backendOrder == null) return -1;
+      if (a.backendOrder !== b.backendOrder) return a.backendOrder - b.backendOrder;
+      return a.index - b.index;
     });
-    return list;
+
+    return withIndex.map((item) => item.locale);
   }, [uiLocales]);
+
+  useEffect(() => {
+    try {
+      console.log(
+        "[DF_AUDIO][locales][backend_raw]",
+        JSON.stringify(localesQ.data ?? null, null, 2)
+      );
+      console.log(
+        "[DF_AUDIO][locales][normalized]",
+        JSON.stringify(
+          uiLocales.map((locale: any, index: number) => ({
+            index,
+            code: locale?.code,
+            label: locale?.label,
+            display_rank: locale?.display_rank ?? locale?.displayRank ?? locale?.raw?.display_rank ?? locale?.raw?.displayRank,
+            sort_order: locale?.sort_order ?? locale?.sortOrder ?? locale?.raw?.sort_order ?? locale?.raw?.sortOrder,
+            rank: locale?.rank ?? locale?.raw?.rank,
+            priority: locale?.priority ?? locale?.raw?.priority,
+          })),
+          null,
+          2
+        )
+      );
+      console.log(
+        "[DF_AUDIO][locales][final_screen_list]",
+        JSON.stringify(
+          filteredLocales.map((locale: any, index: number) => ({
+            index,
+            code: locale?.code,
+            label: locale?.label,
+            backend_order:
+              readBackendLocaleOrder(locale),
+          })),
+          null,
+          2
+        )
+      );
+    } catch (error) {
+      console.log("[DF_AUDIO][locales][log_error]", String(error));
+    }
+  }, [localesQ.data, uiLocales, filteredLocales]);
 
   useEffect(() => {
     if (!filteredLocales.length) return;
@@ -695,10 +1524,12 @@ export default function AudioStudioScreen() {
   }, [filteredLocales, targetLocale]);
 
   const voicesQ = useQuery({
-    queryKey: ["audio-voices", targetLocale],
+    queryKey: ["audio-voices", authSessionKey, targetLocale],
     queryFn: () => fetchAudioVoices(token, targetLocale),
     enabled: tokenReady && !!targetLocale,
-    staleTime: 5 * 60_000,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnReconnect: true,
     retry: 0,
   });
 
@@ -742,21 +1573,26 @@ export default function AudioStudioScreen() {
 
   const pricingPreviewPayload = useMemo(
     () => ({
-      text: text.trim() || undefined,
+      text: debouncedText || undefined,
       target_locale: targetLocale || undefined,
       source_language: translate ? sourceLanguage || undefined : undefined,
       translate,
       voice: voice || undefined,
       voice_id: voice || undefined,
-      context: context?.trim() || undefined,
+      context: debouncedContext || undefined,
     }),
-    [text, targetLocale, sourceLanguage, translate, voice, context]
+    [debouncedText, targetLocale, sourceLanguage, translate, voice, debouncedContext]
   );
 
+  const pricingPreviewEnabled = tokenReady && !!faceImageUrl && !!debouncedText && !!voice;
+
   const pricingQ = useQuery<AudioEstimateResult>({
-    queryKey: ["audio-pricing-estimate", pricingPreviewPayload],
-    enabled: tokenReady && !!faceImageUrl && !!text.trim() && !!voice,
-    staleTime: 20_000,
+    queryKey: ["audio-pricing-estimate", authSessionKey, pricingPreviewPayload],
+    enabled: pricingPreviewEnabled,
+    placeholderData: (previousData) => previousData,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnReconnect: true,
     retry: 0,
     queryFn: async () => {
       const raw = await api.post<any>(
@@ -792,10 +1628,49 @@ export default function AudioStudioScreen() {
           undefined,
       };
 
-      const estimateLabel = pricingSummary?.estimateLabel || pricingSummary?.receiptLabel || "Estimate pending";
       const messageText = String(raw?.message || pricingSummary?.message || pricing?.message || "").toLowerCase();
+
+      const creditUnits =
+        asEstimateNumber(raw?.estimated_credits) ??
+        asEstimateNumber(raw?.credits_used) ??
+        asEstimateNumber(raw?.estimated_units) ??
+        asEstimateNumber(raw?.units) ??
+        Math.max(1, Math.ceil((debouncedText || text.trim()).length / 250));
+      const creditEstimateLabel = `${Math.max(0, Math.round(creditUnits))} credit${Math.max(0, Math.round(creditUnits)) === 1 ? "" : "s"}`;
+
+      const moneyAmount =
+        asEstimateNumber(raw?.estimated_amount) ??
+        asEstimateNumber(raw?.amount) ??
+        asEstimateNumber(raw?.pricing?.estimated_amount) ??
+        asEstimateNumber(raw?.pricing?.amount) ??
+        0;
+      const moneyCurrency = cleanParam(raw?.currency) || cleanParam(raw?.pricing?.currency) || "USD";
+      const moneyEstimateLabel = formatMoney(moneyAmount, moneyCurrency);
+
+      const settlementMode = cleanParam(pricing?.settlementMode).toLowerCase();
+      const useMoneyPrimary = settlementMode === "postpaid";
+      const primaryEstimateLabel = useMoneyPrimary ? moneyEstimateLabel : creditEstimateLabel;
+      const secondaryEstimateLabel = useMoneyPrimary ? creditEstimateLabel : moneyEstimateLabel;
+      const planLabel =
+        pricing?.tierCode ||
+        raw?.pricing?.tier_code ||
+        raw?.tier_code ||
+        raw?.entitlement?.tier_code ||
+        "Current plan";
+      const isEnterprisePlan = String(planLabel).toLowerCase().includes("enterprise");
+
+      const affordability = computeAffordabilityDecision({
+        preview: raw,
+        hasRequiredInputs: true,
+        studioTitle: "Audio",
+        canTopUp: !isEnterprisePlan && !useMoneyPrimary,
+        canUpgrade: !isEnterprisePlan && !useMoneyPrimary,
+        isEnterprise: isEnterprisePlan,
+      });
+
       const insufficientBalance = Boolean(
-        raw?.insufficient_balance ||
+        affordability.insufficientBalance ||
+          raw?.insufficient_balance ||
           raw?.insufficientBalance ||
           (pricing as any)?.insufficientBalance ||
           (pricingSummary as any)?.insufficientBalance ||
@@ -803,38 +1678,43 @@ export default function AudioStudioScreen() {
           messageText.includes("not enough credit")
       );
 
+      const noteLabel = insufficientBalance
+        ? [affordability.primaryMessage, affordability.secondaryMessage].filter(Boolean).join(" ")
+        : chooseAudioSettlementLabel(pricing, false);
+
       return {
-        preview: false,
-        estimateLabel,
-        detailLabel: `${text.trim().length} characters • ${targetLocale} • ${voiceLabel}`,
-        settlementLabel:
-          pricing?.settlementMode === "postpaid"
-            ? "Final billed amount is confirmed after completion."
-            : pricing?.settlementMode === "included"
-              ? "This run is covered by plan or included quota."
-              : pricing?.message || pricingSummary?.message || "Reservation is finalized after completion.",
-        planLabel:
-          pricing?.tierCode ||
-          raw?.pricing?.tier_code ||
-          raw?.tier_code ||
-          raw?.entitlement?.tier_code ||
-          "Current plan",
+        preview: !confirmation.quote_id,
+        estimateLabel: primaryEstimateLabel,
+        primaryEstimateLabel,
+        secondaryEstimateLabel,
+        creditEstimateLabel,
+        moneyEstimateLabel,
+        noteLabel,
+        detailLabel: `${(debouncedText || text.trim()).length} characters • ${targetLocale} • ${voiceLabel}`,
+        settlementLabel: noteLabel,
+        planLabel,
         availableLabel:
           insufficientBalance
-            ? "Not enough credits for this run"
-            : pricing?.billingMode === "bill"
+            ? affordability.secondaryMessage || affordability.primaryMessage
+            : settlementMode === "postpaid"
               ? "Billed after completion"
               : pricing?.settlementMode === "included"
                 ? "Covered by plan"
-                : "Balance available",
+                : "Credits available",
         holdLabel:
           pricing?.stage === "reserved"
-            ? pricingSummary?.message || "Amount reserved"
-            : pricing?.settlementMode === "postpaid"
+            ? pricingSummary?.message || "Credits reserved"
+            : settlementMode === "postpaid"
               ? "No credit hold"
               : undefined,
-        ctaLabel: confirmation.quote_id ? `Create Audio — ${estimateLabel}` : "Create Audio",
+        ctaLabel: insufficientBalance
+          ? affordability.ctaLabel
+          : confirmation.quote_id
+            ? `Create Audio — ${primaryEstimateLabel}`
+            : "Create Audio",
         insufficientBalance,
+        topUpVisible: insufficientBalance && !useMoneyPrimary && !isEnterprisePlan,
+        upgradeVisible: insufficientBalance && !useMoneyPrimary,
         confirmation,
         raw,
         pricing,
@@ -846,28 +1726,317 @@ export default function AudioStudioScreen() {
   const pricing = pricingQ.data;
   const pricingConfirmation = pricing?.confirmation ?? null;
   const pricingReady = Boolean(pricingConfirmation?.quote_id);
+
+  const audioEnhancerLockedFields = useMemo(() => ({
+    target_locale: targetLocale,
+    target_locale_label: localeLabel,
+    voice: voice ?? undefined,
+    voice_label: voiceLabel,
+    translate,
+    source_language: sourceLanguage ?? undefined,
+    source_language_label: sourceLabel,
+    context: context?.trim() || undefined,
+    face_ready: hasFacePreview,
+  }), [targetLocale, localeLabel, voice, voiceLabel, translate, sourceLanguage, sourceLabel, context, hasFacePreview]);
+
+  const displayedPrimaryEstimate = pricing?.primaryEstimateLabel ?? pricing?.estimateLabel ?? "Estimate pending";
+  const isPostpaidPricing =
+    ((() => {
+      const settlementMode = cleanParam(pricing?.pricing?.settlementMode ?? pricing?.settlementMode).toLowerCase();
+      const settlement = cleanParam(pricing?.settlementLabel ?? pricing?.noteLabel).toLowerCase();
+      const availability = cleanParam(pricing?.availableLabel).toLowerCase();
+      return (
+        settlementMode === "postpaid" ||
+        settlement.includes("billed after completion") ||
+        settlement.includes("enterprise invoicing") ||
+        settlement.includes("postpaid") ||
+        availability.includes("billed after completion")
+      );
+    })());
+  const displayedSecondaryEstimate = undefined;
+  const displayedCreditEstimate = isPostpaidPricing ? null : (pricing?.creditEstimateLabel ?? null);
+  const displayedCashEstimate = isPostpaidPricing
+    ? (cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || null)
+    : null;
+  const visiblePrimaryEstimate = isPostpaidPricing
+    ? displayedCashEstimate || displayedPrimaryEstimate
+    : displayedCreditEstimate || displayedPrimaryEstimate;
+  const displayedNoteLabel = pricing?.noteLabel ?? pricing?.settlementLabel ?? (isPostpaidPricing
+    ? "Billed after completion through your postpaid account."
+    : "Covered by your available credits.");
+  const pricingDisplay = useResolvedPricingDisplay({ enabled: isReady && isAuthed && isFocused });
+  const livePlanLabel =
+    pricingDisplay.planName ||
+    pricing?.planLabel ||
+    undefined;
+  const liveCreditBreakdownLabel =
+    pricingDisplay.creditDetailLabel ||
+    pricingDisplay.creditBreakdownLabel ||
+    undefined;
+  const liveUsageLabel =
+    liveCreditBreakdownLabel ||
+    pricingDisplay.usageLabel ||
+    pricingDisplay.availableOutOfTotalLabel ||
+    pricingDisplay.readableAvailableLabel ||
+    pricing?.availableLabel ||
+    undefined;
+  const liveAvailableLabel =
+    pricingDisplay.availableOutOfTotalLabel ||
+    pricingDisplay.readableAvailableLabel ||
+    pricing?.availableLabel ||
+    undefined;
+  const liveBillingValueLabel =
+    pricingDisplay.billingValue ? `${pricingDisplay.billingValue} billing` : null;
+
+  useEffect(() => {
+    if (!__DEV__) return;
+    logAudioStudioFlow("pricing_display", {
+      resolved: {
+        source: pricingDisplay.source,
+        planName: pricingDisplay.planName,
+        displayKind: pricingDisplay.displayKind,
+        settlementKind: pricingDisplay.settlementKind,
+        availableCredits: pricingDisplay.availableCredits,
+        reservedCredits: pricingDisplay.reservedCredits,
+        usedCredits: pricingDisplay.usedCredits,
+        totalCredits: pricingDisplay.totalCredits,
+        usageLabel: pricingDisplay.usageLabel,
+      },
+      rendered: {
+        livePlanLabel,
+        liveUsageLabel,
+        liveAvailableLabel,
+        liveBillingValueLabel,
+      },
+      estimate: pricing
+        ? {
+            planLabel: pricing.planLabel,
+            availableLabel: pricing.availableLabel,
+            settlementLabel: pricing.settlementLabel,
+            estimateLabel: pricing.estimateLabel,
+            primaryEstimateLabel: pricing.primaryEstimateLabel,
+          }
+        : null,
+    });
+  }, [
+    pricingDisplay.source,
+    pricingDisplay.planName,
+    pricingDisplay.displayKind,
+    pricingDisplay.settlementKind,
+    pricingDisplay.availableCredits,
+    pricingDisplay.reservedCredits,
+    pricingDisplay.usedCredits,
+    pricingDisplay.totalCredits,
+    pricingDisplay.usageLabel,
+    livePlanLabel,
+    liveUsageLabel,
+    liveAvailableLabel,
+    liveBillingValueLabel,
+    pricing?.planLabel,
+    pricing?.availableLabel,
+    pricing?.settlementLabel,
+    pricing?.estimateLabel,
+    pricing?.primaryEstimateLabel,
+  ]);
+
+  const refreshStudioTips = useCallback(async () => {
+    const fallbackTips = buildLocalAudioTips({
+      text,
+      localeLabel,
+      voiceLabel,
+      translate,
+      context,
+      hasFacePreview,
+      planLabel: pricing?.planLabel ?? null,
+    });
+
+    setTipsLoading(true);
+    setTipsError(null);
+
+    if (!tokenReady) {
+      setStudioTips(fallbackTips);
+      setTipsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await postAudioAiJson<any>(
+        ["/api/audio/tts/tips"],
+        {
+          mode: "tts",
+          prompt: text.trim(),
+          form_state: {
+            ...audioEnhancerLockedFields,
+            face_artifact_ready: hasFaceArtifact,
+          },
+          context: {
+            plan_name: pricing?.planLabel ?? null,
+            available_label: pricing?.availableLabel ?? null,
+            estimate_label: pricing?.estimateLabel ?? null,
+            insufficient_balance: pricing?.insufficientBalance ?? false,
+          },
+          locale: targetLocale || "en",
+          limit: 4,
+        },
+        audioAiAuth
+      );
+
+      setStudioTips(normalizeStudioCoachTips(response, fallbackTips));
+      setTipsError(null);
+    } catch {
+      setStudioTips(fallbackTips);
+      setTipsError(null);
+    } finally {
+      setTipsLoading(false);
+    }
+  }, [
+    text,
+    localeLabel,
+    voiceLabel,
+    translate,
+    context,
+    hasFacePreview,
+    hasFaceArtifact,
+    pricing?.planLabel,
+    pricing?.availableLabel,
+    pricing?.estimateLabel,
+    pricing?.insufficientBalance,
+    audioEnhancerLockedFields,
+    targetLocale,
+    tokenReady,
+    audioAiAuth,
+  ]);
+
+  const requestPromptEnhancement = useCallback(async () => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      setStatusText("Add a script first, then tap Enhance.");
+      return;
+    }
+
+    setEnhancerOpen(true);
+    setEnhancerLoading(true);
+    setEnhancerError(null);
+
+    const fallback = buildLocalAudioEnhancement(trimmed, audioEnhancerLockedFields);
+
+    if (!tokenReady) {
+      setEnhancerResult(fallback);
+      setEnhancerError("Live script enhancement is unavailable right now. Showing a smart local rewrite instead.");
+      setEnhancerLoading(false);
+      return;
+    }
+
+    try {
+      const response = await postAudioAiJson<any>(
+        ["/api/audio/tts/prompt/enhance"],
+        {
+          mode: "tts",
+          user_input: trimmed,
+          locked_fields: {
+            ...audioEnhancerLockedFields,
+            face_artifact_ready: hasFaceArtifact,
+          },
+          context: {
+            plan_name: pricing?.planLabel ?? null,
+            available_label: pricing?.availableLabel ?? null,
+            estimate_label: pricing?.estimateLabel ?? null,
+            insufficient_balance: pricing?.insufficientBalance ?? false,
+            has_face_preview: hasFacePreview,
+          },
+          locale: targetLocale || "en",
+          max_alternatives: 3,
+        },
+        audioAiAuth
+      );
+
+      const normalized = normalizeAudioEnhancerResult(response, fallback);
+      setEnhancerResult(normalized);
+      setEnhancerError(
+        normalized.fallback_used
+          ? "Live script enhancement is unavailable right now. Showing a smart local rewrite instead."
+          : null
+      );
+    } catch {
+      setEnhancerResult(fallback);
+      setEnhancerError("Live script enhancement is unavailable right now. Showing a smart local rewrite instead.");
+    } finally {
+      setEnhancerLoading(false);
+    }
+  }, [
+    text,
+    audioEnhancerLockedFields,
+    hasFaceArtifact,
+    hasFacePreview,
+    pricing?.planLabel,
+    pricing?.availableLabel,
+    pricing?.estimateLabel,
+    pricing?.insufficientBalance,
+    targetLocale,
+    tokenReady,
+    audioAiAuth,
+  ]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void refreshStudioTips();
+    }, 550);
+    return () => clearTimeout(timer);
+  }, [refreshStudioTips]);
+
+
+useEffect(() => {
+  if (!isFocused) return;
+  if (!tokenReady) return;
+  if (faceJobId && !flowFaceUrl && !faceImageUrlParam) faceStatusQ.refetch?.();
+  localesQ.refetch?.();
+  if (targetLocale) voicesQ.refetch?.();
+  if (pricingPreviewEnabled) pricingQ.refetch?.();
+}, [isFocused, tokenReady, faceJobId, flowFaceUrl, faceImageUrlParam, targetLocale, pricingPreviewEnabled]);
+
   const previewPendingMessage =
     !!text.trim() &&
     !!voice &&
     !!faceImageUrl &&
-    !pricingReady &&
-    !pricingQ.isFetching &&
-    !pricingQ.error
-      ? "Pricing preview is being prepared. Generate will unlock as soon as the estimate is ready."
-      : null;
+    text.trim() !== debouncedText
+      ? "Estimate refreshes shortly after you pause typing."
+      : !!debouncedText &&
+        !!voice &&
+        !!faceImageUrl &&
+        !pricingReady &&
+        !pricingQ.isFetching &&
+        !pricingQ.error
+          ? `Estimate shown: ${displayedPrimaryEstimate}. Generate will unlock as soon as pricing confirmation is ready.`
+          : null;
 
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const soundRef = useRef<AudioPlayerHandle | null>(null);
+  const playbackSubscriptionRef = useRef<AudioPlayerSubscription>(null);
   const [playingIdx, setPlayingIdx] = useState<number | null>(null);
 
   const stopSound = useCallback(async () => {
     try {
-      if (soundRef.current) {
-        await soundRef.current.stopAsync();
-        await soundRef.current.unloadAsync();
-      }
+      playbackSubscriptionRef.current?.remove?.();
     } catch {}
+    playbackSubscriptionRef.current = null;
+
+    const activePlayer = soundRef.current;
     soundRef.current = null;
+
+    try {
+      await releaseAudioPlayer(activePlayer);
+    } catch {}
+
     setPlayingIdx(null);
+  }, []);
+
+  useEffect(() => {
+    void setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      shouldRouteThroughEarpiece: false,
+      interruptionMode: "duckOthers",
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -889,14 +2058,46 @@ export default function AudioStudioScreen() {
       await stopSound();
 
       try {
-        const { sound } = await Audio.Sound.createAsync({ uri: u }, { shouldPlay: true });
-        soundRef.current = sound;
-        setPlayingIdx(idx);
-        sound.setOnPlaybackStatusUpdate((st: any) => {
-          if (st?.didJustFinish) stopSound();
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+          shouldPlayInBackground: false,
+          shouldRouteThroughEarpiece: false,
+          interruptionMode: "duckOthers",
         });
-      } catch {
-        setStatusText("Audio playback failed.");
+
+        const player = createAudioPlayer(u, {
+          updateInterval: 250,
+          downloadFirst: true,
+        });
+
+        soundRef.current = player;
+        playbackSubscriptionRef.current = (player as any)?.addListener?.(
+          "playbackStatusUpdate",
+          (st: any) => {
+            if (st?.error) {
+              setStatusText(String(st.error));
+              void stopSound();
+              return;
+            }
+            if (st?.didJustFinish) {
+              void stopSound();
+            }
+          }
+        ) ?? null;
+        setPlayingIdx(idx);
+
+        await waitForAudioPlayerToLoad(player, 4000);
+        const loaded = Boolean((player as any)?.isLoaded) || Boolean(asPositiveNumber((player as any)?.duration));
+        if (!loaded) {
+          throw new Error("Audio could not be loaded for playback.");
+        }
+
+        await Promise.resolve((player as any)?.seekTo?.(0));
+        await Promise.resolve((player as any)?.play?.());
+      } catch (error: any) {
+        setStatusText(error?.message || "Audio playback failed.");
+        await stopSound();
       }
     },
     [playingIdx, stopSound]
@@ -969,6 +2170,30 @@ export default function AudioStudioScreen() {
     }
   }, [openPlanScreen, pricing?.availableLabel, pricing?.planLabel, pricing?.settlementLabel]);
 
+  const openTopUpScreen = useCallback(() => {
+    try {
+      router.push({
+        pathname: "/(tabs)/billing" as any,
+        params: {
+          intent: "top_up",
+          source: "audio",
+          plan: pricing?.planLabel ?? "",
+          availability: pricing?.availableLabel ?? "",
+          settlement: pricing?.settlementLabel ?? "",
+        },
+      } as any);
+    } catch {
+      openPlanScreen();
+    }
+  }, [openPlanScreen, pricing?.availableLabel, pricing?.planLabel, pricing?.settlementLabel]);
+
+  const openAudioLibrary = useCallback(() => {
+    router.push({
+      pathname: "/media/library" as any,
+      params: { mode: "pick-audio", type: "audio" } as any,
+    } as any);
+  }, []);
+
   const clearCreepTimer = useCallback(() => {
     if (creepTimerRef.current) {
       clearInterval(creepTimerRef.current);
@@ -1009,8 +2234,16 @@ export default function AudioStudioScreen() {
       return;
     }
     if (pricing?.insufficientBalance) {
-      setStatusText("You do not have enough credits for this voice generation. Please upgrade or top up to continue.");
+      setStatusText("You do not have enough credits for this voice generation. Top up or upgrade to continue.");
       animateTo(0, 350);
+      if (pricing?.topUpVisible) {
+        openTopUpScreen();
+        return;
+      }
+      if (pricing?.upgradeVisible) {
+        openUpgradeScreen();
+        return;
+      }
       return;
     }
 
@@ -1154,6 +2387,10 @@ export default function AudioStudioScreen() {
                 durationSec: firstDuration.duration_sec,
                 durationMs: firstDuration.duration_ms,
                 variantIndex: 0,
+                ownerUserId: authUserId || undefined,
+                owner_user_id: authUserId || undefined,
+                userId: authUserId || undefined,
+                user_id: authUserId || undefined,
               });
             }
 
@@ -1219,11 +2456,21 @@ const proceedToFusion = useCallback(
     const imageUrl = cleanParam(faceImageUrl);
     const faceArtifactId = cleanParam(effectiveFaceArtifactId);
 
+    logAudioStudioFlow("proceedToFusion", {
+      authUserId,
+      imageUrl,
+      faceArtifactId,
+      face_media_asset_id: cleanParam(effectiveFaceMediaAssetId),
+      face_profile_id: cleanParam(faceProfileId),
+      audioUrl,
+      audioArtifactId,
+      targetLocale,
+      voice,
+      selectedAspectRatio,
+      text: text.trim(),
+    });
+
     if (!audioUrl || !imageUrl) return;
-    if (!faceArtifactId) {
-      setStatusText("To continue to video, choose a face created in Face Studio.");
-      return;
-    }
 
     await stopSound();
 
@@ -1234,9 +2481,24 @@ const proceedToFusion = useCallback(
 
       setFaceSelection?.({
         artifactId: faceArtifactId || undefined,
+        faceArtifactId: faceArtifactId || undefined,
+        artifact_id: faceArtifactId || undefined,
+        face_artifact_id: faceArtifactId || undefined,
+
         mediaAssetId: effectiveFaceMediaAssetId || undefined,
+        faceMediaAssetId: effectiveFaceMediaAssetId || undefined,
+        media_asset_id: effectiveFaceMediaAssetId || undefined,
+        face_media_asset_id: effectiveFaceMediaAssetId || undefined,
+
+        faceProfileId: faceProfileId || undefined,
+        face_profile_id: faceProfileId || undefined,
+
         sasUrl: imageUrl,
         imageUrl: imageUrl,
+        image_url: imageUrl,
+        face_image_url: imageUrl,
+        face_sas_url: imageUrl,
+
         gender: effectiveFaceGender || undefined,
       } as any);
 
@@ -1257,17 +2519,27 @@ const proceedToFusion = useCallback(
 
       await saveCreateFlowContext({
         image_url: imageUrl,
+        face_image_url: imageUrl,
+        face_sas_url: imageUrl,
+
         face_artifact_id: faceArtifactId || undefined,
+        artifact_id: faceArtifactId || undefined,
+
         audio_url: audioUrl,
+        audio_sas_url: audioUrl,
         script_text: text.trim() || undefined,
         audio_locale: targetLocale || undefined,
         audio_voice: voice || undefined,
+
         face_profile_id: faceProfileId || undefined,
+        face_media_asset_id: effectiveFaceMediaAssetId || undefined,
         media_asset_id: effectiveFaceMediaAssetId || undefined,
+
         audio_artifact_id: audioArtifactId || undefined,
         audio_duration_sec: duration.duration_sec,
         audio_duration_ms: duration.duration_ms,
         aspect_ratio: selectedAspectRatio,
+        stage: "audio_done",
         ...(effectiveFaceGender ? ({ gender: effectiveFaceGender } as any) : {}),
       } as any);
 
@@ -1404,7 +2676,7 @@ const proceedToFusion = useCallback(
 
             <Pressable
               onPress={() => proceedToFusion(item)}
-              disabled={locked || !active || !audioUrl || !hasFaceArtifact}
+              disabled={locked || !active || !audioUrl || !hasFacePreview}
               style={{
                 flex: 1,
                 height: 46,
@@ -1414,10 +2686,12 @@ const proceedToFusion = useCallback(
                 backgroundColor: active ? "rgba(232,152,56,0.18)" : "rgba(255,255,255,0.06)",
                 alignItems: "center",
                 justifyContent: "center",
-                opacity: locked || !active || !hasFaceArtifact ? 0.6 : 1,
+                opacity: locked || !active || !hasFacePreview ? 0.6 : 1,
               }}
             >
-              <Text style={{ color: DF.text, fontWeight: "900" }}>{hasFaceArtifact ? "Continue to Video" : "Choose a Face Studio face"}</Text>
+              <Text style={{ color: DF.text, fontWeight: "900" }}>
+                {hasFacePreview ? "Continue to Video" : "Choose a Face Studio face"}
+              </Text>
             </Pressable>
           </View>
         </Pressable>
@@ -1426,27 +2700,91 @@ const proceedToFusion = useCallback(
     [selectedIdx, locked, playingIdx, playPause, proceedToFusion, setAudioSelection]
   );
 
+  const onPrimaryAction = useCallback(() => {
+    if (pricing?.insufficientBalance) {
+      if (pricing?.topUpVisible) {
+        openTopUpScreen();
+        return;
+      }
+      if (pricing?.upgradeVisible) {
+        openUpgradeScreen();
+        return;
+      }
+    }
+    void generate();
+  }, [generate, openTopUpScreen, openUpgradeScreen, pricing?.insufficientBalance, pricing?.topUpVisible, pricing?.upgradeVisible]);
+
   const HeaderContent = (
     <View style={{ paddingHorizontal: 14, paddingTop: 12 }}>
       <PricingTopBar
         studioName="Audio Studio"
-        estimate={finalPricingLabel ?? pricing?.estimateLabel ?? "Estimate pending"}
-        walletAfterRun={pricing?.availableLabel ?? undefined}
-        planName={pricing?.planLabel ?? undefined}
-        includedUsageLeft={pricing?.availableLabel ?? undefined}
-        availabilityLabel={pricing?.availableLabel ?? undefined}
-        settlementLabel={pricing?.settlementLabel ?? "Estimate shown before the run. Final pricing is confirmed after completion."}
-        entitlementLabel={pricing?.detailLabel ?? undefined}
+        estimate={visiblePrimaryEstimate}
+        primaryEstimateLabel={visiblePrimaryEstimate}
+        secondaryEstimateLabel={undefined}
+        creditEstimateLabel={displayedCreditEstimate}
+        cashEstimateLabel={displayedCashEstimate}
+        walletAfterRun={pricingDisplay.creditDetailLabel ?? liveAvailableLabel ?? undefined}
+        planName={livePlanLabel ?? undefined}
+        includedUsageLeft={pricingDisplay.includedLabel ?? liveCreditBreakdownLabel ?? liveAvailableLabel ?? undefined}
+        availabilityLabel={pricingDisplay.creditDetailLabel ?? liveAvailableLabel ?? undefined}
+        settlementLabel={displayedNoteLabel}
+        noteLabel={displayedNoteLabel}
+        entitlementLabel={pricingDisplay.creditBreakdownLabel ?? pricing?.detailLabel ?? undefined}
+        displayKind={isPostpaidPricing ? "postpaid" : "credits"}
+        billingValue={
+          isPostpaidPricing
+            ? (
+                pricing?.planLabel && String(pricing.planLabel).toLowerCase().includes("enterprise")
+                  ? "Enterprise"
+                  : "Postpaid"
+              )
+            : "Credits"
+        }
+        canRun={pricing?.insufficientBalance ? false : null}
+        insufficientTitle="Not enough available credits"
+        insufficientMessage="You don’t have enough available credits for this run."
+        onPressTopUp={pricing?.topUpVisible ? openTopUpScreen : undefined}
+        onPressUpgrade={pricing?.upgradeVisible ? openUpgradeScreen : undefined}
         onPressBreakdown={() => setShowPricingBreakdown(true)}
         onPressManagePlan={openPlanScreen}
+      />
+
+      <StudioTipsRail
+        title="Studio coach"
+        subtitle="Rolling tips based on your current Audio setup."
+        tips={studioTips}
+        loading={tipsLoading}
+        error={tipsError}
+        onRefresh={() => {
+          void refreshStudioTips();
+        }}
       />
 
       <GlassCard>
         <View>
           <Text style={{ color: DF.text, fontSize: 18, fontWeight: "900" }}>Create voice</Text>
           <Text style={{ color: DF.muted, marginTop: 4, fontWeight: "700" }}>
-            Match the selected face with the right voice, then continue to Fusion.
+            Match the selected face with the right voice, or pick existing audio from your library, then continue to Fusion.
           </Text>
+
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+            <Pressable
+              onPress={openAudioLibrary}
+              disabled={locked || !tokenReady}
+              style={{
+                flex: 1,
+                borderRadius: 14,
+                paddingVertical: 12,
+                alignItems: "center",
+                borderWidth: 1,
+                borderColor: "rgba(255,255,255,0.12)",
+                backgroundColor: "rgba(255,255,255,0.06)",
+                opacity: locked || !tokenReady ? 0.7 : 1,
+              }}
+            >
+              <Text style={{ color: DF.text, fontWeight: "900" }}>Use existing audio</Text>
+            </Pressable>
+          </View>
         </View>
       </GlassCard>
 
@@ -1510,6 +2848,7 @@ const proceedToFusion = useCallback(
             <Image
               source={{ uri: faceImageUrl }}
               style={{ width: "100%", height: "100%" }}
+              cachePolicy="none"
               contentFit="contain"
               contentPosition="center"
               transition={180}
@@ -1574,6 +2913,67 @@ const proceedToFusion = useCallback(
         )}
       </GlassCard>
 
+      {hasExistingLibraryAudio && variants.length === 0 && (
+        <GlassCard style={{ marginTop: 12 }}>
+          <Text style={{ color: DF.muted, fontWeight: "800", fontSize: 12, marginBottom: 10 }}>Selected Audio</Text>
+          <Text style={{ color: DF.text, fontWeight: "900", fontSize: 14 }}>
+            {existingAudioTitle || "Existing library audio"}
+          </Text>
+          <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12, marginTop: 6 }}>
+            {[
+              formatDurationLabel(existingAudioDuration),
+            ].filter(Boolean).join(" • ") || "Ready to continue"}
+          </Text>
+
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+            <Pressable
+              onPress={() => playPause(-1, existingAudioUrl)}
+              disabled={locked}
+              style={{
+                flex: 1,
+                height: 46,
+                borderRadius: 14,
+                borderWidth: 1,
+                borderColor: "rgba(255,255,255,0.12)",
+                backgroundColor: "rgba(0,0,0,0.30)",
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: locked ? 0.7 : 1,
+              }}
+            >
+              <Text style={{ color: DF.text, fontWeight: "900" }}>{playingIdx === -1 ? "Pause" : "Play"}</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() =>
+                proceedToFusion({
+                  artifact_id: existingAudioArtifactId || undefined,
+                  audio_url: existingAudioUrl,
+                  duration_ms: existingAudioDuration.duration_ms ?? undefined,
+                  duration_sec: existingAudioDuration.duration_sec ?? undefined,
+                } as any)
+              }
+              disabled={locked || !hasFacePreview}
+              style={{
+                flex: 1,
+                height: 46,
+                borderRadius: 14,
+                borderWidth: 1,
+                borderColor: "rgba(248,184,72,0.35)",
+                backgroundColor: "rgba(232,152,56,0.18)",
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: locked || !hasFacePreview ? 0.6 : 1,
+              }}
+            >
+              <Text style={{ color: DF.text, fontWeight: "900" }}>
+                {hasFacePreview ? "Continue to Video" : "Choose a Face Studio face"}
+              </Text>
+            </Pressable>
+          </View>
+        </GlassCard>
+      )}
+
       {hasFacePreview && !hasFaceArtifact && (
         <GlassCard
           style={{
@@ -1582,15 +2982,38 @@ const proceedToFusion = useCallback(
             backgroundColor: "rgba(255,180,90,0.10)",
           }}
         >
-          <Text style={{ color: DF.text, fontWeight: "900" }}>Video step needs a Face Studio face</Text>
+          <Text style={{ color: DF.text, fontWeight: "900" }}>Cinematic video needs a saved Face Studio artifact</Text>
           <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6 }}>
-            You can create audio now. To continue to video, choose a face created in Face Studio.
+            Talking Video can continue with the selected face preview, but Cinematic Video Direction works best with a saved Face Studio artifact.
           </Text>
         </GlassCard>
       )}
 
       <GlassCard style={{ marginTop: 12 }}>
-        <Text style={{ color: DF.text, fontWeight: "900", marginBottom: 8 }}>Script</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 12 }}>
+          <Text style={{ color: DF.text, fontWeight: "900" }}>Script</Text>
+          <Pressable
+            onPress={() => {
+              void requestPromptEnhancement();
+            }}
+            disabled={locked || !text.trim()}
+            style={{
+              height: 34,
+              borderRadius: 12,
+              paddingHorizontal: 12,
+              alignItems: "center",
+              justifyContent: "center",
+              borderWidth: 1,
+              borderColor: "rgba(248,184,72,0.28)",
+              backgroundColor: text.trim() ? "rgba(232,152,56,0.12)" : "rgba(255,255,255,0.05)",
+              opacity: locked || !text.trim() ? 0.6 : 1,
+            }}
+          >
+            <Text style={{ color: text.trim() ? "rgba(248,232,136,0.95)" : DF.muted, fontWeight: "900", fontSize: 12 }}>
+              Enhance
+            </Text>
+          </Pressable>
+        </View>
         <TextInput
           value={text}
           onChangeText={setText}
@@ -1761,29 +3184,51 @@ const proceedToFusion = useCallback(
         >
           <Text style={{ color: DF.text, fontWeight: "900" }}>Not enough credits</Text>
           <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6 }}>
-            You do not have enough credits for this voice generation. Upgrade your plan or top up to continue.
+            {pricing?.settlementLabel || "You do not have enough credits for this voice generation right now."}
           </Text>
-          <Pressable
-            onPress={() => setShowUpgrade(true)}
-            style={{
-              marginTop: 10,
-              borderRadius: 14,
-              paddingVertical: 10,
-              alignItems: "center",
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.12)",
-              backgroundColor: "rgba(255,255,255,0.06)",
-            }}
-          >
-            <Text style={{ color: DF.text, fontWeight: "900" }}>Upgrade or Top Up</Text>
-          </Pressable>
+          {(pricing?.topUpVisible || pricing?.upgradeVisible) && (
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+              {pricing?.topUpVisible ? (
+                <Pressable
+                  onPress={openTopUpScreen}
+                  style={{
+                    flex: 1,
+                    borderRadius: 14,
+                    paddingVertical: 10,
+                    alignItems: "center",
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.12)",
+                    backgroundColor: "rgba(255,255,255,0.06)",
+                  }}
+                >
+                  <Text style={{ color: DF.text, fontWeight: "900" }}>Top Up</Text>
+                </Pressable>
+              ) : null}
+              {pricing?.upgradeVisible ? (
+                <Pressable
+                  onPress={openUpgradeScreen}
+                  style={{
+                    flex: 1,
+                    borderRadius: 14,
+                    paddingVertical: 10,
+                    alignItems: "center",
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.12)",
+                    backgroundColor: "rgba(255,255,255,0.06)",
+                  }}
+                >
+                  <Text style={{ color: DF.text, fontWeight: "900" }}>Upgrade</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          )}
         </GlassCard>
       )}
 
       <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
         <Pressable
-          onPress={generate}
-          disabled={locked || !faceImageUrl || !tokenReady || !text.trim() || !voice || !pricingReady || !!pricing?.insufficientBalance}
+          onPress={onPrimaryAction}
+          disabled={locked || !faceImageUrl || !tokenReady || !text.trim() || !voice || (!pricingReady && !pricing?.insufficientBalance)}
           style={{
             flex: 1,
             height: 52,
@@ -1791,12 +3236,12 @@ const proceedToFusion = useCallback(
             borderWidth: 1,
             borderColor: "rgba(248,184,72,0.55)",
             backgroundColor:
-              !locked && !!faceImageUrl && !!tokenReady && !!text.trim() && !!voice && pricingReady && !pricing?.insufficientBalance
+              !locked && !!faceImageUrl && !!tokenReady && !!text.trim() && !!voice && (pricingReady || !!pricing?.insufficientBalance)
                 ? "rgba(232,152,56,0.18)"
                 : "rgba(255,255,255,0.06)",
             alignItems: "center",
             justifyContent: "center",
-            opacity: locked || !faceImageUrl || !tokenReady || !text.trim() || !voice || !pricingReady || !!pricing?.insufficientBalance ? 0.6 : 1,
+            opacity: locked || !faceImageUrl || !tokenReady || !text.trim() || !voice || (!pricingReady && !pricing?.insufficientBalance) ? 0.6 : 1,
           }}
         >
           {busy ? <ActivityIndicator /> : <Text style={{ color: DF.text, fontWeight: "900" }}>{pricing?.ctaLabel ?? "Create Audio"}</Text>}
@@ -1871,7 +3316,7 @@ const proceedToFusion = useCallback(
               if (!cleanParam((v as any)?.audio_url)) return;
               proceedToFusion(v);
             }}
-            disabled={locked || selectedIdx == null || !cleanParam((selectedVariant as any)?.audio_url) || !hasFaceArtifact}
+            disabled={locked || selectedIdx == null || !cleanParam((selectedVariant as any)?.audio_url) || !hasFacePreview}
             style={{
               borderRadius: 16,
               paddingVertical: 14,
@@ -1913,11 +3358,31 @@ const proceedToFusion = useCallback(
     </View>
   );
 
+  const openHamburgerMenu = useCallback(() => {
+    const menuNonce = `${Date.now()}`;
+    router.push({
+      pathname: "/(tabs)/dashboard" as any,
+      params: {
+        openMenu: "1",
+        menu_nonce: menuNonce,
+        menu_source: "audio",
+      } as any,
+    } as any);
+  }, []);
+
   return (
     <View style={{ flex: 1, backgroundColor: DF.night }}>
       <DFHeader
         subtitle="Audio Studio"
-        onMenuPress={() => router.push("/(tabs)/dashboard" as any)}
+        planLabel={livePlanLabel}
+        usageLabel={liveUsageLabel}
+        availableCredits={pricingDisplay.availableCredits}
+        reservedCredits={pricingDisplay.reservedCredits}
+        usedCredits={pricingDisplay.usedCredits}
+        totalCredits={pricingDisplay.totalCredits}
+        displayKindOverride={pricingDisplay.displayKind}
+        billingValueLabelOverride={liveBillingValueLabel}
+        onMenuPress={openHamburgerMenu}
         onPressMeta={openPlanScreen}
       />
       <Stepper step={2} />
@@ -2043,7 +3508,8 @@ const proceedToFusion = useCallback(
                   backgroundColor: "rgba(0,0,0,0.22)",
                 }}
               >
-                <Image source={{ uri: faceImageUrl }} style={{ width: "100%", height: 240 }} contentFit="contain" />
+                <Image source={{ uri: faceImageUrl }} style={{ width: "100%", height: 240 }} cachePolicy="none"
+              contentFit="contain" />
               </View>
             )}
 
@@ -2062,13 +3528,15 @@ const proceedToFusion = useCallback(
               <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>• Face image saved for this workflow</Text>
               <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>• Selected audio variant ready to play or share</Text>
               <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>• Plan: {pricing?.planLabel ?? "Current plan"}</Text>
-              {!!(finalPricingLabel ?? pricing?.estimateLabel) && (
-                <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>
-                  • Pricing: {finalPricingLabel ?? pricing?.estimateLabel}
-                </Text>
+              {!!(finalPricingLabel ?? displayedPrimaryEstimate) && (
+                <>
+                  <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>
+                    • {isPostpaidPricing ? "Estimated bill" : "Credits charged"}: {visiblePrimaryEstimate}
+                  </Text>
+                </>
               )}
               <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>
-                • Next step available: {hasFaceArtifact ? "Fusion Studio longform video" : "Select a Face Studio artifact before Fusion"}
+                • Next step available: {hasFacePreview ? "Fusion Studio video" : "Select a Face Studio face first"}
               </Text>
             </View>
 
@@ -2077,8 +3545,8 @@ const proceedToFusion = useCallback(
               <RunReceiptCard
                 pricing={{ ...(pricing as any), stage: finalPricingState as any, reservationId: pricingConfirmation?.quote_id } as any}
                 pricingSummary={{
-                  estimateLabel: pricing?.estimateLabel,
-                  finalLabel: finalPricingLabel ?? pricing?.estimateLabel,
+                  estimateLabel: visiblePrimaryEstimate,
+                  finalLabel: visiblePrimaryEstimate,
                   message:
                     finalPricingMessage ??
                     (pricing?.preview
@@ -2116,7 +3584,7 @@ const proceedToFusion = useCallback(
                   setWorkflowSummaryOpen(false);
                   proceedToFusion(v);
                 }}
-                disabled={locked || selectedIdx == null || !cleanParam((selectedVariant as any)?.audio_url) || !hasFaceArtifact}
+                disabled={locked || selectedIdx == null || !cleanParam((selectedVariant as any)?.audio_url) || !hasFacePreview}
                 style={{
                   flex: 1,
                   height: 48,
@@ -2126,7 +3594,7 @@ const proceedToFusion = useCallback(
                   borderWidth: 1,
                   borderColor: "rgba(248,184,72,0.35)",
                   backgroundColor: "rgba(232,152,56,0.22)",
-                  opacity: locked || !hasFaceArtifact ? 0.85 : 1,
+                  opacity: locked || !hasFacePreview ? 0.85 : 1,
                 }}
               >
                 <Text style={{ color: DF.text, fontWeight: "900" }}>Go to Fusion</Text>
@@ -2143,9 +3611,9 @@ const proceedToFusion = useCallback(
 <PricingBreakdownSheet
   visible={showPricingBreakdown}
   studioName="Audio Studio"
-  estimate={pricing?.estimateLabel ?? "Estimate pending"}
+  estimate={visiblePrimaryEstimate}
   billedUnitType={voice ? `Voice • ${voice}` : "Voice generation"}
-  includedText={pricing?.availableLabel ?? "Included plan usage applies before wallet or postpaid settlement."}
+  includedText={pricingDisplay.creditDetailLabel ?? liveAvailableLabel ?? "Included plan usage applies before wallet or postpaid settlement."}
   premiumText={pricing?.settlementLabel ?? "Premium voices or advanced options can change the final amount."}
   priceDriverText={pricing?.detailLabel ?? "Voice estimate appears before generate"}
   onClose={() => setShowPricingBreakdown(false)}
@@ -2157,7 +3625,7 @@ const proceedToFusion = useCallback(
   title="Upgrade or top up to continue voice generation"
   description="Audio Studio uses your included usage first, then wallet or postpaid settlement depending on entitlements."
   currentPlan={pricing?.planLabel ?? "Current plan"}
-  usageContext={pricing?.availableLabel ?? "Your current included usage or wallet balance is not enough for this run."}
+  usageContext={pricingDisplay.creditDetailLabel ?? liveAvailableLabel ?? "Your current included usage or wallet balance is not enough for this run."}
   highlights={[
     "Keep face-to-voice creation moving without restart friction",
     "Use included monthly usage where your plan allows it",
@@ -2167,6 +3635,23 @@ const proceedToFusion = useCallback(
   onSecondary={() => setShowUpgrade(false)}
   onUpgrade={openUpgradeScreen}
 />
+
+
+      <PromptEnhancerSheet
+        visible={enhancerOpen}
+        loading={enhancerLoading}
+        error={enhancerError}
+        result={enhancerResult}
+        onClose={() => setEnhancerOpen(false)}
+        onRefresh={() => {
+          void requestPromptEnhancement();
+        }}
+        onApply={(nextText) => {
+          setText(nextText);
+          setEnhancerOpen(false);
+          setStatusText("Enhanced script applied. Review it and generate when ready.");
+        }}
+      />
 
       <DFBlockingOverlay
         visible={navLocked}

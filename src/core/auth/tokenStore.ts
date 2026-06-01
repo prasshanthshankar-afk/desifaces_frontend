@@ -1,3 +1,4 @@
+
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -35,7 +36,6 @@ async function migrateLegacyRefreshIfNeeded(): Promise<string | null> {
 
 export const tokenStore = {
   getAccess: async () => {
-    // ✅ auto-migrate from old AsyncStorage DF_TOKEN if needed
     const migrated = await migrateLegacyAccessIfNeeded();
     if (migrated) return migrated;
     return SecureStore.getItemAsync(KEY_ACCESS);
@@ -43,7 +43,6 @@ export const tokenStore = {
 
   setAccess: async (t: string) => {
     await SecureStore.setItemAsync(KEY_ACCESS, t);
-    // Optional: keep legacy in sync for older modules
     await AsyncStorage.setItem(LEGACY_DF_TOKEN, t);
   },
 
@@ -55,15 +54,34 @@ export const tokenStore = {
 
   setRefresh: async (t: string) => {
     await SecureStore.setItemAsync(KEY_REFRESH, t);
-    // Optional legacy sync
     await AsyncStorage.setItem(LEGACY_REFRESH, t);
+  },
+
+  getTokens: async () => {
+    const [accessToken, refreshToken] = await Promise.all([
+      tokenStore.getAccess(),
+      tokenStore.getRefresh(),
+    ]);
+    return { accessToken, refreshToken };
+  },
+
+  setTokens: async ({
+    accessToken,
+    refreshToken,
+  }: {
+    accessToken: string;
+    refreshToken: string;
+  }) => {
+    await Promise.all([
+      tokenStore.setAccess(accessToken),
+      tokenStore.setRefresh(refreshToken),
+    ]);
   },
 
   clearAll: async () => {
     await SecureStore.deleteItemAsync(KEY_ACCESS);
     await SecureStore.deleteItemAsync(KEY_REFRESH);
 
-    // Clear legacy too
     await AsyncStorage.removeItem(LEGACY_DF_TOKEN);
     await AsyncStorage.removeItem(LEGACY_REFRESH);
   },

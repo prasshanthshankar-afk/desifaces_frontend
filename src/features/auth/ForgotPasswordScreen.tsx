@@ -13,19 +13,23 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import { DF } from "../../core/theme/colors";
-import { useAuth } from "../../core/auth/AuthContext";
 import { AuthBrandHeader } from "./AuthBrandHeader";
+import {
+  normalizeChallengeId,
+  normalizeExpiresIn,
+  normalizeResendAfterSeconds,
+  startPasswordReset,
+} from "./authOtpClient";
 
 function isValidEmail(s: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((s || "").trim());
 }
 
 export function ForgotPasswordScreen() {
-  const { forgotPassword } = useAuth();
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
 
   const glow = useRef(new Animated.Value(0)).current;
   const emailOk = useMemo(() => isValidEmail(email), [email]);
@@ -41,15 +45,35 @@ export function ForgotPasswordScreen() {
 
   const submit = async () => {
     setErr(null);
-    const e = email.trim();
-    if (!isValidEmail(e)) return setErr("Enter a valid email address.");
+    setInfo(null);
+
+    const e = email.trim().toLowerCase();
+    if (!isValidEmail(e)) {
+      setErr("Enter a valid email address.");
+      return;
+    }
 
     setBusy(true);
     try {
-      await forgotPassword(e);
-      setDone(true);
-    } catch {
-      setErr("Something went wrong. Please try again.");
+      const response = await startPasswordReset(e);
+      const challengeId = normalizeChallengeId(response);
+
+      if (challengeId) {
+        router.push({
+          pathname: "/(auth)/reset-password",
+          params: {
+            email: e,
+            challengeId,
+            expiresIn: String(normalizeExpiresIn(response, 300)),
+            resendAfterSeconds: String(normalizeResendAfterSeconds(response, 60)),
+          },
+        });
+        return;
+      }
+
+      setInfo("If this account exists, we sent a verification code.");
+    } catch (error: any) {
+      setErr(error?.message || "Unable to send the verification code. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -65,8 +89,8 @@ export function ForgotPasswordScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <AuthBrandHeader
-          title="Reset access"
-          subtitle="We’ll help you recover your account"
+          title="Reset password"
+          subtitle="We’ll send a 6-digit code to your email"
         />
 
         <View
@@ -96,7 +120,10 @@ export function ForgotPasswordScreen() {
               pointerEvents="none"
               style={{
                 position: "absolute",
-                inset: -2,
+                top: -2,
+                left: -2,
+                right: -2,
+                bottom: -2,
                 borderRadius: 18,
                 opacity: glow.interpolate({
                   inputRange: [0, 1],
@@ -118,14 +145,18 @@ export function ForgotPasswordScreen() {
               onChangeText={(t) => {
                 setEmail(t);
                 if (err) setErr(null);
+                if (info) setInfo(null);
               }}
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="email-address"
+              textContentType="emailAddress"
               placeholder="name@company.com"
               placeholderTextColor="rgba(255,255,255,0.35)"
               onFocus={() => animateGlow(true)}
               onBlur={() => animateGlow(false)}
+              returnKeyType="send"
+              onSubmitEditing={submit}
               style={{
                 backgroundColor: DF.night2,
                 borderColor: DF.border,
@@ -138,6 +169,10 @@ export function ForgotPasswordScreen() {
               }}
             />
           </View>
+
+          <Text style={{ color: DF.textSoft ?? DF.muted, marginTop: 10, fontSize: 12, lineHeight: 18 }}>
+            If this email is registered, we’ll send a verification code. Enter that code in the app to create a new password.
+          </Text>
 
           {err ? (
             <View
@@ -156,7 +191,7 @@ export function ForgotPasswordScreen() {
             </View>
           ) : null}
 
-          {done ? (
+          {info ? (
             <View
               style={{
                 marginTop: 12,
@@ -168,49 +203,33 @@ export function ForgotPasswordScreen() {
               }}
             >
               <Text style={{ color: DF.green, fontWeight: "800", fontSize: 13 }}>
-                If an account exists for this email, reset instructions are available.
+                {info}
               </Text>
-
-              <Pressable
-                onPress={() => router.push("/(auth)/reset-password")}
-                style={{
-                  marginTop: 10,
-                  paddingVertical: 10,
-                  borderRadius: 16,
-                  borderWidth: 1,
-                  borderColor: DF.border,
-                  backgroundColor: DF.night2,
-                  alignItems: "center",
-                }}
-              >
-                <Text style={{ color: DF.text, fontWeight: "800", fontSize: 13 }}>
-                  Go to Reset Password
-                </Text>
-              </Pressable>
             </View>
-          ) : (
-            <Pressable
-              disabled={!emailOk || busy}
-              onPress={submit}
-              style={{
-                marginTop: 14,
-                backgroundColor: emailOk && !busy ? DF.gold : "rgba(245,196,81,0.35)",
-                paddingVertical: 14,
-                borderRadius: 18,
-                alignItems: "center",
-                borderWidth: 1,
-                borderColor: "rgba(0,0,0,0.12)",
-              }}
-            >
-              {busy ? (
-                <ActivityIndicator color="#111" />
-              ) : (
-                <Text style={{ fontWeight: "800", color: "#111", fontSize: 14 }}>
-                  Send reset
-                </Text>
-              )}
-            </Pressable>
-          )}
+          ) : null}
+
+          <Pressable
+            disabled={!emailOk || busy}
+            onPress={submit}
+            style={{
+              marginTop: 14,
+              backgroundColor: emailOk && !busy ? DF.gold : "rgba(245,196,81,0.35)",
+              paddingVertical: 14,
+              borderRadius: 18,
+              alignItems: "center",
+              borderWidth: 1,
+              borderColor: "rgba(0,0,0,0.12)",
+              opacity: !emailOk || busy ? 0.85 : 1,
+            }}
+          >
+            {busy ? (
+              <ActivityIndicator color="#111" />
+            ) : (
+              <Text style={{ fontWeight: "800", color: "#111", fontSize: 14 }}>
+                Send verification code
+              </Text>
+            )}
+          </Pressable>
 
           <Pressable
             onPress={() => router.replace("/(auth)/login")}

@@ -10,18 +10,15 @@ import {
   ScrollView,
   Animated,
   Easing,
-  Linking,
 } from "react-native";
 import { router, type Href } from "expo-router";
 import { DF } from "../../core/theme/colors";
 import { useAuth } from "../../core/auth/AuthContext";
 import { AuthBrandHeader } from "./AuthBrandHeader";
-import {
-  DESIFACES_PRIVACY_URL,
-  DESIFACES_TERMS_URL,
-} from "../../core/auth/agreement";
 
 const AUTH_LOGIN_ROUTE = "/(auth)/login" as Href;
+const LEGAL_AGREEMENT_ROUTE = "/legal/agreement" as Href;
+const LEGAL_TERMS_ROUTE = "/legal/terms" as Href;
 
 function isValidEmail(s: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((s || "").trim());
@@ -73,7 +70,7 @@ export function RegisterScreen() {
       return setErr("Passwords do not match.");
     }
     if (!acceptedAgreement) {
-      return setErr("Please accept the Terms and Privacy Policy.");
+      return setErr("Please accept the Agreement and Terms & Conditions.");
     }
 
     setBusy(true);
@@ -101,7 +98,7 @@ export function RegisterScreen() {
       >
         <AuthBrandHeader
           title="Create account"
-          subtitle="Join DesiFaces with secure access"
+          subtitle="Create your account, then verify your email code"
         />
 
         <View
@@ -287,11 +284,9 @@ export function RegisterScreen() {
             }}
           />
 
-          <Pressable
-            onPress={() => setAcceptedAgreement((v) => !v)}
-            style={{ marginTop: 14, flexDirection: "row", alignItems: "flex-start", gap: 10 }}
-          >
-            <View
+          <View style={{ marginTop: 14, flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+            <Pressable
+              onPress={() => setAcceptedAgreement((v) => !v)}
               style={{
                 width: 20,
                 height: 20,
@@ -304,29 +299,55 @@ export function RegisterScreen() {
                 marginTop: 1,
               }}
             >
-              {acceptedAgreement ? <Text style={{ color: DF.gold, fontWeight: "900", fontSize: 12 }}>✓</Text> : null}
-            </View>
+              {acceptedAgreement ? (
+                <Text style={{ color: DF.gold, fontWeight: "900", fontSize: 12 }}>✓</Text>
+              ) : null}
+            </Pressable>
 
             <View style={{ flex: 1 }}>
               <Text style={{ color: DF.textSoft ?? DF.muted, fontSize: 12, lineHeight: 18 }}>
-                I agree to the {" "}
-                <Text onPress={() => Linking.openURL(DESIFACES_TERMS_URL)} style={{ color: DF.cyan, fontWeight: "700" }}>
-                  Terms
+                I agree to the{" "}
+                <Text
+                  onPress={() => router.push(LEGAL_AGREEMENT_ROUTE)}
+                  style={{ color: DF.cyan, fontWeight: "700" }}
+                >
+                  Agreement
                 </Text>{" "}
-                and {" "}
-                <Text onPress={() => Linking.openURL(DESIFACES_PRIVACY_URL)} style={{ color: DF.cyan, fontWeight: "700" }}>
-                  Privacy Policy
+                and{" "}
+                <Text
+                  onPress={() => router.push(LEGAL_TERMS_ROUTE)}
+                  style={{ color: DF.cyan, fontWeight: "700" }}
+                >
+                  Terms & Conditions
                 </Text>
                 .
               </Text>
             </View>
-          </Pressable>
+          </View>
 
-          {!pwOk && pw.length > 0 ? <Text style={{ color: DF.mauve, marginTop: 10, fontSize: 12 }}>Password must be 8+ characters.</Text> : null}
-          {pw2.length > 0 && !matchOk ? <Text style={{ color: DF.mauve, marginTop: 6, fontSize: 12 }}>Passwords do not match.</Text> : null}
+          {!pwOk && pw.length > 0 ? (
+            <Text style={{ color: DF.mauve, marginTop: 10, fontSize: 12 }}>
+              Password must be 8+ characters.
+            </Text>
+          ) : null}
+
+          {pw2.length > 0 && !matchOk ? (
+            <Text style={{ color: DF.mauve, marginTop: 6, fontSize: 12 }}>
+              Passwords do not match.
+            </Text>
+          ) : null}
 
           {err ? (
-            <View style={{ marginTop: 12, borderRadius: 16, borderWidth: 1, borderColor: "rgba(191,163,255,0.28)", backgroundColor: "rgba(191,163,255,0.10)", padding: 12 }}>
+            <View
+              style={{
+                marginTop: 12,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: "rgba(191,163,255,0.28)",
+                backgroundColor: "rgba(191,163,255,0.10)",
+                padding: 12,
+              }}
+            >
               <Text style={{ color: DF.mauve, fontWeight: "700", fontSize: 13 }}>{err}</Text>
             </View>
           ) : null}
@@ -345,11 +366,27 @@ export function RegisterScreen() {
               opacity: !canSubmit ? 0.85 : 1,
             }}
           >
-            {busy ? <ActivityIndicator color="#111" /> : <Text style={{ fontWeight: "800", color: "#111", fontSize: 14 }}>Create free account</Text>}
+            {busy ? (
+              <ActivityIndicator color="#111" />
+            ) : (
+              <Text style={{ fontWeight: "800", color: "#111", fontSize: 14 }}>
+                Create account & send code
+              </Text>
+            )}
           </Pressable>
 
-          <Pressable onPress={() => router.replace(AUTH_LOGIN_ROUTE)} style={{ marginTop: 12, paddingVertical: 8 }}>
-            <Text style={{ color: DF.cyan, fontWeight: "800", textAlign: "center", fontSize: 12 }}>
+          <Pressable
+            onPress={() => router.replace(AUTH_LOGIN_ROUTE)}
+            style={{ marginTop: 12, paddingVertical: 8 }}
+          >
+            <Text
+              style={{
+                color: DF.cyan,
+                fontWeight: "800",
+                textAlign: "center",
+                fontSize: 12,
+              }}
+            >
               Already have an account? Sign in
             </Text>
           </Pressable>

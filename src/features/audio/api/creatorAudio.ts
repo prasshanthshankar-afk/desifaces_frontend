@@ -5,6 +5,7 @@ import type {
   StudioPricingConfirmation,
   StudioPricingPreviewResponse,
 } from "../../../core/pricing/pricePreview";
+import { normalizePricingErrorForUser } from "../../../core/pricing/studioAffordability";
 
 export type TTSCreateRequest = {
   text: string;
@@ -59,6 +60,17 @@ function pickErrorMessage(error: any) {
     return error.message;
   }
   return "Unknown error";
+}
+
+function rethrowFriendly(prefix: string, error: any): never {
+  if (String(error?.message) === "AUTH_REQUIRED") throw error;
+
+  const normalized = normalizePricingErrorForUser(error, "Audio");
+  if (normalized.toLowerCase().includes("not enough credits")) {
+    throw new Error(normalized);
+  }
+
+  throw new Error(`${prefix}: ${pickErrorMessage(error)}`);
 }
 
 function getAudioPreviewPath(): string {
@@ -140,8 +152,7 @@ export async function previewAudioTtsPricing(
       buildPreviewRequest(payload)
     );
   } catch (error: any) {
-    if (String(error?.message) === "AUTH_REQUIRED") throw error;
-    throw new Error(`Audio pricing preview failed: ${pickErrorMessage(error)}`);
+    rethrowFriendly("Audio pricing preview failed", error);
   }
 }
 
@@ -156,8 +167,7 @@ export async function apiCreateTtsJob(
       buildCreateRequest(payload, pricingConfirmation ?? payload.pricing_confirmation ?? null)
     );
   } catch (error: any) {
-    if (String(error?.message) === "AUTH_REQUIRED") throw error;
-    throw new Error(`Create TTS job failed: ${pickErrorMessage(error)}`);
+    rethrowFriendly("Create TTS job failed", error);
   }
 }
 
@@ -167,7 +177,6 @@ export async function apiGetTtsJobStatus(jobId: string): Promise<JobStatusRespon
   try {
     return await api.get<JobStatusResponse>(AUDIO_BASE, getAudioStatusPath(jobId));
   } catch (error: any) {
-    if (String(error?.message) === "AUTH_REQUIRED") throw error;
-    throw new Error(`TTS status failed: ${pickErrorMessage(error)}`);
+    rethrowFriendly("TTS status failed", error);
   }
 }

@@ -101,10 +101,66 @@ export default function SettingsScreen() {
     return `${available} • ${used} • ${reserved}`;
   }, [snapshot.availableLabel, snapshot.usedLabel, snapshot.reservedLabel]);
 
-  const fusionAccess = [
-    snapshot.hasTalkingVideo ? "Talking Video" : null,
-    snapshot.hasCinematicVideoDirection ? "Cinematic Video Direction" : null,
-  ].filter(Boolean).join(" • ") || "Fusion access depends on your current plan";
+const snapshotAny = snapshot as any;
+
+const enabledFeatures = Array.isArray(snapshotAny.enabledFeatures)
+  ? snapshotAny.enabledFeatures
+  : Array.isArray(snapshotAny.featureFlags)
+    ? snapshotAny.featureFlags
+    : Array.isArray(snapshotAny.features)
+      ? snapshotAny.features
+      : [];
+
+const hasFeature = (codes: string[]) => {
+  const wanted = new Set(codes.map((code) => code.toLowerCase()));
+
+  return enabledFeatures.some((feature: any) => {
+    const code = String(
+      feature?.code ??
+        feature?.feature_code ??
+        feature?.featureCode ??
+        feature ??
+        ""
+    ).toLowerCase();
+
+    const enabled =
+      feature && typeof feature === "object" ? feature.enabled !== false : true;
+
+    const allowed =
+      feature && typeof feature === "object" ? feature.tier_allowed !== false : true;
+
+    return wanted.has(code) && enabled && allowed;
+  });
+};
+
+const hasTalkingVideo =
+  Boolean(snapshotAny.hasTalkingVideo) ||
+  hasFeature([
+    "TALKING_VIDEO",
+    "talking_video",
+    "talking_video_economy",
+    "talking_video_premium",
+  ]);
+
+const hasCinematicVideoDirection =
+  Boolean(snapshotAny.hasCinematicVideoDirection) ||
+  hasFeature(["CINEMATIC_VIDEO_DIRECTION", "cinematic_video_direction"]);
+
+const fusionAccess =
+  [
+    hasTalkingVideo ? "Talking Video" : null,
+    hasCinematicVideoDirection ? "Cinematic Video Direction" : null,
+  ]
+    .filter(Boolean)
+    .join(" • ") || "Fusion access depends on your current plan";
+
+const entitlementSource =
+  snapshotAny.entitlementSource ||
+  snapshotAny.entitlement_source ||
+  snapshotAny.source ||
+  snapshotAny.planSource ||
+  snapshotAny.plan_source ||
+  "Plan fallback";
 
   return (
     <View style={{ flex: 1, backgroundColor: DF.bg || DF.night }}>
@@ -152,7 +208,7 @@ export default function SettingsScreen() {
             />
             <Row
               label="Entitlement source"
-              value={snapshot.entitlementSource || "Plan fallback"}
+              value={entitlementSource}
               helper="Useful when validating Talking Video and Cinematic Video Direction visibility."
             />
           </View>
@@ -177,7 +233,7 @@ export default function SettingsScreen() {
         <GlassCard>
           <Text style={{ color: DF.text, fontWeight: "900", fontSize: 15 }}>Quick actions</Text>
           <View style={{ gap: 10, marginTop: 12 }}>
-            <ActionButton label="Open Billing" tone="primary" onPress={() => router.push("/(tabs)/billing" as any)} />
+            <ActionButton label="Open Billing" tone="primary" onPress={() => router.push("/pricing/plan-billing" as any)} />
             <ActionButton label="Open Dashboard" onPress={() => router.push("/(tabs)/dashboard" as any)} />
             <ActionButton label="Go to Face Studio" onPress={() => router.push("/(tabs)/face" as any)} />
             <ActionButton label="Go to Audio Studio" onPress={() => router.push("/(tabs)/audio" as any)} />

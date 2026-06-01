@@ -5,8 +5,12 @@ import type {
   StudioPricingConfirmation,
   StudioPricingPreviewResponse,
 } from "../../../core/pricing/pricePreview";
+import { normalizePricingErrorForUser } from "../../../core/pricing/studioAffordability";
 
 type AnyRecord = Record<string, any>;
+
+const FACE_PREVIEW_TIMEOUT_MS = 30000;
+const FACE_CREATE_TIMEOUT_MS = 45000;
 
 export type FaceImageSafetyResponse = {
   allow: boolean;
@@ -129,22 +133,33 @@ function buildImageFormData(params: {
   return form;
 }
 
+function unwrapPayload(response: AnyRecord): AnyRecord {
+  if (!response || typeof response !== "object") return {};
+  const nested =
+    (response.result && typeof response.result === "object" ? response.result : null) ||
+    (response.data && typeof response.data === "object" ? response.data : null) ||
+    (response.detail && typeof response.detail === "object" ? response.detail : null);
+  return nested ? { ...nested, ...response } : response;
+}
+
 function normalizeSafetyResponse(response: AnyRecord): FaceImageSafetyResponse {
+  const payload = unwrapPayload(response);
+
   const allow =
-    response?.allow === true ||
-    response?.passed === true ||
-    response?.approved === true ||
-    response?.safe === true;
+    payload?.allow === true ||
+    payload?.passed === true ||
+    payload?.approved === true ||
+    payload?.safe === true;
 
   const status =
-    clean(response?.status) ||
-    clean(response?.verdict) ||
+    clean(payload?.status) ||
+    clean(payload?.verdict) ||
     (allow ? "passed" : "");
 
   const reason =
-    clean(response?.reason) ||
-    clean(response?.message) ||
-    clean(response?.detail) ||
+    clean(payload?.reason) ||
+    clean(payload?.message) ||
+    clean(payload?.detail) ||
     null;
 
   return {
@@ -159,12 +174,17 @@ function rethrowFriendly(prefix: string, error: any): never {
     throw new Error("AUTH_REQUIRED");
   }
 
-  if (error instanceof ApiError) {
-    const msg = pickErrorMessage(error);
-    throw new Error(`${prefix}: ${msg}`);
+  const normalized = normalizePricingErrorForUser(error, "Face");
+  if (normalized.toLowerCase().includes("not enough credits")) {
+    throw new Error(normalized);
   }
 
   const msg = pickErrorMessage(error);
+
+  if (error instanceof ApiError) {
+    throw new Error(`${prefix}: ${msg}`);
+  }
+
   throw new Error(`${prefix}: ${msg}`);
 }
 
@@ -172,10 +192,17 @@ export async function apiPreviewFacePricing(
   studioInput: AnyRecord = {}
 ): Promise<StudioPricingPreviewResponse> {
   try {
+    console.log("[apiPreviewFacePricing]", {
+      base: FACE_BASE,
+      path: getFacePreviewPath(),
+      timeoutMs: FACE_PREVIEW_TIMEOUT_MS,
+    });
+
     return await api.post<StudioPricingPreviewResponse>(
       FACE_BASE,
       getFacePreviewPath(),
-      buildPreviewRequest(studioInput)
+      buildPreviewRequest(studioInput),
+      { timeoutMs: FACE_PREVIEW_TIMEOUT_MS }
     );
   } catch (error: any) {
     rethrowFriendly("Face preview failed", error);
@@ -194,7 +221,8 @@ export async function apiCreateFaceJob(
     return await api.post<AnyRecord>(
       FACE_BASE,
       getFaceGeneratePath(),
-      buildGenerateRequest(studioInput, pricingConfirmation)
+      buildGenerateRequest(studioInput, pricingConfirmation),
+      { timeoutMs: FACE_CREATE_TIMEOUT_MS }
     );
   } catch (error: any) {
     rethrowFriendly("Create face job failed", error);

@@ -1,0 +1,7 @@
+{
+  "name": "expo-glass-effect",
+  "version": "55.0.10-shim",
+  "main": "index.js",
+  "react-native": "index.js",
+  "types": "index.d.ts"
+}
