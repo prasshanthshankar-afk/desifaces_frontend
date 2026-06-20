@@ -169,15 +169,45 @@ function isLikelyPurchasePayload(raw: any): boolean {
   );
 }
 
-function pickMatchingPurchase(raw: any, productId: string): any | null {
+function pickMatchingPurchase(
+  raw: any,
+  productId: string,
+  options?: { allowMissingProductId?: boolean }
+): any | null {
   const purchases = normalizePurchaseArray(raw);
   if (!purchases.length) return null;
 
   const exact = purchases.find((purchase) => normalizedProductId(purchase) === productId);
   if (exact) return exact;
 
-  const likely = purchases.find(isLikelyPurchasePayload);
-  return likely || purchases[0] || null;
+  const mismatchedProductIds = purchases
+    .map((purchase) => normalizedProductId(purchase))
+    .filter((candidate) => candidate && candidate !== productId);
+
+  if (mismatchedProductIds.length) {
+    console.log("DF_APPLE_IAP_DIRECT_PURCHASE_MISMATCH_IGNORED", {
+      expectedProductId: productId,
+      receivedProductIds: Array.from(new Set(mismatchedProductIds)).slice(0, 8),
+    });
+  }
+
+  // Do not fall back to a mismatched purchase for subscriptions. Apple sandbox
+  // can return the currently-owned subscription while an upgrade/downgrade is in
+  // progress. Sending that stale purchase to the backend correctly triggers
+  // APPLE_PRODUCT_ID_MISMATCH and blocks the plan change.
+  if (!options?.allowMissingProductId) return null;
+
+  const missingProductIdLikely = purchases.find(
+    (purchase) => !normalizedProductId(purchase) && isLikelyPurchasePayload(purchase)
+  );
+  if (missingProductIdLikely) {
+    console.log("DF_APPLE_IAP_DIRECT_PURCHASE_MATCHED_MISSING_PRODUCT_ID", {
+      expectedProductId: productId,
+    });
+    return missingProductIdLikely;
+  }
+
+  return null;
 }
 
 function removeNativeSubscription(subscription: NativeSubscription | null | undefined) {
@@ -313,7 +343,12 @@ async function fetchRequiredProduct(iap: any, productId: string, kind: AppleProd
   return match;
 }
 
-function createPurchaseWaiter(iap: any, productId: string, timeoutMs = 120_000) {
+function createPurchaseWaiter(
+  iap: any,
+  productId: string,
+  timeoutMs = 120_000,
+  options?: { allowMissingProductId?: boolean }
+) {
   if (typeof iap.purchaseUpdatedListener !== "function" && typeof iap.purchaseErrorListener !== "function") {
     return null;
   }
@@ -343,7 +378,19 @@ function createPurchaseWaiter(iap: any, productId: string, timeoutMs = 120_000) 
     if (typeof iap.purchaseUpdatedListener === "function") {
       updateSub = iap.purchaseUpdatedListener((purchase: any) => {
         const purchaseProductId = normalizedProductId(purchase);
-        if (purchaseProductId && purchaseProductId !== productId) return;
+        if (purchaseProductId && purchaseProductId !== productId) {
+          console.log("DF_APPLE_IAP_LISTENER_PURCHASE_MISMATCH_IGNORED", {
+            expectedProductId: productId,
+            receivedProductId: purchaseProductId,
+          });
+          return;
+        }
+        if (!purchaseProductId && !options?.allowMissingProductId) {
+          console.log("DF_APPLE_IAP_LISTENER_PURCHASE_MISSING_PRODUCT_ID_IGNORED", {
+            expectedProductId: productId,
+          });
+          return;
+        }
         finish(() => resolve(purchase));
       });
     }
@@ -467,7 +514,9 @@ async function purchaseProduct(params: {
   await ensureAppleIapConnection(iap);
   await fetchRequiredProduct(iap, params.productId, params.kind);
 
-  const waiter = createPurchaseWaiter(iap, params.productId, params.timeoutMs);
+  const waiter = createPurchaseWaiter(iap, params.productId, params.timeoutMs, {
+    allowMissingProductId: params.kind === "inapp",
+  });
 
   try {
     console.log("DF_APPLE_IAP_REQUEST_PURCHASE", {
@@ -477,18 +526,59 @@ async function purchaseProduct(params: {
       hasPurchaseErrorListener: typeof iap.purchaseErrorListener === "function",
     });
 
-    const directResult = await requestApplePurchase(iap, params);
-    const directPurchase = pickMatchingPurchase(directResult, params.productId);
+    const waiterPromise = waiter?.promise;
+
+    // Attach a rejection handler immediately. In Xcode/local StoreKit,
+    // requestPurchase can remain pending while the listener waiter times out.
+    // Without this, React Native treats the timeout as an unhandled promise
+    // rejection before the caller can show a friendly billing error.
+    waiterPromise?.catch(() => undefined);
+
+    const directResultPromise = requestApplePurchase(iap, params);
+
+    // If the listener resolves first, requestPurchase may still settle later.
+    // Attach a no-op catch so a late native rejection does not red-screen.
+    directResultPromise.catch(() => undefined);
+
+    const purchaseOutcome = waiterPromise
+      ? await Promise.race([
+          directResultPromise.then((directResult) => ({
+            source: "direct" as const,
+            directResult,
+          })),
+          waiterPromise.then((purchase) => ({
+            source: "listener" as const,
+            purchase,
+          })),
+        ])
+      : {
+          source: "direct" as const,
+          directResult: await directResultPromise,
+        };
+
+    if (purchaseOutcome.source === "listener") {
+      return purchaseOutcome.purchase;
+    }
+
+    const directPurchase = pickMatchingPurchase(
+      purchaseOutcome.directResult,
+      params.productId,
+      { allowMissingProductId: params.kind === "inapp" }
+    );
 
     // Some runtimes return the purchase directly. expo-iap normally emits it
     // asynchronously through purchaseUpdatedListener, so only resolve directly
     // when the returned value actually contains purchase/receipt data.
     if (isLikelyPurchasePayload(directPurchase)) {
+      // Xcode/local StoreKit can return the purchase directly while the
+      // listener waiter is still active. Cancel the waiter so its timeout
+      // does not reject after backend confirmation has already succeeded.
+      waiter?.cancel();
       return directPurchase;
     }
 
-    if (waiter) {
-      return await waiter.promise;
+    if (waiterPromise) {
+      return await waiterPromise;
     }
 
     throw new Error(
@@ -621,10 +711,11 @@ async function purchaseAndNormalize(params: {
     kind: params.kind,
   });
   const normalized = normalizePurchasedPayload(rawPurchase);
+  const purchaseProductId = normalizedProductId(rawPurchase);
 
   console.log("DF_APPLE_IAP_PURCHASE_RECEIVED", {
-    productId: params.productId,
-    purchaseProductId: normalizedProductId(rawPurchase),
+    expectedProductId: params.productId,
+    purchaseProductId,
     purchaseKind: params.purchaseKind,
     hasSignedTransactionInfo: Boolean(normalized.signedTransactionInfo),
     hasSignedRenewalInfo: Boolean(normalized.signedRenewalInfo),
@@ -632,6 +723,12 @@ async function purchaseAndNormalize(params: {
     originalTransactionId: normalized.originalTransactionId,
     environment: normalized.environment,
   });
+
+  if (purchaseProductId && purchaseProductId !== params.productId) {
+    throw new Error(
+      `APPLE_PRODUCT_ID_MISMATCH: expected ${params.productId}, received ${purchaseProductId}`
+    );
+  }
 
   if (!normalized.signedTransactionInfo) {
     throw new Error(

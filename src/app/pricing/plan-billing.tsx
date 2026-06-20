@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   Platform,
 } from "react-native";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams, usePathname } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -22,10 +22,12 @@ import * as PaymentsApi from "../../core/payments/apiPayments";
 import {
   appleSubscriptionProductIdForPlan,
   isAppleBillingPlatform,
+  restoreAppleSubscriptionsAndConfirm,
 } from "../../core/payments/appleIap";
 import {
   googleSubscriptionBasePlanIdForPlan,
   googleSubscriptionProductIdForPlan,
+  restoreGoogleSubscriptionAndConfirm,
 } from "../../core/payments/googlePlayIap";
 import {
   BILLING_QUERY_OPTIONS,
@@ -258,6 +260,83 @@ function planRank(planCode?: string | null) {
   if (code === "pro_yearly_v1") return 21;
   if (code === "pro_monthly_v1") return 20;
   return 10;
+}
+
+type GoogleRestoreCandidate = {
+  planCode: string;
+  productId: string;
+  basePlanId?: string | null;
+};
+
+type BillingRecoveryStatus = {
+  tone: "success" | "warning" | "error";
+  title: string;
+  body: string;
+};
+
+function overviewHasActivePaidSubscription(
+  overview: PaymentsApi.PaymentOverviewResponse | null | undefined
+) {
+  const subscription = overview?.current_subscription;
+  const planCode = normalizePlanCode(
+    subscription?.plan_code || overview?.current_plan?.plan_code || "free"
+  );
+  const subscriptionState = String(subscription?.subscription_state || "").toLowerCase();
+  const entitlementState = String(subscription?.entitlement_state || "").toLowerCase();
+
+  return (
+    planCode !== "free" &&
+    (subscriptionState === "active" || subscriptionState === "trialing" || subscriptionState === "grace") &&
+    (entitlementState === "active" || entitlementState === "grace")
+  );
+}
+
+function buildGoogleRestoreCandidates(
+  catalog: PaymentsApi.PaymentPlanCatalogResponse | null | undefined
+): GoogleRestoreCandidate[] {
+  const items = dedupePlanItems(catalog?.items);
+  const candidates = items
+    .map((item) => {
+      const raw = item as Record<string, any>;
+      const metadata = asLooseRecord(raw.metadata || raw.metadata_json);
+      const planCode = normalizePlanCode(raw.plan_code || raw.code);
+      const productId = firstNonEmptyString(
+        raw.google_product_id,
+        raw.android_product_id,
+        looseGet(metadata, "google_product_id"),
+        looseGet(metadata, "android_product_id"),
+        googleSubscriptionProductIdForPlan(planCode)
+      );
+      const basePlanId = firstNonEmptyString(
+        raw.google_base_plan_id,
+        raw.base_plan_id,
+        looseGet(metadata, "google_base_plan_id"),
+        looseGet(metadata, "base_plan_id"),
+        googleSubscriptionBasePlanIdForPlan(planCode)
+      );
+
+      return {
+        planCode,
+        productId: productId || "",
+        basePlanId,
+      };
+    })
+    .filter((candidate) => {
+      if (!candidate.productId) return false;
+      if (candidate.planCode === "free") return false;
+      if (candidate.planCode === "enterprise_contract_v1") return false;
+      return true;
+    });
+
+  const seen = new Set<string>();
+  return candidates
+    .filter((candidate) => {
+      const key = `${candidate.productId}:${candidate.basePlanId || ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => planRank(a.planCode) - planRank(b.planCode));
 }
 
 type DisplayPlanOption = {
@@ -602,6 +681,8 @@ export default function PlanBillingScreen() {
 
   const queryClient = useQueryClient();
   const auth = useAuth() as any;
+  const pathname = usePathname();
+  const shouldRenderLocalFooter = String(pathname || "").includes("/pricing/plan-billing");
 
   const source = readString(params.source, "studio");
   const workflow = readString(params.workflow, source);
@@ -615,6 +696,10 @@ export default function PlanBillingScreen() {
     auth?.user?.countryCode ||
     auth?.user?.country_code ||
     "US";
+
+  const currentUserId = String(
+    auth?.userId || auth?.user_id || auth?.user?.id || auth?.user?.user_id || ""
+  ).trim();
 
   const purchaseProvider = platformPurchaseProvider();
   const isAppleBilling = purchaseProvider === "apple_iap";
@@ -974,10 +1059,124 @@ export default function PlanBillingScreen() {
     });
   };
 
+  const googleAutoRestoreAttemptRef = useRef<Record<string, number>>({});
+  const [googleAutoRestoreBusy, setGoogleAutoRestoreBusy] = useState(false);
+  const [billingRecoveryBusy, setBillingRecoveryBusy] = useState(false);
+  const [billingRecoveryStatus, setBillingRecoveryStatus] = useState<BillingRecoveryStatus | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const [subActionBusy, setSubActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
+
+  const googleRestoreCandidates = useMemo(
+    () => buildGoogleRestoreCandidates(planCatalog),
+    [planCatalog]
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+
+      const runGoogleAutoRestore = async () => {
+        if (!isGooglePlayBilling) return;
+        if (!currentUserId) return;
+        if (overviewHasActivePaidSubscription(overview)) return;
+        if (!googleRestoreCandidates.length) return;
+
+        const attemptKey = `${currentUserId}:${googleRestoreCandidates
+          .map((candidate) => `${candidate.productId}:${candidate.basePlanId || ""}`)
+          .join("|")}`;
+        const now = Date.now();
+        const lastAttemptAt = googleAutoRestoreAttemptRef.current[attemptKey] || 0;
+        if (now - lastAttemptAt < 60000) return;
+        googleAutoRestoreAttemptRef.current[attemptKey] = now;
+
+        setGoogleAutoRestoreBusy(true);
+        setActionError("");
+        setActionMessage("Checking Google Play for an existing subscription…");
+
+        let restored = false;
+        let lastError: any = null;
+
+        try {
+          for (const candidate of googleRestoreCandidates) {
+            if (cancelled) return;
+
+            try {
+              console.log("DF_GOOGLE_AUTO_RESTORE_ATTEMPT", {
+                planCode: candidate.planCode,
+                productId: candidate.productId,
+                basePlanId: candidate.basePlanId || null,
+              });
+
+              await restoreGoogleSubscriptionAndConfirm({
+                productId: candidate.productId as any,
+                basePlanId: candidate.basePlanId || undefined,
+                userId: currentUserId,
+                countryCode,
+                currency: countryCode === "IN" ? "INR" : "USD",
+              });
+
+              await refreshBillingQueries(queryClient, countryCode);
+              const [overviewRes, catalogRes] = await Promise.all([
+                refetchOverview(),
+                refetchCatalog(),
+              ]);
+
+              const synced =
+                overviewHasActivePaidSubscription(overviewRes.data) ||
+                overviewHasActivePaidSubscription(catalogRes.data as any);
+
+              if (synced) {
+                restored = true;
+                if (!cancelled) {
+                  setActionMessage("Google Play subscription synced.");
+                  setActionError("");
+                }
+                break;
+              }
+            } catch (error: any) {
+              lastError = error;
+              console.log("DF_GOOGLE_AUTO_RESTORE_CANDIDATE_FAILED", {
+                planCode: candidate.planCode,
+                productId: candidate.productId,
+                basePlanId: candidate.basePlanId || null,
+                message: String(error?.message || error || ""),
+              });
+            }
+          }
+        } finally {
+          if (!cancelled) {
+            setGoogleAutoRestoreBusy(false);
+            if (!restored) {
+              setActionMessage("");
+              // No user-facing error here. Most Free users will not have a restorable purchase.
+              if (lastError) {
+                console.log("DF_GOOGLE_AUTO_RESTORE_NO_ACTIVE_PURCHASE", {
+                  message: String(lastError?.message || lastError || ""),
+                });
+              }
+            }
+          }
+        }
+      };
+
+      runGoogleAutoRestore();
+
+      return () => {
+        cancelled = true;
+      };
+    }, [
+      countryCode,
+      currentUserId,
+      googleRestoreCandidates,
+      isGooglePlayBilling,
+      overview,
+      queryClient,
+      refetchCatalog,
+      refetchOverview,
+    ])
+  );
 
   const openManageBilling = async () => {
     try {
@@ -1060,6 +1259,180 @@ export default function PlanBillingScreen() {
     }
   };
 
+  const handleRecoverBilling = async () => {
+    try {
+      setBillingRecoveryBusy(true);
+      setBillingRecoveryStatus(null);
+      setActionError("");
+      setActionMessage("");
+
+      // Restore is a recovery action for missing entitlements. If DesiFaces already
+      // has an active paid subscription for this account, do a safe server refresh
+      // instead of forcing Apple/Google to show a password prompt and re-confirm
+      // historical store transactions that may be rejected as stale or mismatched.
+      if (overviewHasActivePaidSubscription(overview)) {
+        await refreshBillingQueries(queryClient, countryCode);
+        await Promise.all([refetchOverview(), refetchCatalog()]);
+
+        const body = isAppleBilling
+          ? "Your Apple subscription is already active in DesiFaces. We refreshed this page and did not duplicate subscription or top-up credits."
+          : isGooglePlayBilling
+            ? "Your Google Play subscription is already active in DesiFaces. We refreshed this page and did not duplicate subscription or top-up credits."
+            : "Your web billing status was refreshed from the DesiFaces server. No credits were duplicated.";
+
+        setBillingRecoveryStatus({
+          tone: "success",
+          title: "Billing already up to date",
+          body,
+        });
+        setActionMessage(body);
+        return;
+      }
+
+      if (isAppleBilling) {
+        if (!currentUserId) {
+          throw new Error("Please sign in again before restoring Apple purchases.");
+        }
+
+        const result = await restoreAppleSubscriptionsAndConfirm({
+          userId: currentUserId,
+          countryCode,
+          currency: String(overview?.currency || "USD"),
+        });
+
+        await refreshBillingQueries(queryClient, countryCode);
+        await Promise.all([refetchOverview(), refetchCatalog()]);
+
+        if ((result?.restoredCount || 0) > 0) {
+          const body =
+            "Your active Apple subscription was checked and your billing status was refreshed. Credit top-ups already granted were not duplicated.";
+          setBillingRecoveryStatus({
+            tone: "success",
+            title: "Apple purchases restored",
+            body,
+          });
+          setActionMessage(`Apple purchases restored. ${body}`);
+        } else {
+          const body =
+            "No active Apple subscription was found to restore for this Apple ID. If you purchased with a different Apple ID, sign in to that Apple ID in App Store settings and try again.";
+          setBillingRecoveryStatus({
+            tone: "warning",
+            title: "No active Apple subscription found",
+            body,
+          });
+          setActionMessage(body);
+        }
+        return;
+      }
+
+      if (isGooglePlayBilling) {
+        if (!currentUserId) {
+          throw new Error("Please sign in again before restoring Google Play purchases.");
+        }
+        if (!googleRestoreCandidates.length) {
+          throw new Error("Google Play restore is not configured for the current pricing catalog yet.");
+        }
+
+        const checkingMessage = "Checking Google Play for an existing subscription…";
+        setBillingRecoveryStatus({
+          tone: "warning",
+          title: "Checking Google Play",
+          body: checkingMessage,
+        });
+        setActionMessage(checkingMessage);
+
+        let restored = false;
+        let lastError: any = null;
+
+        for (const candidate of googleRestoreCandidates) {
+          try {
+            await restoreGoogleSubscriptionAndConfirm({
+              productId: candidate.productId as any,
+              basePlanId: candidate.basePlanId || undefined,
+              userId: currentUserId,
+              countryCode,
+              currency: countryCode === "IN" ? "INR" : "USD",
+            });
+
+            await refreshBillingQueries(queryClient, countryCode);
+            const [overviewRes, catalogRes] = await Promise.all([
+              refetchOverview(),
+              refetchCatalog(),
+            ]);
+
+            const synced =
+              overviewHasActivePaidSubscription(overviewRes.data) ||
+              overviewHasActivePaidSubscription(catalogRes.data as any);
+
+            if (synced) {
+              restored = true;
+              break;
+            }
+          } catch (error: any) {
+            lastError = error;
+            console.log("DF_GOOGLE_MANUAL_RESTORE_CANDIDATE_FAILED", {
+              planCode: candidate.planCode,
+              productId: candidate.productId,
+              basePlanId: candidate.basePlanId || null,
+              message: String(error?.message || error || ""),
+            });
+          }
+        }
+
+        if (restored) {
+          const body =
+            "Your active Google Play subscription was checked and your billing status was refreshed. Credit top-ups already granted were not duplicated.";
+          setBillingRecoveryStatus({
+            tone: "success",
+            title: "Google Play purchases restored",
+            body,
+          });
+          setActionMessage(`Google Play purchases restored. ${body}`);
+        } else {
+          const body =
+            "No active Google Play subscription was found to restore for this Google account. If you purchased with a different Play account, switch to that account in Google Play and try again.";
+          setBillingRecoveryStatus({
+            tone: "warning",
+            title: "No active Google Play subscription found",
+            body,
+          });
+          setActionMessage(body);
+          if (lastError) {
+            console.log("DF_GOOGLE_MANUAL_RESTORE_NO_ACTIVE_PURCHASE", {
+              message: String(lastError?.message || lastError || ""),
+            });
+          }
+        }
+        return;
+      }
+
+      await refreshBillingQueries(queryClient, countryCode);
+      await Promise.all([refetchOverview(), refetchCatalog()]);
+      const body =
+        "Web purchases are tied to your DesiFaces account through Stripe, so there is no device-store purchase to restore. Use Manage billing for invoices, payment method, or subscription changes.";
+      setBillingRecoveryStatus({
+        tone: "success",
+        title: "Billing status refreshed",
+        body,
+      });
+      setActionMessage(`Billing status refreshed. ${body}`);
+    } catch (e: any) {
+      const body = String(
+        e?.message ||
+          e ||
+          "Unable to recover purchases right now. Please check your store account and try again."
+      );
+      setBillingRecoveryStatus({
+        tone: "error",
+        title: "Unable to recover purchases",
+        body,
+      });
+      setActionError(body);
+    } finally {
+      setBillingRecoveryBusy(false);
+    }
+  };
+
   const loading =
     overviewLoading || overviewFetching || catalogLoading || catalogFetching;
 
@@ -1074,6 +1447,30 @@ export default function PlanBillingScreen() {
       params: { source: "billing", workflow, intent: "topup" },
     });
   }, [workflow]);
+
+  const billingRecoveryTitle = isAppleBilling
+    ? "Restore Apple purchases"
+    : isGooglePlayBilling
+      ? "Restore Google Play purchases"
+      : "Refresh web billing status";
+
+  const billingRecoveryBody = isAppleBilling
+    ? "Use this if you reinstalled DesiFaces, changed iPhone, or your Apple subscription is missing after purchase. It restores active Apple subscriptions only. Credit top-ups already granted will not be duplicated."
+    : isGooglePlayBilling
+      ? "Use this if you reinstalled DesiFaces, changed Android phone, or your Google Play subscription is missing after purchase. It restores active Google Play subscriptions only. Credit top-ups already granted will not be duplicated."
+      : "Use this if Stripe checkout succeeded but this screen has not updated yet. Web billing is tied to your DesiFaces account, so refreshing checks the server and does not duplicate credit top-ups.";
+
+  const billingRecoveryButtonLabel = billingRecoveryBusy
+    ? isAppleBilling
+      ? "Restoring Apple…"
+      : isGooglePlayBilling
+        ? "Restoring Google Play…"
+        : "Refreshing…"
+    : isAppleBilling
+      ? "Restore Apple purchases"
+      : isGooglePlayBilling
+        ? "Restore Google Play purchases"
+        : "Refresh billing status";
 
   return (
     <View style={styles.root}>
@@ -1092,7 +1489,7 @@ export default function PlanBillingScreen() {
       />
 
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, shouldRenderLocalFooter && styles.contentWithLocalFooter]}
         showsVerticalScrollIndicator={false}
       >
         {billingResult ? (
@@ -1194,6 +1591,64 @@ export default function PlanBillingScreen() {
           >
             <Text style={styles.topupPromptButtonText}>Top up</Text>
           </Pressable>
+        </View>
+
+        <View style={styles.billingRecoveryCard} testID="plan-billing-recover-purchases-card">
+          <View style={styles.billingRecoveryHeader}>
+            <View style={styles.billingRecoveryIcon}>
+              <Ionicons
+                name={isAppleBilling || isGooglePlayBilling ? "refresh-outline" : "sync-outline"}
+                size={18}
+                color={Colors.dark.tintSoft}
+              />
+            </View>
+            <View style={styles.billingRecoveryCopy}>
+              <Text style={styles.billingRecoveryTitle}>{billingRecoveryTitle}</Text>
+              <Text style={styles.billingRecoveryBody}>{billingRecoveryBody}</Text>
+            </View>
+          </View>
+          <Pressable
+            testID="plan-billing-recover-purchases-button"
+            accessibilityRole="button"
+            accessibilityLabel={billingRecoveryTitle}
+            accessibilityHint="Checks the current platform billing provider and refreshes your DesiFaces billing status without duplicating granted credit top-ups."
+            style={[
+              styles.billingRecoveryButton,
+              (billingRecoveryBusy || googleAutoRestoreBusy) && styles.manageBtnDisabled,
+            ]}
+            onPress={handleRecoverBilling}
+            disabled={billingRecoveryBusy || googleAutoRestoreBusy}
+          >
+            {billingRecoveryBusy || googleAutoRestoreBusy ? (
+              <ActivityIndicator size="small" color="#2A1606" />
+            ) : null}
+            <Text style={styles.billingRecoveryButtonText}>
+              {googleAutoRestoreBusy && !billingRecoveryBusy
+                ? "Checking Google Play…"
+                : billingRecoveryButtonLabel}
+            </Text>
+          </Pressable>
+
+          {billingRecoveryStatus ? (
+            <View
+              style={[
+                styles.billingRecoveryStatus,
+                billingRecoveryStatus.tone === "error"
+                  ? styles.billingRecoveryStatusError
+                  : billingRecoveryStatus.tone === "warning"
+                    ? styles.billingRecoveryStatusWarning
+                    : styles.billingRecoveryStatusSuccess,
+              ]}
+              testID="plan-billing-recover-purchases-status"
+            >
+              <Text style={styles.billingRecoveryStatusTitle}>
+                {billingRecoveryStatus.title}
+              </Text>
+              <Text style={styles.billingRecoveryStatusBody}>
+                {billingRecoveryStatus.body}
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.section}>
@@ -1404,7 +1859,7 @@ export default function PlanBillingScreen() {
         </Pressable>
       </View>
 
-      <BillingFooterNav />
+      {shouldRenderLocalFooter ? <BillingFooterNav /> : null}
     </View>
   );
 }
@@ -1420,7 +1875,8 @@ function Row({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.dark.background },
-  content: { padding: Spacing.lg, paddingBottom: 188, gap: Spacing.lg },
+  content: { padding: Spacing.lg, paddingBottom: 124, gap: Spacing.lg },
+  contentWithLocalFooter: { paddingBottom: 188 },
   banner: { borderRadius: Radii.xxl, padding: Spacing.lg, borderWidth: 1 },
   bannerSuccess: {
     backgroundColor: Colors.dark.cardElevated,
@@ -1665,6 +2121,87 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     maxWidth: "55%",
     textAlign: "right",
+  },
+  billingRecoveryCard: {
+    borderRadius: Radii.xxl,
+    borderWidth: 1,
+    borderColor: "rgba(248,184,72,0.28)",
+    backgroundColor: "rgba(248,184,72,0.08)",
+    padding: Spacing.lg,
+    gap: 14,
+  },
+  billingRecoveryHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  billingRecoveryIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(248,184,72,0.13)",
+    borderWidth: 1,
+    borderColor: "rgba(248,184,72,0.24)",
+  },
+  billingRecoveryCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 5,
+  },
+  billingRecoveryTitle: {
+    color: Colors.dark.textPrimary,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  billingRecoveryBody: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  billingRecoveryButton: {
+    minHeight: 46,
+    borderRadius: Radii.xl,
+    backgroundColor: Colors.dark.tint,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 16,
+  },
+  billingRecoveryButtonText: {
+    color: "#2A1606",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  billingRecoveryStatus: {
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    padding: 12,
+    gap: 4,
+  },
+  billingRecoveryStatusSuccess: {
+    backgroundColor: "rgba(34,197,94,0.10)",
+    borderColor: "rgba(34,197,94,0.28)",
+  },
+  billingRecoveryStatusWarning: {
+    backgroundColor: "rgba(248,184,72,0.10)",
+    borderColor: "rgba(248,184,72,0.30)",
+  },
+  billingRecoveryStatusError: {
+    backgroundColor: "rgba(239,68,68,0.10)",
+    borderColor: "rgba(239,68,68,0.30)",
+  },
+  billingRecoveryStatusTitle: {
+    color: Colors.dark.textPrimary,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  billingRecoveryStatusBody: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
   },
   actionsRow: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   secondaryActionBtn: {

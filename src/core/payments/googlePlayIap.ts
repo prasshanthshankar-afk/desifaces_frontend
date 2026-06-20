@@ -378,16 +378,31 @@ function chooseFirstOfferToken(product: any, basePlanId?: string | null): string
   return firstNonEmptyString(match?.offerToken, match?.offer_token) || null;
 }
 
+async function readAvailableGooglePurchases(iap: any) {
+  if (typeof iap?.getAvailablePurchases === "function") {
+    return asArray(await iap.getAvailablePurchases());
+  }
+  if (typeof iap?.getAvailablePurchasesAsync === "function") {
+    return asArray(await iap.getAvailablePurchasesAsync());
+  }
+  throw new Error(
+    "Google Play restore is unavailable because this expo-iap runtime does not expose getAvailablePurchases()."
+  );
+}
+
 async function pollAvailablePurchasesForToken(productId: string, type: GooglePurchaseType) {
   const iap = requireGooglePlayIapRuntime();
-  if (typeof iap.getAvailablePurchases !== "function") return null;
 
   for (let attempt = 0; attempt < 12; attempt += 1) {
     try {
-      const purchases = asArray(await iap.getAvailablePurchases());
+      const purchases = await readAvailableGooglePurchases(iap);
       const match = purchases.find((purchase: any) => {
         const normalized = normalizeGooglePurchase(purchase);
-        return (normalized.productId || productId) === productId && Boolean(normalized.purchaseToken);
+        const normalizedProductId = normalized.productId || "";
+        return (
+          Boolean(normalized.purchaseToken) &&
+          (!normalizedProductId || normalizedProductId === productId)
+        );
       });
       if (match) {
         console.log("GOOGLE_IAP_PURCHASE_POLLED", { productId, type, attempt });
@@ -405,6 +420,119 @@ async function pollAvailablePurchasesForToken(productId: string, type: GooglePur
     await new Promise((resolve) => setTimeout(resolve, 750));
   }
   return null;
+}
+
+function isRecoverableGooglePurchaseMessage(message: string) {
+  return /already|owned|subscribed|currently subscribed|item[_\s-]*already[_\s-]*owned|billing[_\s-]*response[_\s-]*result[_\s-]*item[_\s-]*already[_\s-]*owned|response\s*code\s*[:=]?\s*7|acknowledge|acknowledg|purchase.*token|did not return a purchase token|flow started/i.test(
+    message
+  );
+}
+
+export function isGooglePlayRecoverablePurchaseError(error: any) {
+  const message = messageOf(error);
+  const code = String(codeOf(error) || "").toLowerCase();
+  const raw = safeJson(error);
+  return (
+    isRecoverableGooglePurchaseMessage(message) ||
+    isRecoverableGooglePurchaseMessage(raw) ||
+    /already|owned|subscribed|item_already_owned|billing_response_result_item_already_owned|responsecode.*7|response_code.*7|\b7\b/i.test(code)
+  );
+}
+
+async function getAvailableGooglePurchasesWithRetry(productId: string, type: GooglePurchaseType) {
+  await ensureGooglePlayBillingReady();
+
+  const iap = requireGooglePlayIapRuntime();
+
+  let lastError: any = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      const purchases = await readAvailableGooglePurchases(iap);
+      console.log("GOOGLE_IAP_AVAILABLE_PURCHASES_DEBUG", {
+        productId,
+        type,
+        attempt,
+        count: purchases.length,
+        candidates: purchases.slice(0, 8).map((purchase: any) => {
+          const normalized = normalizeGooglePurchase(purchase);
+          return {
+            productId: normalized.productId || null,
+            hasToken: Boolean(normalized.purchaseToken),
+            tokenLen: normalized.purchaseToken.length,
+            orderId: normalized.orderId,
+          };
+        }),
+      });
+
+      if (purchases.length > 0) return purchases;
+    } catch (error: any) {
+      lastError = error;
+      console.log("GOOGLE_IAP_AVAILABLE_PURCHASES_ERROR", {
+        productId,
+        type,
+        attempt,
+        message: messageOf(error),
+        code: codeOf(error),
+        raw: safeJson(error),
+      });
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 900));
+  }
+
+  if (lastError) {
+    throw new Error(`Unable to restore Google Play purchases: ${messageOf(lastError)}`);
+  }
+
+  return [];
+}
+
+function chooseRestorablePurchase(purchases: any[], productId: string) {
+  const normalizedCandidates = purchases
+    .map((purchase) => normalizeGooglePurchase(purchase))
+    .filter((purchase) => Boolean(purchase.purchaseToken));
+
+  const exact = normalizedCandidates.find((purchase) => purchase.productId === productId);
+  if (exact) return exact;
+
+  const missingProductId = normalizedCandidates.find((purchase) => !purchase.productId);
+  if (missingProductId) {
+    console.log("GOOGLE_IAP_RESTORE_MATCHED_TOKEN_WITHOUT_PRODUCT_ID", {
+      requestedProductId: productId,
+      tokenLen: missingProductId.purchaseToken.length,
+      orderId: missingProductId.orderId,
+    });
+    return {
+      ...missingProductId,
+      productId,
+    };
+  }
+
+  return null;
+}
+
+async function restoreGooglePurchaseToken(params: {
+  productId: string;
+  type: GooglePurchaseType;
+}) {
+  const purchases = await getAvailableGooglePurchasesWithRetry(params.productId, params.type);
+  const normalized = chooseRestorablePurchase(purchases, params.productId);
+
+  if (!normalized?.purchaseToken) {
+    throw new Error(
+      `No restorable Google Play purchase token was found for ${params.productId}. If Google Play shows the subscription as active, keep the same Play account signed in and reopen the app to sync.`
+    );
+  }
+
+  console.log("GOOGLE_IAP_RESTORE_PURCHASE_TOKEN_FOUND", {
+    productId: normalized.productId || params.productId,
+    type: params.type,
+    tokenLen: normalized.purchaseToken.length,
+    tokenPrefix: normalized.purchaseToken.slice(0, 10),
+    orderId: normalized.orderId,
+  });
+
+  return normalized;
 }
 
 function buildPurchaseAttemptPayloads(params: {
@@ -536,6 +664,9 @@ async function requestGooglePurchase(params: {
       if (/cancel|user.*cancel|user.*canceled|cancelled/i.test(message)) {
         throw new Error("Google Play purchase was canceled.");
       }
+      if (isGooglePlayRecoverablePurchaseError(error)) {
+        throw error;
+      }
       if (!/request|android|google|sku|skus|shape|argument|parameter|type|offer/i.test(message)) {
         throw new Error(`Google Play purchase could not start: ${message}`);
       }
@@ -543,6 +674,80 @@ async function requestGooglePurchase(params: {
   }
 
   throw new Error(`Google Play purchase could not start: ${messageOf(lastError)}`);
+}
+
+export async function restoreGoogleCreditsPackAndConfirm(params: {
+  productId: GoogleCreditsProductId;
+  userId: string;
+  countryCode?: string;
+  currency?: string;
+}): Promise<GooglePurchaseConfirmResponse> {
+  console.log("GOOGLE_IAP_CREDITS_RESTORE_START", {
+    productId: params.productId,
+    userId: params.userId,
+    countryCode: params.countryCode || null,
+    currency: params.currency || null,
+  });
+
+  const normalized = await restoreGooglePurchaseToken({
+    productId: params.productId,
+    type: "in-app",
+  });
+
+  console.log("GOOGLE_IAP_CREDITS_RESTORE_CONFIRM_BACKEND_START", {
+    googleProductId: normalized.productId || params.productId,
+    packageName: "ai.desifaces.app",
+    orderId: normalized.orderId,
+  });
+
+  return apiConfirmGoogleCreditsPurchase({
+    googleProductId: normalized.productId || params.productId,
+    purchaseToken: normalized.purchaseToken,
+    packageName: "ai.desifaces.app",
+    orderId: normalized.orderId,
+    countryCode: params.countryCode,
+    currency: params.currency,
+    rawPurchaseJson: normalized.raw,
+  });
+}
+
+export async function restoreGoogleSubscriptionAndConfirm(params: {
+  productId: GoogleSubscriptionProductId;
+  basePlanId?: string | null;
+  userId: string;
+  countryCode?: string;
+  currency?: string;
+}): Promise<GooglePurchaseConfirmResponse> {
+  console.log("GOOGLE_IAP_SUBSCRIPTION_RESTORE_START", {
+    productId: params.productId,
+    basePlanId: params.basePlanId || null,
+    userId: params.userId,
+    countryCode: params.countryCode || null,
+    currency: params.currency || null,
+  });
+
+  const normalized = await restoreGooglePurchaseToken({
+    productId: params.productId,
+    type: "subs",
+  });
+
+  console.log("GOOGLE_IAP_SUBSCRIPTION_RESTORE_CONFIRM_BACKEND_START", {
+    googleProductId: normalized.productId || params.productId,
+    basePlanId: params.basePlanId || null,
+    packageName: "ai.desifaces.app",
+    orderId: normalized.orderId,
+  });
+
+  return apiConfirmGoogleSubscriptionPurchase({
+    googleProductId: normalized.productId || params.productId,
+    basePlanId: params.basePlanId || undefined,
+    purchaseToken: normalized.purchaseToken,
+    packageName: "ai.desifaces.app",
+    orderId: normalized.orderId,
+    countryCode: params.countryCode,
+    currency: params.currency,
+    rawPurchaseJson: normalized.raw,
+  });
 }
 
 export async function purchaseGoogleCreditsPackAndConfirm(params: {
@@ -558,11 +763,25 @@ export async function purchaseGoogleCreditsPackAndConfirm(params: {
     currency: params.currency || null,
   });
 
-  const rawPurchase = await requestGooglePurchase({
-    productId: params.productId,
-    userId: params.userId,
-    type: "in-app",
-  });
+  let rawPurchase: any = null;
+  try {
+    rawPurchase = await requestGooglePurchase({
+      productId: params.productId,
+      userId: params.userId,
+      type: "in-app",
+    });
+  } catch (error: any) {
+    if (isGooglePlayRecoverablePurchaseError(error)) {
+      console.log("GOOGLE_IAP_CREDITS_RESTORE_AFTER_PURCHASE_ERROR", {
+        productId: params.productId,
+        message: messageOf(error),
+        code: codeOf(error),
+      });
+      return restoreGoogleCreditsPackAndConfirm(params);
+    }
+    throw error;
+  }
+
   const normalized = normalizeGooglePurchase(rawPurchase);
 
   console.log("GOOGLE_IAP_CREDITS_PURCHASE_RECEIVED", {
@@ -573,7 +792,11 @@ export async function purchaseGoogleCreditsPackAndConfirm(params: {
   });
 
   if (!normalized.purchaseToken) {
-    throw new Error("Google Play purchase completed, but no purchaseToken was returned.");
+    console.log("GOOGLE_IAP_CREDITS_RESTORE_AFTER_EMPTY_TOKEN", {
+      productId: params.productId,
+      orderId: normalized.orderId,
+    });
+    return restoreGoogleCreditsPackAndConfirm(params);
   }
 
   console.log("GOOGLE_IAP_CREDITS_CONFIRM_BACKEND_START", {
@@ -607,12 +830,27 @@ export async function purchaseGoogleSubscriptionAndConfirm(params: {
     currency: params.currency || null,
   });
 
-  const rawPurchase = await requestGooglePurchase({
-    productId: params.productId,
-    userId: params.userId,
-    type: "subs",
-    basePlanId: params.basePlanId,
-  });
+  let rawPurchase: any = null;
+  try {
+    rawPurchase = await requestGooglePurchase({
+      productId: params.productId,
+      userId: params.userId,
+      type: "subs",
+      basePlanId: params.basePlanId,
+    });
+  } catch (error: any) {
+    if (isGooglePlayRecoverablePurchaseError(error)) {
+      console.log("GOOGLE_IAP_SUBSCRIPTION_RESTORE_AFTER_PURCHASE_ERROR", {
+        productId: params.productId,
+        basePlanId: params.basePlanId || null,
+        message: messageOf(error),
+        code: codeOf(error),
+      });
+      return restoreGoogleSubscriptionAndConfirm(params);
+    }
+    throw error;
+  }
+
   const normalized = normalizeGooglePurchase(rawPurchase);
 
   console.log("GOOGLE_IAP_SUBSCRIPTION_PURCHASE_RECEIVED", {
@@ -624,7 +862,12 @@ export async function purchaseGoogleSubscriptionAndConfirm(params: {
   });
 
   if (!normalized.purchaseToken) {
-    throw new Error("Google Play subscription completed, but no purchaseToken was returned.");
+    console.log("GOOGLE_IAP_SUBSCRIPTION_RESTORE_AFTER_EMPTY_TOKEN", {
+      productId: params.productId,
+      basePlanId: params.basePlanId || null,
+      orderId: normalized.orderId,
+    });
+    return restoreGoogleSubscriptionAndConfirm(params);
   }
 
   console.log("GOOGLE_IAP_SUBSCRIPTION_CONFIRM_BACKEND_START", {

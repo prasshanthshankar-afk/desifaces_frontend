@@ -26,7 +26,9 @@ import {
 import {
   googleSubscriptionBasePlanIdForPlan,
   googleSubscriptionProductIdForPlan,
+  isGooglePlayRecoverablePurchaseError,
   purchaseGoogleSubscriptionAndConfirm,
+  restoreGoogleSubscriptionAndConfirm,
 } from "../../core/payments/googlePlayIap";
 
 type PlanUiMeta = {
@@ -66,6 +68,16 @@ function firstNonEmptyString(...values: unknown[]): string | null {
     if (text) return text;
   }
   return null;
+}
+
+function readCurrentPeriodEnd(value: unknown): string | null {
+  const raw = (value || {}) as Record<string, any>;
+  return firstNonEmptyString(
+    raw.current_period_end,
+    raw.currentPeriodEnd,
+    raw.subscription?.current_period_end,
+    raw.subscription?.currentPeriodEnd
+  );
 }
 
 function asRecord(value: unknown): Record<string, any> {
@@ -182,6 +194,19 @@ function planRank(planCode?: string | null) {
   if (code === "pro_yearly_v1") return 21;
   if (code === "pro_monthly_v1") return 20;
   return 10;
+}
+
+function isGoogleRecoverableSubscriptionSyncError(rawError: string) {
+  const normalized = String(rawError || "").toLowerCase();
+  return (
+    normalized.includes("already owned") ||
+    normalized.includes("already subscribed") ||
+    normalized.includes("currently subscribed") ||
+    normalized.includes("you’re currently subscribed") ||
+    normalized.includes("you're currently subscribed") ||
+    normalized.includes("item_already_owned") ||
+    normalized.includes("billing_response_result_item_already_owned")
+  );
 }
 
 function makeIdempotencyKey(planCode: string, prefix = "billing") {
@@ -834,9 +859,11 @@ export default function UpgradeConfirmScreen() {
 
         await refreshBillingQueries(queryClient, countryCode);
 
+        const appleConfirmedPeriodEnd = readCurrentPeriodEnd(confirmed);
+
         setMessage(
-          confirmed?.current_period_end
-            ? `Subscription confirmed. Current period ends on ${confirmed.current_period_end}.`
+          appleConfirmedPeriodEnd
+            ? `Subscription confirmed. Current period ends on ${appleConfirmedPeriodEnd}.`
             : "Subscription confirmed."
         );
 
@@ -859,19 +886,61 @@ export default function UpgradeConfirmScreen() {
           throw new Error("Google Play product mapping was not found for this plan.");
         }
 
-        const confirmed = await purchaseGoogleSubscriptionAndConfirm({
+        const googlePurchaseParams = {
           productId: selectedGoogleProductId as any,
           basePlanId: selectedGoogleBasePlanId || undefined,
           userId: currentUserId,
           countryCode,
           currency: countryCode === "IN" ? "INR" : "USD",
-        });
+        };
+
+        let confirmed: any = null;
+
+        try {
+          confirmed = await purchaseGoogleSubscriptionAndConfirm(googlePurchaseParams);
+        } catch (purchaseError: any) {
+          const message = String(purchaseError?.message || purchaseError || "");
+
+          if (
+            isGooglePlayRecoverablePurchaseError(purchaseError) ||
+            isGoogleRecoverableSubscriptionSyncError(message)
+          ) {
+            setMessage("Google Play shows an existing subscription. Syncing your Google Play subscription now…");
+
+            const restoreResult: any = await restoreGoogleSubscriptionAndConfirm(googlePurchaseParams);
+
+            await refreshBillingQueries(queryClient, countryCode);
+            const overviewAfterRestore = await PaymentsApi.apiGetPaymentsOverview(countryCode);
+
+            const restoredPlanCode = String(
+              overviewAfterRestore?.current_plan?.plan_code ||
+                overviewAfterRestore?.current_subscription?.plan_code ||
+                ""
+            )
+              .trim()
+              .toLowerCase();
+
+            const targetPlanCode = String(selectedPlan.planCode || "")
+              .trim()
+              .toLowerCase();
+
+            if (restoredPlanCode && restoredPlanCode === targetPlanCode) {
+              confirmed = overviewAfterRestore?.current_subscription || restoreResult || {};
+            } else {
+              throw purchaseError;
+            }
+          } else {
+            throw purchaseError;
+          }
+        }
 
         await refreshBillingQueries(queryClient, countryCode);
 
+        const confirmedPeriodEnd = readCurrentPeriodEnd(confirmed);
+
         setMessage(
-          confirmed?.current_period_end
-            ? `Google Play subscription confirmed. Current period ends on ${confirmed.current_period_end}.`
+          confirmedPeriodEnd
+            ? `Google Play subscription confirmed. Current period ends on ${confirmedPeriodEnd}.`
             : "Google Play subscription confirmed."
         );
 
