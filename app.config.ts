@@ -73,7 +73,7 @@ const config: ExpoConfig = {
     package: "ai.desifaces.app",
     // Must be greater than the last Google Play build.
     // Previous Play build observed in testing was versionCode=5.
-    versionCode: 12,
+    versionCode: 13,
     adaptiveIcon: {
       foregroundImage: BRAND_LOGO,
       backgroundColor: SPLASH_BG,
