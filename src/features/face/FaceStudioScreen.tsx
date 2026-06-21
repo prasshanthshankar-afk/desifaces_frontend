@@ -53,6 +53,32 @@ import StudioTipsRail, {
 import { useFacePricingEstimate } from "./hooks/useFacePricingEstimate";
 
 type Mode = "text-to-image" | "image-to-image";
+
+const I2I_LOCKED_PRESERVATION_STRENGTH = 0.98;
+const I2I_IDENTITY_LOCK_LEVEL = "strict";
+const I2I_ALLOWED_CHANGES = [
+  "facial_hair",
+  "glasses",
+  "dress",
+  "jewelry",
+  "background",
+  "lighting",
+  "camera_angle",
+  "framing",
+  "color_grade",
+] as const;
+const I2I_FORBIDDEN_CHANGES = [
+  "identity",
+  "face",
+  "gender",
+  "facial_structure",
+  "skin_tone",
+  "eye_shape",
+  "nose_shape",
+  "mouth_shape",
+  "jawline",
+  "age_group",
+] as const;
 type Opt = { code: string; label: string };
 
 type FaceVariant = {
@@ -280,7 +306,7 @@ function buildLocalFacePrompt(
 
   const identityGuard =
     modeValue === "image-to-image"
-      ? "same person and identity preserved from the source photo"
+      ? "STRICT IDENTITY LOCK: preserve the exact same person from the source photo, same face, same gender presentation, same facial geometry, same age group, same skin tone; do not beautify into a different face; only change requested styling, facial hair, glasses, clothing, lighting, background, and framing"
       : gender
         ? `${gender} presentation preserved`
         : "";
@@ -307,7 +333,7 @@ function buildLocalFaceEnhancement(
   const preservation = Number(lockedFields?.preservation_strength ?? 0);
   const sourceHint =
     cleanParam(lockedFields?.mode) === "image-to-image"
-      ? `Identity strength ${preservation.toFixed(2)} keeps the same person while allowing styling change.`
+      ? `Strict identity lock is enabled at ${I2I_LOCKED_PRESERVATION_STRENGTH.toFixed(2)}. The same face and gender must be preserved; only styling, accessories, attire, lighting, and background may change.`
       : "The rewrite adds explicit framing, quality, and scene direction without changing your chosen identity inputs.";
 
   return {
@@ -1211,7 +1237,7 @@ export default function FaceStudioScreen() {
   const [pickedUri, setPickedUri] = useState<string | null>(null);
   const [sourceImageUrl, setSourceImageUrl] = useState<string | null>(null);
   const [sourceImageAssetId, setSourceImageAssetId] = useState<string | null>(null);
-  const [preservationStrength, setPreservationStrength] = useState(0.25);
+  const [preservationStrength, setPreservationStrength] = useState(I2I_LOCKED_PRESERVATION_STRENGTH);
 
   const [imageSafetyState, setImageSafetyState] = useState<ImageSafetyState>("idle");
   const [imageSafetyReason, setImageSafetyReason] = useState<string | null>(null);
@@ -1454,6 +1480,12 @@ export default function FaceStudioScreen() {
     }
   }, [mode, resetI2ISourceState]);
 
+  useEffect(() => {
+    if (mode === "image-to-image" && preservationStrength !== I2I_LOCKED_PRESERVATION_STRENGTH) {
+      setPreservationStrength(I2I_LOCKED_PRESERVATION_STRENGTH);
+    }
+  }, [mode, preservationStrength]);
+
   const regionLabel = zoneOptions.find((x) => x.code === zoneCode)?.label ?? "Select";
   const stateLabel = regionOptions.find((x) => x.code === regionCode)?.label ?? "Select";
   const contextLabel = contextOptions.find((x) => x.code === contextCode)?.label ?? "Optional";
@@ -1477,7 +1509,13 @@ export default function FaceStudioScreen() {
       shot_type_label: shotTypeLabel,
       aspect_ratio: aspectRatio,
       num_variants: numVariants,
-      preservation_strength: mode === "image-to-image" ? preservationStrength : undefined,
+      preservation_strength: mode === "image-to-image" ? I2I_LOCKED_PRESERVATION_STRENGTH : undefined,
+      identity_lock: mode === "image-to-image",
+      identity_lock_level: mode === "image-to-image" ? I2I_IDENTITY_LOCK_LEVEL : undefined,
+      preserve_source_identity: mode === "image-to-image" ? true : undefined,
+      preserve_source_gender: mode === "image-to-image" ? true : undefined,
+      allowed_changes: mode === "image-to-image" ? I2I_ALLOWED_CHANGES : undefined,
+      forbidden_changes: mode === "image-to-image" ? I2I_FORBIDDEN_CHANGES : undefined,
     }),
     [
       mode,
@@ -2041,6 +2079,12 @@ export default function FaceStudioScreen() {
       return;
     }
 
+    if (mode === "image-to-image" && Math.abs(preservationStrength - I2I_LOCKED_PRESERVATION_STRENGTH) > 0.001) {
+      setPreservationStrength(I2I_LOCKED_PRESERVATION_STRENGTH);
+      setInlineStatus("I2I identity lock is strict. Preservation strength has been locked to preserve the same face and gender.");
+      return;
+    }
+
     if (!pricingConfirmation?.quote_id) {
       setInlineStatus("Pricing preview is not ready yet. Please wait a moment and try again.");
       return;
@@ -2080,7 +2124,18 @@ export default function FaceStudioScreen() {
         aspect_ratio: aspectRatio,
         source_image_url: mode === "image-to-image" ? sourceImageUrl : null,
         source_image_asset_id: mode === "image-to-image" ? sourceImageAssetId : null,
-        preservation_strength: mode === "image-to-image" ? preservationStrength : undefined,
+        preservation_strength: mode === "image-to-image" ? I2I_LOCKED_PRESERVATION_STRENGTH : undefined,
+        identity_lock: mode === "image-to-image",
+        identity_lock_level: mode === "image-to-image" ? I2I_IDENTITY_LOCK_LEVEL : undefined,
+        preserve_source_identity: mode === "image-to-image" ? true : undefined,
+        preserve_source_gender: mode === "image-to-image" ? true : undefined,
+        gender_lock_mode: mode === "image-to-image" ? "preserve_from_source" : undefined,
+        allowed_i2i_changes: mode === "image-to-image" ? I2I_ALLOWED_CHANGES : undefined,
+        forbidden_i2i_changes: mode === "image-to-image" ? I2I_FORBIDDEN_CHANGES : undefined,
+        identity_lock_instructions:
+          mode === "image-to-image"
+            ? "Preserve the exact same human identity and gender presentation from the source image. Do not change the face, gender, age group, skin tone, facial geometry, or core identity. Only apply requested changes to facial hair, glasses, dress, jewelry, background, lighting, color grade, camera angle, and framing."
+            : undefined,
       };
 
       const created = await apiCreateFaceJob(req, pricingConfirmation);
@@ -2401,10 +2456,15 @@ export default function FaceStudioScreen() {
             : imageSafetyState === "error"
               ? {
                   tone: "error" as const,
-                  title: "Safety validation failed",
+                  title:
+                    imageSafetyReason?.toLowerCase().includes("upload") ||
+                    imageSafetyReason?.toLowerCase().includes("network") ||
+                    imageSafetyReason?.toLowerCase().includes("post ")
+                      ? "Source image upload failed"
+                      : "Image validation failed",
                   message:
                     imageSafetyReason ||
-                    "We couldn’t validate this image. Please try another photo.",
+                    "We couldn’t validate or upload this image. Please try another photo.",
                 }
               : {
                   tone: "neutral" as const,
@@ -2526,6 +2586,127 @@ const liveBillingValueLabel =
               />
             </View>
           </GlassCard>
+          {mode === "image-to-image" && (
+            <GlassCard>
+              <SectionTitle
+                title="I2I source image"
+                subtitle="Upload a source photo first. DesiFaces will safety-check it, upload it, then enable Image-to-Image generation."
+              />
+
+              <Pressable
+                onPress={pickImage}
+                disabled={uiLocked || creatingJob || uploadingSource || imageSafetyState === "checking"}
+                style={{
+                  marginTop: 12,
+                  minHeight: 52,
+                  borderRadius: 16,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderWidth: 1,
+                  borderColor: "rgba(248,184,72,0.42)",
+                  backgroundColor: "rgba(232,152,56,0.20)",
+                  opacity: uiLocked || creatingJob || uploadingSource || imageSafetyState === "checking" ? 0.72 : 1,
+                  paddingHorizontal: 14,
+                }}
+              >
+                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 14 }}>
+                  {uploadingSource
+                    ? imageSafetyState === "checking"
+                      ? "Checking Source Image…"
+                      : "Uploading Source Image…"
+                    : pickedUri || sourceImageUrl
+                      ? "Change Source Image"
+                      : "Upload Source Image"}
+                </Text>
+                <Text
+                  style={{
+                    color: "rgba(248,216,104,0.78)",
+                    fontWeight: "800",
+                    fontSize: 11,
+                    marginTop: 4,
+                    textAlign: "center",
+                  }}
+                >
+                  Required for I2I / Edit Face
+                </Text>
+              </Pressable>
+
+              <View
+                style={{
+                  marginTop: 12,
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor:
+                    imageSafetyBanner?.tone === "success"
+                      ? "rgba(120,255,180,0.20)"
+                      : imageSafetyBanner?.tone === "error"
+                        ? "rgba(255,120,120,0.24)"
+                        : imageSafetyBanner?.tone === "info"
+                          ? "rgba(120,180,255,0.20)"
+                          : "rgba(255,255,255,0.10)",
+                  backgroundColor:
+                    imageSafetyBanner?.tone === "success"
+                      ? "rgba(120,255,180,0.08)"
+                      : imageSafetyBanner?.tone === "error"
+                        ? "rgba(255,120,120,0.08)"
+                        : imageSafetyBanner?.tone === "info"
+                          ? "rgba(120,180,255,0.08)"
+                          : "rgba(255,255,255,0.04)",
+                  padding: 12,
+                }}
+              >
+                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 12 }}>
+                  {imageSafetyBanner?.title}
+                </Text>
+                <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 6, fontSize: 12 }}>
+                  {imageSafetyBanner?.message}
+                </Text>
+              </View>
+
+              {!!(pickedUri || sourceImageUrl) && (
+                <View
+                  style={{
+                    marginTop: 12,
+                    borderRadius: 14,
+                    overflow: "hidden",
+                    borderWidth: 1,
+                    borderColor: DF.border,
+                    backgroundColor: BG2,
+                    height: 240,
+                  }}
+                >
+                  <Image
+                    source={{ uri: pickedUri ?? sourceImageUrl ?? "" }}
+                    style={{ width: "100%", height: "100%" }}
+                    cachePolicy="none"
+                    contentFit="contain"
+                    contentPosition="center"
+                  />
+                </View>
+              )}
+
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>Identity strength</Text>
+                <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 4, fontSize: 12 }}>
+                  Lower = more creative change. Higher = closer to the source photo.
+                </Text>
+
+                <View style={{ marginTop: 8 }}>
+                  <Slider
+                    minimumValue={I2I_LOCKED_PRESERVATION_STRENGTH}
+                    maximumValue={I2I_LOCKED_PRESERVATION_STRENGTH}
+                    value={I2I_LOCKED_PRESERVATION_STRENGTH}
+                    onValueChange={() => setPreservationStrength(I2I_LOCKED_PRESERVATION_STRENGTH)}
+                    disabled
+                  />
+                  <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6, fontSize: 12 }}>
+                    Strict identity lock: {I2I_LOCKED_PRESERVATION_STRENGTH.toFixed(2)}. Face and gender must remain unchanged.
+                  </Text>
+                </View>
+              </View>
+            </GlassCard>
+          )}
+
 
           <GlassCard>
             <SectionTitle
@@ -2811,115 +2992,6 @@ const liveBillingValueLabel =
               <VariantsControl value={numVariants} onChange={setNumVariants} disabled={uiLocked} />
             </View>
           </GlassCard>
-
-          {mode === "image-to-image" && (
-            <GlassCard>
-              <SectionTitle
-                title="Identity lock"
-                subtitle="Upload a source photo and tune how closely the result follows it."
-              />
-
-              <Pressable
-                onPress={pickImage}
-                disabled={uiLocked || creatingJob || imageSafetyState === "checking"}
-                style={{
-                  marginTop: 12,
-                  height: 46,
-                  borderRadius: 14,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderWidth: 1,
-                  borderColor: "rgba(248,184,72,0.35)",
-                  backgroundColor: "rgba(232,152,56,0.18)",
-                  opacity: uiLocked || imageSafetyState === "checking" ? 0.75 : 1,
-                }}
-              >
-                <Text style={{ color: DF.text, fontWeight: "900" }}>
-                  {uploadingSource
-                    ? imageSafetyState === "checking"
-                      ? "Checking Safety…"
-                      : "Uploading…"
-                    : pickedUri || sourceImageUrl
-                      ? "Change Source Photo"
-                      : "Upload Source Photo"}
-                </Text>
-              </Pressable>
-
-              <View
-                style={{
-                  marginTop: 12,
-                  borderRadius: 14,
-                  borderWidth: 1,
-                  borderColor:
-                    imageSafetyBanner?.tone === "success"
-                      ? "rgba(120,255,180,0.20)"
-                      : imageSafetyBanner?.tone === "error"
-                        ? "rgba(255,120,120,0.24)"
-                        : imageSafetyBanner?.tone === "info"
-                          ? "rgba(120,180,255,0.20)"
-                          : "rgba(255,255,255,0.10)",
-                  backgroundColor:
-                    imageSafetyBanner?.tone === "success"
-                      ? "rgba(120,255,180,0.08)"
-                      : imageSafetyBanner?.tone === "error"
-                        ? "rgba(255,120,120,0.08)"
-                        : imageSafetyBanner?.tone === "info"
-                          ? "rgba(120,180,255,0.08)"
-                          : "rgba(255,255,255,0.04)",
-                  padding: 12,
-                }}
-              >
-                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 12 }}>
-                  {imageSafetyBanner?.title}
-                </Text>
-                <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 6, fontSize: 12 }}>
-                  {imageSafetyBanner?.message}
-                </Text>
-              </View>
-
-              {!!(pickedUri || sourceImageUrl) && (
-                <View
-                  style={{
-                    marginTop: 12,
-                    borderRadius: 14,
-                    overflow: "hidden",
-                    borderWidth: 1,
-                    borderColor: DF.border,
-                    backgroundColor: BG2,
-                    height: 240,
-                  }}
-                >
-                  <Image
-                    source={{ uri: pickedUri ?? sourceImageUrl ?? "" }}
-                    style={{ width: "100%", height: "100%" }}
-                    cachePolicy="none"
-              contentFit="contain"
-                    contentPosition="center"
-                  />
-                </View>
-              )}
-
-              <View style={{ marginTop: 12 }}>
-                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>Identity strength</Text>
-                <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 4, fontSize: 12 }}>
-                  Lower = more creative change. Higher = closer to the source photo.
-                </Text>
-
-                <View style={{ marginTop: 8 }}>
-                  <Slider
-                    minimumValue={0}
-                    maximumValue={1}
-                    value={preservationStrength}
-                    onValueChange={setPreservationStrength}
-                    disabled={uiLocked || imageSafetyState === "checking"}
-                  />
-                  <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6, fontSize: 12 }}>
-                    preservation_strength: {preservationStrength.toFixed(2)} (recommended 0.15–0.35)
-                  </Text>
-                </View>
-              </View>
-            </GlassCard>
-          )}
 
           {!!previewPendingMessage && (
             <GlassCard style={{ padding: 12 }}>

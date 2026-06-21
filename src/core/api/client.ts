@@ -37,7 +37,22 @@ function withTimeout(ms: number) {
 }
 
 function isFormData(body: unknown): body is FormData {
-  return typeof FormData !== "undefined" && body instanceof FormData;
+  if (typeof FormData === "undefined" || !body) return false;
+  if (body instanceof FormData) return true;
+
+  // React Native / Expo FormData can fail instanceof checks across JS runtimes.
+  // Treat real FormData-like objects as raw bodies so they are not JSON.stringified
+  // and so fetch can set the multipart boundary automatically.
+  const tag = Object.prototype.toString.call(body);
+  if (tag === "[object FormData]") return true;
+
+  const candidate = body as any;
+  return (
+    typeof candidate.append === "function" &&
+    (typeof candidate.getParts === "function" ||
+      Array.isArray(candidate._parts) ||
+      tag.toLowerCase().includes("formdata"))
+  );
 }
 
 function isStringBody(body: unknown): body is string {
@@ -124,6 +139,7 @@ function isAuthFailureResponse(status: number, parsed: any, rawText: string) {
 
   return (
     /auth_required/.test(text) ||
+    /missing_token/.test(text) ||
     /invalid_token/.test(text) ||
     /signature has expired/.test(text) ||
     /session expired/.test(text) ||

@@ -11,6 +11,8 @@ type AnyRecord = Record<string, any>;
 
 const FACE_PREVIEW_TIMEOUT_MS = 30000;
 const FACE_CREATE_TIMEOUT_MS = 45000;
+const FACE_IMAGE_SAFETY_TIMEOUT_MS = 60000;
+const FACE_IMAGE_UPLOAD_TIMEOUT_MS = 90000;
 
 export type FaceImageSafetyResponse = {
   allow: boolean;
@@ -37,6 +39,7 @@ function isAuthRequiredError(error: any) {
 
   return (
     haystack.includes("auth_required") ||
+    haystack.includes("missing_token") ||
     haystack.includes("invalid_token") ||
     haystack.includes("signature has expired") ||
     haystack.includes("session expired") ||
@@ -270,7 +273,8 @@ export async function apiCheckFaceSourceImageSafety(params: {
     const response = await api.post<AnyRecord>(
       FACE_BASE,
       getFaceI2ISafetyCheckPath(),
-      form
+      form,
+      { timeoutMs: FACE_IMAGE_SAFETY_TIMEOUT_MS }
     );
 
     return normalizeSafetyResponse(response);
@@ -295,7 +299,12 @@ export async function apiUploadSourceImage(
   });
 
   try {
-    return await api.post<AnyRecord>(FACE_BASE, getFaceUploadPath(), form);
+    return await api.post<AnyRecord>(
+      FACE_BASE,
+      getFaceUploadPath(),
+      form,
+      { timeoutMs: FACE_IMAGE_UPLOAD_TIMEOUT_MS }
+    );
   } catch (error: any) {
     rethrowFriendly("Face asset upload failed", error);
   }
