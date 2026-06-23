@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
+import Slider from "@react-native-community/slider";
 import { router } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -55,15 +56,7 @@ type Mode = "text-to-image" | "image-to-image";
 
 const I2I_LOCKED_PRESERVATION_STRENGTH = 0.98;
 const I2I_IDENTITY_LOCK_LEVEL = "strict";
-const I2I_LOCKED_FEATURES = [
-  "face",
-  "eyes",
-  "lips",
-  "jawline",
-  "eyebrows",
-  "gender",
-] as const;
-const I2I_REQUEST_ONLY_EDITABLE_ATTRIBUTES = [
+const I2I_ALLOWED_CHANGES = [
   "facial_hair",
   "glasses",
   "dress",
@@ -78,15 +71,12 @@ const I2I_FORBIDDEN_CHANGES = [
   "identity",
   "face",
   "gender",
-  "eyes",
-  "lips",
-  "jawline",
-  "eyebrows",
   "facial_structure",
   "skin_tone",
   "eye_shape",
   "nose_shape",
   "mouth_shape",
+  "jawline",
   "age_group",
 ] as const;
 type Opt = { code: string; label: string };
@@ -316,7 +306,7 @@ function buildLocalFacePrompt(
 
   const identityGuard =
     modeValue === "image-to-image"
-      ? "STRICT IDENTITY LOCK: preserve the exact same person from the source photo. The face, eyes, lips, jawline, eyebrows, and gender presentation must not change. Do not beautify into a different face. Change only the attributes the user explicitly requests, such as facial hair, glasses, clothing, lighting, background, or framing."
+      ? "STRICT IDENTITY LOCK: preserve the exact same person from the source photo, same face, same gender presentation, same facial geometry, same age group, same skin tone; do not beautify into a different face; only change requested styling, facial hair, glasses, clothing, lighting, background, and framing"
       : gender
         ? `${gender} presentation preserved`
         : "";
@@ -343,7 +333,7 @@ function buildLocalFaceEnhancement(
   const preservation = Number(lockedFields?.preservation_strength ?? 0);
   const sourceHint =
     cleanParam(lockedFields?.mode) === "image-to-image"
-      ? `Strict identity lock is ON. Face, eyes, lips, jawline, eyebrows, and gender must be preserved. Only user-requested styling, accessories, attire, lighting, or background changes may be applied.`
+      ? `Strict identity lock is enabled at ${I2I_LOCKED_PRESERVATION_STRENGTH.toFixed(2)}. The same face and gender must be preserved; only styling, accessories, attire, lighting, and background may change.`
       : "The rewrite adds explicit framing, quality, and scene direction without changing your chosen identity inputs.";
 
   return {
@@ -1524,9 +1514,7 @@ export default function FaceStudioScreen() {
       identity_lock_level: mode === "image-to-image" ? I2I_IDENTITY_LOCK_LEVEL : undefined,
       preserve_source_identity: mode === "image-to-image" ? true : undefined,
       preserve_source_gender: mode === "image-to-image" ? true : undefined,
-      locked_identity_features: mode === "image-to-image" ? I2I_LOCKED_FEATURES : undefined,
-      request_only_editable_attributes: mode === "image-to-image" ? I2I_REQUEST_ONLY_EDITABLE_ATTRIBUTES : undefined,
-      allowed_changes: mode === "image-to-image" ? I2I_REQUEST_ONLY_EDITABLE_ATTRIBUTES : undefined,
+      allowed_changes: mode === "image-to-image" ? I2I_ALLOWED_CHANGES : undefined,
       forbidden_changes: mode === "image-to-image" ? I2I_FORBIDDEN_CHANGES : undefined,
     }),
     [
@@ -2142,13 +2130,11 @@ export default function FaceStudioScreen() {
         preserve_source_identity: mode === "image-to-image" ? true : undefined,
         preserve_source_gender: mode === "image-to-image" ? true : undefined,
         gender_lock_mode: mode === "image-to-image" ? "preserve_from_source" : undefined,
-        locked_identity_features: mode === "image-to-image" ? I2I_LOCKED_FEATURES : undefined,
-        request_only_editable_attributes: mode === "image-to-image" ? I2I_REQUEST_ONLY_EDITABLE_ATTRIBUTES : undefined,
-        allowed_i2i_changes: mode === "image-to-image" ? I2I_REQUEST_ONLY_EDITABLE_ATTRIBUTES : undefined,
+        allowed_i2i_changes: mode === "image-to-image" ? I2I_ALLOWED_CHANGES : undefined,
         forbidden_i2i_changes: mode === "image-to-image" ? I2I_FORBIDDEN_CHANGES : undefined,
         identity_lock_instructions:
           mode === "image-to-image"
-            ? "Preserve the exact same human identity from the source image. Face, eyes, lips, jawline, eyebrows, and gender presentation must not change. Do not beautify, reshape, age, de-age, gender-swap, or replace the face. Apply only user-requested changes to facial hair, glasses, clothing, jewelry, lighting, background, color grade, camera angle, or framing. If the user did not request an attribute change, keep that attribute unchanged."
+            ? "Preserve the exact same human identity and gender presentation from the source image. Do not change the face, gender, age group, skin tone, facial geometry, or core identity. Only apply requested changes to facial hair, glasses, dress, jewelry, background, lighting, color grade, camera angle, and framing."
             : undefined,
       };
 
@@ -2699,25 +2685,24 @@ const liveBillingValueLabel =
                 </View>
               )}
 
-              <View
-                style={{
-                  marginTop: 12,
-                  borderRadius: 14,
-                  borderWidth: 1,
-                  borderColor: "rgba(120,255,180,0.22)",
-                  backgroundColor: "rgba(120,255,180,0.08)",
-                  padding: 12,
-                }}
-              >
-                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>
-                  Identity lock is always ON for I2I
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>Identity strength</Text>
+                <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 4, fontSize: 12 }}>
+                  Lower = more creative change. Higher = closer to the source photo.
                 </Text>
-                <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6, fontSize: 12 }}>
-                  Locked: face, eyes, lips, jawline, eyebrows, and gender presentation.
-                </Text>
-                <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 6, fontSize: 12 }}>
-                  DesiFaces will only change facial hair, glasses, dress, background, lighting, or framing when you explicitly ask for those changes in your prompt.
-                </Text>
+
+                <View style={{ marginTop: 8 }}>
+                  <Slider
+                    minimumValue={I2I_LOCKED_PRESERVATION_STRENGTH}
+                    maximumValue={I2I_LOCKED_PRESERVATION_STRENGTH}
+                    value={I2I_LOCKED_PRESERVATION_STRENGTH}
+                    onValueChange={() => setPreservationStrength(I2I_LOCKED_PRESERVATION_STRENGTH)}
+                    disabled
+                  />
+                  <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6, fontSize: 12 }}>
+                    Strict identity lock: {I2I_LOCKED_PRESERVATION_STRENGTH.toFixed(2)}. Face and gender must remain unchanged.
+                  </Text>
+                </View>
               </View>
             </GlassCard>
           )}
