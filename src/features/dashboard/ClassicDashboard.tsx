@@ -310,28 +310,56 @@ function looksLikeImageUrl(value: unknown): boolean {
 function pickVideoThumbnailUrl(item: any): string {
   const candidates = [
     item?.thumbnail_url,
+    item?.thumbnailUrl,
     item?.poster_url,
+    item?.posterUrl,
+    item?.poster_image_url,
+    item?.posterImageUrl,
     item?.preview_image_url,
+    item?.previewImageUrl,
     item?.image_url,
+    item?.imageUrl,
     item?.reuse_payload?.thumbnail_url,
+    item?.reuse_payload?.thumbnailUrl,
     item?.reuse_payload?.poster_url,
+    item?.reuse_payload?.posterUrl,
+    item?.reuse_payload?.poster_image_url,
     item?.reuse_payload?.preview_image_url,
+    item?.reuse_payload?.previewImageUrl,
     item?.reuse_payload?.image_url,
+    item?.reuse_payload?.imageUrl,
     item?.metadata_json?.thumbnail_url,
+    item?.metadata_json?.thumbnailUrl,
     item?.metadata_json?.poster_url,
+    item?.metadata_json?.posterUrl,
+    item?.metadata_json?.poster_image_url,
     item?.metadata_json?.preview_image_url,
+    item?.metadata_json?.previewImageUrl,
     item?.metadata_json?.image_url,
+    item?.metadata_json?.imageUrl,
     item?.metadata_json?.artifact_meta?.thumbnail_url,
     item?.metadata_json?.artifact_meta?.poster_url,
+    item?.metadata_json?.artifact_meta?.poster_image_url,
+    item?.metadata_json?.artifact_meta?.preview_image_url,
     item?.metadata_json?.artifact_meta?.image_url,
     item?.meta?.thumbnail_url,
+    item?.meta?.thumbnailUrl,
     item?.meta?.poster_url,
+    item?.meta?.posterUrl,
+    item?.meta?.poster_image_url,
     item?.meta?.preview_image_url,
+    item?.meta?.previewImageUrl,
     item?.meta?.image_url,
+    item?.meta?.imageUrl,
     item?.meta?.artifact_meta?.thumbnail_url,
     item?.meta?.artifact_meta?.poster_url,
+    item?.meta?.artifact_meta?.poster_image_url,
+    item?.meta?.artifact_meta?.preview_image_url,
+    item?.meta?.artifact_meta?.image_url,
     item?.variants?.[0]?.thumbnail_url,
     item?.variants?.[0]?.poster_url,
+    item?.variants?.[0]?.poster_image_url,
+    item?.variants?.[0]?.preview_image_url,
     item?.variants?.[0]?.image_url,
   ];
 
@@ -1122,8 +1150,9 @@ export default function ClassicDashboard({
       return {
         id: String(a?.library_id ?? a?.id ?? a?.source_job_id ?? a?.meta?.artifact_id ?? a?.storage_path ?? String(i)),
         kind: "image" as any,
-        // ThumbFanDeckCarousel/VideoCard should render the JPEG poster, while openVideoItem uses __video_url.
-        url: thumbnailUrl || videoUrl,
+        // ThumbFanDeckCarousel/VideoCard must never receive a video URL as an image source.
+        // If the backend has not provided a poster yet, DashboardVideoPosterCard renders a stable branded fallback.
+        url: thumbnailUrl,
         meta: {
           ...a,
           __thumbnail_url: thumbnailUrl,
@@ -1559,8 +1588,9 @@ function DashboardVideoPosterCard({
         </ImageBackground>
       ) : (
         <View style={styles.videoPosterFallback}>
-          <Ionicons name={hasVideo ? "play-circle-outline" : "alert-circle-outline"} size={24} color={DF.textSoft} />
-          <Text style={styles.videoPosterFallbackText}>{hasVideo ? "Tap to play" : "Video unavailable"}</Text>
+          <Ionicons name={hasVideo ? "play-circle-outline" : "videocam-outline"} size={28} color={DF.gold} />
+          <Text style={styles.videoPosterFallbackText}>{hasVideo ? "Video thumbnail" : "Thumbnail pending"}</Text>
+          <Text style={styles.videoPosterFallbackSubtext} numberOfLines={1}>{title || "Talking Video"}</Text>
         </View>
       )}
     </View>
@@ -1879,6 +1909,13 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontSize: 12,
     textAlign: "center",
+  },
+  videoPosterFallbackSubtext: {
+    color: DF.textStrong,
+    fontWeight: "900",
+    fontSize: 11,
+    textAlign: "center",
+    maxWidth: "92%",
   },
 
   emptyWrapCompact: {

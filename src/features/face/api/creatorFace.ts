@@ -96,11 +96,82 @@ function getFaceI2ISafetyCheckPath(): string {
   );
 }
 
+
+const FACE_PRICING_PREVIEW_ALLOWED_STUDIO_KEYS = new Set([
+  "mode",
+  "prompt",
+  "user_prompt",
+  "num_variants",
+  "variations",
+  "variant_count",
+  "aspect_ratio",
+  "quality",
+  "gender",
+  "region_code",
+  "context_code",
+  "use_case",
+  "shot_type_code",
+  "source_image_url",
+  "source_image_asset_id",
+  "source_asset_id",
+  "glasses",
+  "facial_hair",
+  "beard",
+  "mustache",
+  "moustache",
+  "preservation_strength",
+  "identity_lock",
+  "identity_lock_level",
+  "preserve_source_identity",
+  "preserve_source_gender",
+  "gender_lock_mode",
+  "locked_identity_features",
+  "request_only_editable_attributes",
+  "allowed_i2i_changes",
+  "forbidden_i2i_changes",
+]);
+
+function sanitizeFacePricingStudioInput(studioInput: AnyRecord = {}): AnyRecord {
+  const input = studioInput && typeof studioInput === "object" ? studioInput : {};
+  const output: AnyRecord = {};
+
+  for (const [key, value] of Object.entries(input)) {
+    if (FACE_PRICING_PREVIEW_ALLOWED_STUDIO_KEYS.has(key) && value !== undefined && value !== null) {
+      output[key] = value;
+    }
+  }
+
+  const mode = clean(output.mode || input.mode);
+  if (mode) output.mode = mode;
+
+  const prompt = clean(output.user_prompt || output.prompt || input.user_prompt || input.prompt);
+  output.user_prompt = prompt;
+  output.prompt = prompt;
+
+  if (mode === "image-to-image") {
+    const rawStrength = Number(output.preservation_strength ?? 1);
+    output.preservation_strength = Math.max(
+      0.995,
+      Math.min(1, Number.isFinite(rawStrength) ? rawStrength : 1)
+    );
+    output.identity_lock = true;
+    output.preserve_source_identity = true;
+    output.preserve_source_gender = true;
+    delete output.gender;
+    delete output.region_code;
+    delete output.context_code;
+    delete output.use_case;
+    delete output.shot_type_code;
+  }
+
+  return output;
+}
+
 function buildPreviewRequest(studioInput: AnyRecord): AnyRecord {
   return {
     studio: "face",
     action: "generate",
-    studio_input: studioInput ?? {},
+    studio_input: sanitizeFacePricingStudioInput(studioInput),
     client_context: {},
   };
 }

@@ -6,8 +6,6 @@ export type StudioPricingPreviewShape = Record<string, any> & {
   after_estimated_credits?: string | number | null;
   estimated_credits?: string | number | null;
   credits_used?: string | number | null;
-  estimated_units?: string | number | null;
-  units?: string | number | null;
   quote_breakdown?: Record<string, any> | null;
   summary?: Record<string, any> | null;
   pricing?: Record<string, any> | null;
@@ -79,15 +77,23 @@ function pickAfterEstimatedCredits(preview?: StudioPricingPreviewShape | null): 
 
 function pickRequiredCredits(preview?: StudioPricingPreviewShape | null): number | null {
   const breakdown = preview?.quote_breakdown ?? {};
+
+  // Credits must come from credit-specific backend fields only.
+  // Do not use estimated units / units here; in creator studios those values can
+  // mean quantity, duration buckets, or variant count rather than billable credits.
   const totalCredits =
     toInt(breakdown?.total_credits) ??
     toInt(breakdown?.quoted_credits) ??
     nestedNumber(preview, ["pricing", "estimated_credits"]) ??
     nestedNumber(preview, ["pricing", "credits_used"]) ??
+    nestedNumber(preview, ["pricing", "reserved_credits"]) ??
+    nestedNumber(preview, ["pricing", "total_credits"]) ??
+    nestedNumber(preview, ["summary", "estimated_credits"]) ??
+    nestedNumber(preview, ["summary", "credits_used"]) ??
+    nestedNumber(preview, ["summary", "reserved_credits"]) ??
+    nestedNumber(preview, ["summary", "total_credits"]) ??
     toInt(preview?.estimated_credits) ??
-    toInt(preview?.credits_used) ??
-    toInt(preview?.estimated_units) ??
-    toInt(preview?.units);
+    toInt(preview?.credits_used);
 
   if (totalCredits !== null) return totalCredits;
 
@@ -230,6 +236,147 @@ export function computeAffordabilityDecision(args: {
   };
 }
 
+
+function stringFrom(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function errorObjectCandidates(error: any): any[] {
+  const candidates = [
+    error,
+    error?.body,
+    error?.payload,
+    error?.response,
+    error?.response?.data,
+    error?.data,
+    error?.detail,
+    error?.body?.detail,
+    error?.response?.data?.detail,
+  ];
+
+  return candidates.filter((candidate) => candidate && typeof candidate === "object");
+}
+
+function firstErrorString(error: any, keys: string[]): string {
+  for (const candidate of errorObjectCandidates(error)) {
+    for (const key of keys) {
+      const value = candidate?.[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+  }
+
+  for (const key of keys) {
+    const value = error?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+
+  return "";
+}
+
+function firstErrorStringList(error: any, keys: string[]): string[] {
+  for (const candidate of errorObjectCandidates(error)) {
+    for (const key of keys) {
+      const value = candidate?.[key];
+      if (Array.isArray(value)) {
+        return value.map((item) => clean(item)).filter(Boolean);
+      }
+      if (typeof value === "string" && value.trim()) {
+        return value
+          .split(/[;,]/g)
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+    }
+  }
+  return [];
+}
+
+function errorText(error: any): string {
+  const direct = [
+    stringFrom(error?.message),
+    stringFrom(error?.code),
+    stringFrom(error?.body?.detail),
+    stringFrom(error?.body?.message),
+    stringFrom(error?.body?.error),
+    stringFrom(error?.body?.reason),
+    stringFrom(error?.response?.data?.detail),
+    stringFrom(error?.response?.data?.message),
+    stringFrom(error?.response?.data?.error),
+  ];
+
+  const objectValues = errorObjectCandidates(error).flatMap((candidate) =>
+    ["error_code", "code", "message", "detail", "error", "reason"].map((key) => stringFrom(candidate?.[key]))
+  );
+
+  return [...direct, ...objectValues].filter(Boolean).join(" | ");
+}
+
+export function normalizePromptPolicyErrorForUser(error: any, studioTitle: string = "Studio"): string | null {
+  const code = firstErrorString(error, ["error_code", "errorCode", "code"]).toUpperCase();
+  const message = firstErrorString(error, ["message", "detail", "error", "reason"]);
+  const combined = `${code} | ${message} | ${errorText(error)}`.toLowerCase();
+
+  const isPolicyBlock =
+    code.includes("PROMPT_POLICY_BLOCKED") ||
+    code.includes("CONTENT_POLICY") ||
+    code.includes("SAFETY") ||
+    code.includes("MODERATION") ||
+    combined.includes("prompt_policy_blocked") ||
+    combined.includes("content policy") ||
+    combined.includes("inappropriate prompt") ||
+    combined.includes("not permitted") ||
+    combined.includes("moderation") ||
+    combined.includes("safety check") ||
+    combined.includes("safety policy");
+
+  if (!isPolicyBlock) return null;
+
+  const blockedCategories = firstErrorStringList(error, [
+    "blocked_categories",
+    "blockedCategories",
+    "categories",
+    "category",
+  ]);
+  const notPermitted = firstErrorStringList(error, [
+    "not_permitted",
+    "notPermitted",
+    "disallowed",
+    "not_allowed",
+    "notAllowed",
+  ]);
+  const suggestedChanges = firstErrorStringList(error, [
+    "suggested_changes",
+    "suggestedChanges",
+    "suggestions",
+    "fixes",
+    "actions",
+  ]);
+
+  const lines = [`${studioTitle} prompt needs changes.`];
+
+  if (blockedCategories.length > 0) {
+    lines.push(`Blocked category: ${blockedCategories.join(", ")}.`);
+  }
+
+  lines.push(
+    `Not permitted: ${
+      notPermitted.length > 0
+        ? notPermitted.join("; ")
+        : "explicit sexual content, nudity, sexualized minors, graphic violence, hate, self-harm, or illegal instructions"
+    }.`
+  );
+
+  lines.push(
+    `Please change: ${
+      suggestedChanges.length > 0
+        ? suggestedChanges.join("; ")
+        : "rewrite the prompt in a family-friendly way and focus on clothing, setting, lighting, emotion, style, and the intended creative result"
+    }.`
+  );
+
+  return lines.join("\n");
+}
+
 export function isPricingInsufficientCreditsError(error: any): boolean {
   const text = [
     typeof error?.message === "string" ? error.message : "",
@@ -251,16 +398,10 @@ export function isPricingInsufficientCreditsError(error: any): boolean {
 }
 
 export function normalizePricingErrorForUser(error: any, studioTitle: string): string {
-  const text = [
-    typeof error?.message === "string" ? error.message : "",
-    typeof error?.body?.detail === "string" ? error.body.detail : "",
-    typeof error?.body?.message === "string" ? error.body.message : "",
-    typeof error?.body?.error === "string" ? error.body.error : "",
-    typeof error?.body?.reason === "string" ? error.body.reason : "",
-    typeof error?.response?.data?.detail === "string" ? error.response.data.detail : "",
-  ]
-    .join(" | ")
-    .toLowerCase();
+  const policyMessage = normalizePromptPolicyErrorForUser(error, studioTitle);
+  if (policyMessage) return policyMessage;
+
+  const text = errorText(error).toLowerCase();
 
   if (text.includes("entitlement_blocked_feature_flag")) {
     return `Upgrade your plan to use this ${studioTitle.toLowerCase()}.`;

@@ -29,7 +29,6 @@ import { api } from "../../core/api/client";
 import { endpoints } from "../../core/api/endpoints";
 import { AUDIO_BASE, FACE_BASE } from "../../core/config/env";
 import { derivePricingUiSummary } from "../../core/pricing/pricingSummary";
-import { computeAffordabilityDecision } from "../../core/pricing/studioAffordability";
 
 import { useCreatorFlow } from "../../core/flow/creatorFlowStore";
 import DFBlockingOverlay from "../../core/ui/DFBlockingOverlay";
@@ -650,8 +649,9 @@ function readFinalPricingState(resp: any): "estimated" | "committed" | "released
   return "estimated";
 }
 
-function formatMoney(amount: number, currency = "USD"): string {
-  const safeCurrency = cleanParam(currency).toUpperCase() || "USD";
+function formatMoney(amount: number, currency: string): string {
+  const safeCurrency = cleanParam(currency).toUpperCase();
+  if (!safeCurrency) return "";
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -668,6 +668,87 @@ function asEstimateNumber(value: any): number | null {
   if (value == null || value === "") return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function formatCreditEstimateLabel(credits: number): string {
+  const rounded = Math.max(0, Math.round(credits));
+  return `${rounded} credit${rounded === 1 ? "" : "s"}`;
+}
+
+function readBackendCreditEstimate(raw: any): number | null {
+  // Backend/database only. Do not read unit-count fields here;
+  // those can be quantity fields such as characters, seconds, or variants.
+  return (
+    asEstimateNumber(raw?.estimated_credits) ??
+    asEstimateNumber(raw?.credits_used) ??
+    asEstimateNumber(raw?.reserved_credits) ??
+    asEstimateNumber(raw?.total_credits) ??
+    asEstimateNumber(raw?.pricing?.estimated_credits) ??
+    asEstimateNumber(raw?.pricing?.credits_used) ??
+    asEstimateNumber(raw?.pricing?.reserved_credits) ??
+    asEstimateNumber(raw?.pricing?.total_credits) ??
+    asEstimateNumber(raw?.pricing_summary?.estimated_credits) ??
+    asEstimateNumber(raw?.pricing_summary?.credits_used) ??
+    asEstimateNumber(raw?.pricing_summary?.reserved_credits) ??
+    asEstimateNumber(raw?.pricing_summary?.total_credits)
+  );
+}
+
+function readBackendMoneyEstimate(raw: any): { amount: number; currency: string } | null {
+  const amount =
+    asEstimateNumber(raw?.estimated_amount) ??
+    asEstimateNumber(raw?.amount) ??
+    asEstimateNumber(raw?.pricing?.estimated_amount) ??
+    asEstimateNumber(raw?.pricing?.amount) ??
+    asEstimateNumber(raw?.pricing_summary?.estimated_amount) ??
+    asEstimateNumber(raw?.pricing_summary?.amount);
+
+  const currency =
+    cleanParam(raw?.currency) ||
+    cleanParam(raw?.pricing?.currency) ||
+    cleanParam(raw?.pricing_summary?.currency);
+
+  if (amount == null || !currency) return null;
+  return { amount, currency };
+}
+
+function joinPricingLabels(parts: Array<string | null | undefined>): string {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) {
+    const value = cleanParam(part);
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out.join(", ");
+}
+
+function readBackendCtaLabel(raw: any): string {
+  return (
+    cleanParam(raw?.pricing_summary?.ctaLabel) ||
+    cleanParam(raw?.pricing_summary?.cta_label) ||
+    cleanParam(raw?.summary?.ctaLabel) ||
+    cleanParam(raw?.summary?.cta_label) ||
+    cleanParam(raw?.ctaLabel) ||
+    cleanParam(raw?.cta_label)
+  );
+}
+
+function readBackendPricingMessage(raw: any, pricingSummary: any, pricing: any): string {
+  return (
+    cleanParam(raw?.pricing_summary?.message) ||
+    cleanParam(raw?.pricing_summary?.detail) ||
+    cleanParam(raw?.summary?.message) ||
+    cleanParam(raw?.summary?.detail) ||
+    cleanParam(raw?.message) ||
+    cleanParam(raw?.detail) ||
+    cleanParam(pricingSummary?.message) ||
+    cleanParam(pricingSummary?.detail) ||
+    cleanParam(pricing?.message)
+  );
 }
 
 function chooseAudioSettlementLabel(pricing: any, insufficientBalance: boolean): string {
@@ -1589,7 +1670,6 @@ export default function AudioStudioScreen() {
   const pricingQ = useQuery<AudioEstimateResult>({
     queryKey: ["audio-pricing-estimate", authSessionKey, pricingPreviewPayload],
     enabled: pricingPreviewEnabled,
-    placeholderData: (previousData) => previousData,
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnReconnect: true,
@@ -1628,24 +1708,19 @@ export default function AudioStudioScreen() {
           undefined,
       };
 
-      const messageText = String(raw?.message || pricingSummary?.message || pricing?.message || "").toLowerCase();
+      const backendMessage = readBackendPricingMessage(raw, pricingSummary, pricing);
+      const messageText = backendMessage.toLowerCase();
 
-      const creditUnits =
-        asEstimateNumber(raw?.estimated_credits) ??
-        asEstimateNumber(raw?.credits_used) ??
-        asEstimateNumber(raw?.estimated_units) ??
-        asEstimateNumber(raw?.units) ??
-        Math.max(1, Math.ceil((debouncedText || text.trim()).length / 250));
-      const creditEstimateLabel = `${Math.max(0, Math.round(creditUnits))} credit${Math.max(0, Math.round(creditUnits)) === 1 ? "" : "s"}`;
+      const creditUnits = readBackendCreditEstimate(raw);
+      const money = readBackendMoneyEstimate(raw);
 
-      const moneyAmount =
-        asEstimateNumber(raw?.estimated_amount) ??
-        asEstimateNumber(raw?.amount) ??
-        asEstimateNumber(raw?.pricing?.estimated_amount) ??
-        asEstimateNumber(raw?.pricing?.amount) ??
-        0;
-      const moneyCurrency = cleanParam(raw?.currency) || cleanParam(raw?.pricing?.currency) || "USD";
-      const moneyEstimateLabel = formatMoney(moneyAmount, moneyCurrency);
+      if (creditUnits == null || !money || !confirmation.quote_id) {
+        throw new Error("Pricing preview unavailable. Backend did not return a complete billable audio quote.");
+      }
+
+      const creditEstimateLabel = formatCreditEstimateLabel(creditUnits);
+      const moneyEstimateLabel = formatMoney(money.amount, money.currency);
+      const combinedEstimateLabel = joinPricingLabels([creditEstimateLabel, moneyEstimateLabel]);
 
       const settlementMode = cleanParam(pricing?.settlementMode).toLowerCase();
       const useMoneyPrimary = settlementMode === "postpaid";
@@ -1658,33 +1733,28 @@ export default function AudioStudioScreen() {
         raw?.entitlement?.tier_code ||
         "Current plan";
       const isEnterprisePlan = String(planLabel).toLowerCase().includes("enterprise");
-
-      const affordability = computeAffordabilityDecision({
-        preview: raw,
-        hasRequiredInputs: true,
-        studioTitle: "Audio",
-        canTopUp: !isEnterprisePlan && !useMoneyPrimary,
-        canUpgrade: !isEnterprisePlan && !useMoneyPrimary,
-        isEnterprise: isEnterprisePlan,
-      });
+      const backendCtaLabel = readBackendCtaLabel(raw);
 
       const insufficientBalance = Boolean(
-        affordability.insufficientBalance ||
-          raw?.insufficient_balance ||
-          raw?.insufficientBalance ||
-          (pricing as any)?.insufficientBalance ||
-          (pricingSummary as any)?.insufficientBalance ||
+        raw?.insufficient_balance === true ||
+          raw?.insufficientBalance === true ||
+          raw?.pricing?.insufficient_balance === true ||
+          raw?.pricing?.insufficientBalance === true ||
+          (pricing as any)?.insufficientBalance === true ||
+          (pricingSummary as any)?.insufficientBalance === true ||
           messageText.includes("insufficient") ||
           messageText.includes("not enough credit")
       );
 
       const noteLabel = insufficientBalance
-        ? [affordability.primaryMessage, affordability.secondaryMessage].filter(Boolean).join(" ")
+        ? backendMessage || "Not enough available credits for this run."
         : chooseAudioSettlementLabel(pricing, false);
 
+      const canSelfServe = !isEnterprisePlan && !useMoneyPrimary;
+
       return {
-        preview: !confirmation.quote_id,
-        estimateLabel: primaryEstimateLabel,
+        preview: false,
+        estimateLabel: combinedEstimateLabel,
         primaryEstimateLabel,
         secondaryEstimateLabel,
         creditEstimateLabel,
@@ -1695,7 +1765,7 @@ export default function AudioStudioScreen() {
         planLabel,
         availableLabel:
           insufficientBalance
-            ? affordability.secondaryMessage || affordability.primaryMessage
+            ? backendMessage || "Not enough credits for this run"
             : settlementMode === "postpaid"
               ? "Billed after completion"
               : pricing?.settlementMode === "included"
@@ -1708,13 +1778,11 @@ export default function AudioStudioScreen() {
               ? "No credit hold"
               : undefined,
         ctaLabel: insufficientBalance
-          ? affordability.ctaLabel
-          : confirmation.quote_id
-            ? `Create Audio — ${primaryEstimateLabel}`
-            : "Create Audio",
+          ? (backendCtaLabel || (canSelfServe ? "Top up credits" : "Upgrade plan"))
+          : `Create Audio — ${combinedEstimateLabel}`,
         insufficientBalance,
-        topUpVisible: insufficientBalance && !useMoneyPrimary && !isEnterprisePlan,
-        upgradeVisible: insufficientBalance && !useMoneyPrimary,
+        topUpVisible: insufficientBalance && canSelfServe,
+        upgradeVisible: insufficientBalance && canSelfServe,
         confirmation,
         raw,
         pricing,
@@ -1753,14 +1821,20 @@ export default function AudioStudioScreen() {
         availability.includes("billed after completion")
       );
     })());
-  const displayedSecondaryEstimate = undefined;
-  const displayedCreditEstimate = isPostpaidPricing ? null : (pricing?.creditEstimateLabel ?? null);
-  const displayedCashEstimate = isPostpaidPricing
-    ? (cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || null)
-    : null;
-  const visiblePrimaryEstimate = isPostpaidPricing
-    ? displayedCashEstimate || displayedPrimaryEstimate
-    : displayedCreditEstimate || displayedPrimaryEstimate;
+  const displayedCreditEstimate = pricing?.creditEstimateLabel ?? null;
+  const displayedCashEstimate = cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || null;
+  const displayedCombinedEstimate = joinPricingLabels([displayedCreditEstimate, displayedCashEstimate]);
+  const displayedSecondaryEstimate = displayedCashEstimate ?? undefined;
+  const pricingPreviewUnavailable =
+    pricingPreviewEnabled && !pricingQ.isFetching && !pricingReady && !pricing?.insufficientBalance;
+  const createAudioCtaLabel = pricing?.insufficientBalance
+    ? (pricing?.ctaLabel ?? (pricing?.topUpVisible ? "Top up credits" : pricing?.upgradeVisible ? "Upgrade plan" : "Not enough credits"))
+    : pricingPreviewUnavailable
+      ? "Pricing preview unavailable"
+      : displayedCombinedEstimate
+        ? `Create Audio — ${displayedCombinedEstimate}`
+        : (pricing?.ctaLabel ?? "Create Audio");
+  const visiblePrimaryEstimate = displayedCombinedEstimate || displayedPrimaryEstimate;
   const displayedNoteLabel = pricing?.noteLabel ?? pricing?.settlementLabel ?? (isPostpaidPricing
     ? "Billed after completion through your postpaid account."
     : "Covered by your available credits.");
@@ -2006,7 +2080,7 @@ useEffect(() => {
         !pricingReady &&
         !pricingQ.isFetching &&
         !pricingQ.error
-          ? `Estimate shown: ${displayedPrimaryEstimate}. Generate will unlock as soon as pricing confirmation is ready.`
+          ? "Pricing preview unavailable. Generate stays locked until the backend returns a complete quote."
           : null;
 
   const soundRef = useRef<AudioPlayerHandle | null>(null);
@@ -2720,7 +2794,7 @@ const proceedToFusion = useCallback(
         studioName="Audio Studio"
         estimate={visiblePrimaryEstimate}
         primaryEstimateLabel={visiblePrimaryEstimate}
-        secondaryEstimateLabel={undefined}
+        secondaryEstimateLabel={displayedSecondaryEstimate}
         creditEstimateLabel={displayedCreditEstimate}
         cashEstimateLabel={displayedCashEstimate}
         walletAfterRun={pricingDisplay.creditDetailLabel ?? liveAvailableLabel ?? undefined}
@@ -3244,7 +3318,7 @@ const proceedToFusion = useCallback(
             opacity: locked || !faceImageUrl || !tokenReady || !text.trim() || !voice || (!pricingReady && !pricing?.insufficientBalance) ? 0.6 : 1,
           }}
         >
-          {busy ? <ActivityIndicator /> : <Text style={{ color: DF.text, fontWeight: "900" }}>{pricing?.ctaLabel ?? "Create Audio"}</Text>}
+          {busy ? <ActivityIndicator /> : <Text style={{ color: DF.text, fontWeight: "900" }}>{createAudioCtaLabel}</Text>}
         </Pressable>
 
         <Pressable

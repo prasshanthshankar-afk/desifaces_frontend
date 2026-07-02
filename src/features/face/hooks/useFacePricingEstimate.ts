@@ -45,8 +45,9 @@ function normalizeAspectRatio(value: unknown): AspectRatio {
   return "9:16";
 }
 
-function formatMoney(amount: number, currency = "USD"): string {
-  const safeCurrency = cleanString(currency).toUpperCase() || "USD";
+function formatMoney(amount: number, currency: string): string {
+  const safeCurrency = cleanString(currency).toUpperCase();
+  if (!safeCurrency) return "";
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -65,6 +66,37 @@ function asNumber(value: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+
+function dedupeLabels(parts: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const part of parts) {
+    const value = cleanString(part);
+    if (!value) continue;
+
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    out.push(value);
+  }
+
+  return out;
+}
+
+function joinEstimateLabels(
+  creditEstimateLabel: string,
+  moneyEstimateLabel: string
+): string {
+  return dedupeLabels([creditEstimateLabel, moneyEstimateLabel]).join(", ");
+}
+
+function normalizePricingPreviewError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error ?? "Pricing preview unavailable");
+}
+
 function readMoneyEstimate(raw: any, pricing: any): { amount: number; currency: string } | null {
   const amount =
     asNumber(raw?.estimated_amount) ??
@@ -81,40 +113,32 @@ function readMoneyEstimate(raw: any, pricing: any): { amount: number; currency: 
     cleanString(raw?.currency) ||
     cleanString(raw?.pricing?.currency) ||
     cleanString(raw?.pricing_summary?.currency) ||
-    cleanString(pricing?.currency) ||
-    "USD";
+    cleanString(pricing?.currency);
+
+  if (!currency) return null;
 
   return { amount, currency };
 }
 
 function readCreditEstimate(raw: any): number | null {
+  // estimated_units / units can mean quantity, for example Face variant_count.
+  // Never treat units as billable credits in the UI.
   return (
     asNumber(raw?.estimated_credits) ??
     asNumber(raw?.credits_used) ??
-    asNumber(raw?.estimated_units) ??
-    asNumber(raw?.units) ??
+    asNumber(raw?.reserved_credits) ??
+    asNumber(raw?.total_credits) ??
     asNumber(raw?.pricing?.estimated_credits) ??
     asNumber(raw?.pricing?.credits_used) ??
-    asNumber(raw?.pricing?.estimated_units) ??
-    asNumber(raw?.pricing?.units) ??
+    asNumber(raw?.pricing?.reserved_credits) ??
+    asNumber(raw?.pricing?.total_credits) ??
     asNumber(raw?.pricing_summary?.estimated_credits) ??
     asNumber(raw?.pricing_summary?.credits_used) ??
-    asNumber(raw?.pricing_summary?.estimated_units) ??
-    asNumber(raw?.pricing_summary?.units)
+    asNumber(raw?.pricing_summary?.reserved_credits) ??
+    asNumber(raw?.pricing_summary?.total_credits)
   );
 }
 
-function buildFallbackCreditEstimate(args: {
-  mode: Mode;
-  numVariants: number;
-  preservationStrength: number;
-}): number {
-  const { mode, numVariants, preservationStrength } = args;
-  const base = mode === "image-to-image" ? 2 : 1;
-  const variantCost = Math.max(0, Math.ceil((numVariants - 1) / 2));
-  const strengthCost = mode === "image-to-image" && preservationStrength >= 0.65 ? 1 : 0;
-  return base + variantCost + strengthCost;
-}
 
 function chooseSettlementLabel(pricing: any, insufficientBalance: boolean): string {
   const billingMode = cleanString(pricing?.billingMode).toLowerCase();
@@ -157,19 +181,22 @@ function buildEstimateResult(args: {
     insufficientBalance,
   } = args;
 
-  const creditUnits =
-    readCreditEstimate(raw) ??
-    buildFallbackCreditEstimate({ mode, numVariants, preservationStrength });
-  const creditEstimateLabel = formatCredits(Math.max(0, Math.round(creditUnits)));
-
+  const creditUnits = readCreditEstimate(raw);
   const money = readMoneyEstimate(raw, pricing);
-  const moneyEstimateLabel = money ? formatMoney(money.amount, money.currency) : formatMoney(0, "USD");
+
+  if (creditUnits == null || !money || !confirmation?.quote_id) {
+    throw new Error("Pricing preview unavailable. Backend did not return a complete billable quote.");
+  }
+
+  const creditEstimateLabel = formatCredits(Math.max(0, Math.round(creditUnits)));
+  const moneyEstimateLabel = formatMoney(money.amount, money.currency);
 
   const billingMode = cleanString(pricing?.billingMode).toLowerCase();
   const settlementMode = cleanString(pricing?.settlementMode).toLowerCase();
   const useMoneyPrimary = settlementMode === "postpaid" || billingMode === "bill";
 
-  const primaryEstimateLabel = useMoneyPrimary ? moneyEstimateLabel : creditEstimateLabel;
+  const combinedEstimateLabel = joinEstimateLabels(creditEstimateLabel, moneyEstimateLabel);
+  const primaryEstimateLabel = combinedEstimateLabel || (useMoneyPrimary ? moneyEstimateLabel : creditEstimateLabel);
   const secondaryEstimateLabel = useMoneyPrimary ? creditEstimateLabel : moneyEstimateLabel;
 
   return {
@@ -179,7 +206,7 @@ function buildEstimateResult(args: {
     secondaryEstimateLabel,
     creditEstimateLabel,
     moneyEstimateLabel,
-    detailLabel: `Credits used: ${creditEstimateLabel} • Cash charged: ${moneyEstimateLabel}`,
+    detailLabel: `Credits used: ${creditEstimateLabel}, Cash charged: ${moneyEstimateLabel}`,
     settlementLabel: chooseSettlementLabel(pricing, insufficientBalance),
     planLabel:
       pricing?.tierCode ||
@@ -198,7 +225,7 @@ function buildEstimateResult(args: {
         : pricing?.settlementMode === "postpaid"
           ? "No credit hold"
           : undefined,
-    ctaLabel: `Create Face — ${primaryEstimateLabel}`,
+    ctaLabel: primaryEstimateLabel ? `Create Face — ${primaryEstimateLabel}` : "Create Face",
     insufficientBalance,
     topUpVisible: insufficientBalance && !(settlementMode === "postpaid" || billingMode === "bill"),
     upgradeVisible: insufficientBalance && !(settlementMode === "postpaid" || billingMode === "bill"),
@@ -358,7 +385,9 @@ export function useFacePricingEstimate({
           insufficientBalance,
         });
       } catch (error) {
-        console.error("[useFacePricingEstimate][error]", {
+        const previewError = normalizePricingPreviewError(error);
+
+        console.log("[useFacePricingEstimate][fallback]", {
           enabled,
           authReadyForPricing,
           authUserScope,
@@ -369,12 +398,25 @@ export function useFacePricingEstimate({
           normalizedAspectRatio,
           gender: cleanString(gender) || null,
           regionCode: cleanString(regionCode) || null,
-          error:
-            error instanceof Error
-              ? { message: error.message, stack: error.stack }
-              : String(error),
+          error: previewError,
         });
-        throw error;
+
+        return buildEstimateResult({
+          mode,
+          numVariants,
+          preservationStrength,
+          sourceImageUrl,
+          sourceImageAssetId,
+          aspectRatio: normalizedAspectRatio,
+          pricing: null,
+          pricingSummary: null,
+          raw: {
+            preview_error: previewError,
+            pricing_preview_unavailable: true,
+          },
+          confirmation: null,
+          insufficientBalance: false,
+        });
       }
     },
   });

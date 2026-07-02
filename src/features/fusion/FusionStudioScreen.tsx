@@ -24,10 +24,7 @@ import { shareUrl } from "../../core/share/share";
 import { saveCreateFlowContext } from "../../core/media/createFlow";
 import { useResolvedPricingDisplay } from "../../core/pricing/resolvePricingDisplay";
 import { derivePricingUiSummary } from "../../core/pricing/pricingSummary";
-import {
-  computeAffordabilityDecision,
-  normalizePricingErrorForUser,
-} from "../../core/pricing/studioAffordability";
+import { normalizePricingErrorForUser } from "../../core/pricing/studioAffordability";
 
 import { useCreatorFlow } from "../../core/flow/creatorFlowStore";
 import DFBlockingOverlay from "../../core/ui/DFBlockingOverlay";
@@ -436,6 +433,7 @@ type EstimateResult = {
   topUpVisible: boolean;
   upgradeVisible: boolean;
   entitlementReason?: string;
+  confirmation?: { quote_id?: string; preview_fingerprint?: string } | null;
   raw?: any;
   pricing?: ReturnType<typeof normalizePricing>;
   pricingSummary?: ReturnType<typeof normalizePricingSummary>;
@@ -496,29 +494,10 @@ function hasCommittedLedgerReceipt(pricing: any): boolean {
   );
 }
 
-function fallbackEstimate(args: { hasFaceArtifact: boolean; hasAudio: boolean; videoMode: VideoMode }): EstimateResult {
-  return {
-    preview: true,
-    estimateLabel: "Estimate preview",
-    primaryEstimateLabel: "Estimate preview",
-    secondaryEstimateLabel: "$0.00",
-    creditEstimateLabel: "1 credit",
-    moneyEstimateLabel: "$0.00",
-    noteLabel: "Covered by your available credits.",
-    detailLabel: `${args.hasFaceArtifact ? "face artifact ready" : "missing face artifact"} • ${args.hasAudio ? "audio ready" : "missing audio"} • ${modeShortTitle(args.videoMode)}`,
-    settlementLabel: "Preview estimate only. Final actual should come from the committed pricing snapshot.",
-    planLabel: "Estimate preview",
-    availableLabel: "Balance preview unavailable",
-    ctaLabel: `Create ${modeShortTitle(args.videoMode)}`,
-    insufficientBalance: false,
-    topUpVisible: false,
-    upgradeVisible: false,
-    entitlementReason: undefined,
-  };
-}
 
-function formatMoney(amount: number, currency = "USD"): string {
-  const safeCurrency = cleanParam(currency).toUpperCase() || "USD";
+function formatMoney(amount: number, currency: string): string {
+  const safeCurrency = cleanParam(currency).toUpperCase();
+  if (!safeCurrency) return "";
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -535,6 +514,110 @@ function asEstimateNumber(value: any): number | null {
   if (value == null || value === "") return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function formatCreditEstimateLabel(credits: number): string {
+  const rounded = Math.max(0, Math.round(credits));
+  return `${rounded} credit${rounded === 1 ? "" : "s"}`;
+}
+
+function readBackendCreditEstimate(raw: any): number | null {
+  // Backend/database only. Do not read unit-count fields here;
+  // those can be quantity fields such as seconds, segments, or variants.
+  return (
+    asEstimateNumber(raw?.estimated_credits) ??
+    asEstimateNumber(raw?.credits_used) ??
+    asEstimateNumber(raw?.reserved_credits) ??
+    asEstimateNumber(raw?.total_credits) ??
+    asEstimateNumber(raw?.pricing?.estimated_credits) ??
+    asEstimateNumber(raw?.pricing?.credits_used) ??
+    asEstimateNumber(raw?.pricing?.reserved_credits) ??
+    asEstimateNumber(raw?.pricing?.total_credits) ??
+    asEstimateNumber(raw?.pricing_summary?.estimated_credits) ??
+    asEstimateNumber(raw?.pricing_summary?.credits_used) ??
+    asEstimateNumber(raw?.pricing_summary?.reserved_credits) ??
+    asEstimateNumber(raw?.pricing_summary?.total_credits)
+  );
+}
+
+function readBackendMoneyEstimate(raw: any): { amount: number; currency: string } | null {
+  const amount =
+    asEstimateNumber(raw?.estimated_amount) ??
+    asEstimateNumber(raw?.amount) ??
+    asEstimateNumber(raw?.pricing?.estimated_amount) ??
+    asEstimateNumber(raw?.pricing?.amount) ??
+    asEstimateNumber(raw?.pricing_summary?.estimated_amount) ??
+    asEstimateNumber(raw?.pricing_summary?.amount);
+
+  const currency =
+    cleanParam(raw?.currency) ||
+    cleanParam(raw?.pricing?.currency) ||
+    cleanParam(raw?.pricing_summary?.currency);
+
+  if (amount == null || !currency) return null;
+  return { amount, currency };
+}
+
+function joinPricingLabels(parts: Array<string | null | undefined>): string {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) {
+    const value = cleanParam(part);
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out.join(", ");
+}
+
+function readBackendCtaLabel(raw: any): string {
+  return (
+    cleanParam(raw?.pricing_summary?.ctaLabel) ||
+    cleanParam(raw?.pricing_summary?.cta_label) ||
+    cleanParam(raw?.summary?.ctaLabel) ||
+    cleanParam(raw?.summary?.cta_label) ||
+    cleanParam(raw?.ctaLabel) ||
+    cleanParam(raw?.cta_label)
+  );
+}
+
+function readBackendPricingMessage(raw: any, pricingSummary: any, pricing: any): string {
+  return (
+    cleanParam(raw?.pricing_summary?.message) ||
+    cleanParam(raw?.pricing_summary?.detail) ||
+    cleanParam(raw?.summary?.message) ||
+    cleanParam(raw?.summary?.detail) ||
+    cleanParam(raw?.message) ||
+    cleanParam(raw?.detail) ||
+    cleanParam(pricingSummary?.message) ||
+    cleanParam(pricingSummary?.detail) ||
+    cleanParam(pricing?.message)
+  );
+}
+
+function readPricingConfirmation(raw: any): { quote_id?: string; preview_fingerprint?: string } | null {
+  const quoteId =
+    cleanParam(raw?.pricing_confirmation?.quote_id) ||
+    cleanParam(raw?.confirmation?.quote_id) ||
+    cleanParam(raw?.quote_id) ||
+    cleanParam(raw?.pricing?.quote_id) ||
+    cleanParam(raw?.pricing_summary?.quote_id);
+
+  if (!quoteId) return null;
+
+  const previewFingerprint =
+    cleanParam(raw?.pricing_confirmation?.preview_fingerprint) ||
+    cleanParam(raw?.confirmation?.preview_fingerprint) ||
+    cleanParam(raw?.preview_fingerprint) ||
+    cleanParam(raw?.pricing?.preview_fingerprint) ||
+    cleanParam(raw?.pricing_summary?.preview_fingerprint);
+
+  return {
+    quote_id: quoteId,
+    ...(previewFingerprint ? { preview_fingerprint: previewFingerprint } : {}),
+  };
 }
 
 function chooseFusionSettlementLabel(pricing: any, insufficientBalance: boolean): string {
@@ -1683,35 +1766,9 @@ export default function FusionStudioScreen() {
             message: raw?.message || null,
           });
 
-        const creditUnits =
-          asEstimateNumber(raw?.estimated_credits) ??
-          asEstimateNumber(raw?.credits_used) ??
-          asEstimateNumber(raw?.estimated_units) ??
-          asEstimateNumber(raw?.units) ??
-          (videoMode === "CINEMATIC_VIDEO_DIRECTION" ? 4 : 2);
-        const creditEstimateLabel = `${Math.max(0, Math.round(creditUnits))} credit${Math.max(0, Math.round(creditUnits)) === 1 ? "" : "s"}`;
-
-        const moneyAmount =
-          asEstimateNumber(raw?.estimated_amount) ??
-          asEstimateNumber(raw?.amount) ??
-          asEstimateNumber(raw?.pricing?.estimated_amount) ??
-          asEstimateNumber(raw?.pricing?.amount) ??
-          0;
-        const moneyCurrency = cleanParam(raw?.currency) || cleanParam(raw?.pricing?.currency) || "USD";
-        const moneyEstimateLabel = formatMoney(moneyAmount, moneyCurrency);
-
-        const settlementMode = cleanParam(pricing?.settlementMode).toLowerCase();
-        const useMoneyPrimary = settlementMode === "postpaid";
-        const primaryEstimateLabel = useMoneyPrimary ? moneyEstimateLabel : creditEstimateLabel;
-        const secondaryEstimateLabel = useMoneyPrimary ? creditEstimateLabel : moneyEstimateLabel;
-        const planLabel =
-          canonicalPricingPlanName ||
-          pricing?.tierCode ||
-          "Current plan";
-        const isEnterprisePlan =
-          pricingDisplay.isEnterprisePlan ||
-          String(planLabel).toLowerCase().includes("enterprise") ||
-          canonicalPricingTierCode === "enterprise";
+        const confirmation = readPricingConfirmation(raw);
+        const backendMessage = readBackendPricingMessage(raw, pricingSummary, pricing);
+        const messageText = backendMessage.toLowerCase();
         const blockingReason = cleanParam(
           raw?.quote_breakdown?.blocking_reason ||
           raw?.summary?.blocking_reason ||
@@ -1735,26 +1792,53 @@ export default function FusionStudioScreen() {
             canonicalPricingPlanName,
           });
         }
-        const affordability = computeAffordabilityDecision({
-          preview: raw,
-          hasRequiredInputs: hasUsableFaceInput && hasAudio && hasMeaningfulPrompt,
-          studioTitle: "Video",
-          canTopUp: !isEnterprisePlan && !useMoneyPrimary,
-          canUpgrade: true,
-          isEnterprise: isEnterprisePlan,
-        });
+
+        const creditUnits = readBackendCreditEstimate(raw);
+        const money = readBackendMoneyEstimate(raw);
+
+        if (!featureBlocked && (creditUnits == null || !money || !confirmation?.quote_id)) {
+          throw new Error("Pricing preview unavailable. Backend did not return a complete billable fusion quote.");
+        }
+
+        const creditEstimateLabel = creditUnits == null ? "" : formatCreditEstimateLabel(creditUnits);
+        const moneyEstimateLabel = money ? formatMoney(money.amount, money.currency) : "";
+        const combinedEstimateLabel = joinPricingLabels([creditEstimateLabel, moneyEstimateLabel]);
+
+        const settlementMode = cleanParam(pricing?.settlementMode).toLowerCase();
+        const useMoneyPrimary = settlementMode === "postpaid";
+        const primaryEstimateLabel = useMoneyPrimary ? moneyEstimateLabel : creditEstimateLabel;
+        const secondaryEstimateLabel = useMoneyPrimary ? creditEstimateLabel : moneyEstimateLabel;
+        const planLabel =
+          canonicalPricingPlanName ||
+          pricing?.tierCode ||
+          "Current plan";
+        const isEnterprisePlan =
+          pricingDisplay.isEnterprisePlan ||
+          String(planLabel).toLowerCase().includes("enterprise") ||
+          canonicalPricingTierCode === "enterprise";
+
         const insufficientBalance = !featureBlocked && Boolean(
           raw?.insufficient_balance === true ||
             raw?.insufficientBalance === true ||
-            affordability.insufficientBalance
+            raw?.pricing?.insufficient_balance === true ||
+            raw?.pricing?.insufficientBalance === true ||
+            (pricing as any)?.insufficientBalance === true ||
+            (pricingSummary as any)?.insufficientBalance === true ||
+            messageText.includes("insufficient") ||
+            messageText.includes("not enough credit")
         );
         const noteLabel = featureBlocked
           ? "Upgrade your plan to use this video feature."
-          : chooseFusionSettlementLabel(pricing, insufficientBalance);
+          : insufficientBalance
+            ? backendMessage || "Not enough available credits for this run."
+            : chooseFusionSettlementLabel(pricing, false);
+
+        const backendCtaLabel = readBackendCtaLabel(raw);
+        const canSelfServe = !isEnterprisePlan && !useMoneyPrimary;
 
         return {
           preview: false,
-          estimateLabel: primaryEstimateLabel,
+          estimateLabel: combinedEstimateLabel,
           primaryEstimateLabel,
           secondaryEstimateLabel,
           creditEstimateLabel,
@@ -1767,7 +1851,7 @@ export default function FusionStudioScreen() {
             featureBlocked
               ? "Upgrade required for this feature"
               : insufficientBalance
-                ? "Not enough credits for this run"
+                ? backendMessage || "Not enough credits for this run"
                 : settlementMode === "postpaid"
                   ? "Billed after completion"
                   : pricing?.settlementMode === "included"
@@ -1780,20 +1864,22 @@ export default function FusionStudioScreen() {
                 ? "No credit hold"
                 : undefined,
           ctaLabel: featureBlocked
-            ? "Upgrade plan"
+            ? (backendCtaLabel || "Upgrade plan")
             : insufficientBalance
-              ? (affordability.ctaLabel || "Top up credits")
-              : `Generate ${modeActionLabel(videoMode, cinematicOutputProfile)} — ${primaryEstimateLabel}`,
+              ? (backendCtaLabel || (canSelfServe ? "Top up credits" : "Upgrade plan"))
+              : `Generate ${modeActionLabel(videoMode, cinematicOutputProfile)} — ${combinedEstimateLabel}`,
           insufficientBalance,
-          topUpVisible: insufficientBalance && !useMoneyPrimary,
-          upgradeVisible: featureBlocked || (insufficientBalance && !useMoneyPrimary),
+          topUpVisible: insufficientBalance && canSelfServe,
+          upgradeVisible: featureBlocked || (insufficientBalance && canSelfServe),
           entitlementReason: featureBlocked ? (blockingReason || "ENTITLEMENT_BLOCKED_FEATURE_FLAG") : undefined,
+          confirmation,
           raw,
           pricing,
           pricingSummary,
         };
-      } catch {
-        return fallbackEstimate({ hasFaceArtifact, hasAudio, videoMode });
+      } catch (error) {
+        logFusionStudioFlow("pricingPreview.failed", error instanceof Error ? { message: error.message } : { error: String(error) });
+        throw error;
       }
     },
   });
@@ -1826,6 +1912,8 @@ export default function FusionStudioScreen() {
   ]);
 
   const pricing = pricingQ.data;
+  const pricingConfirmation = pricing?.confirmation ?? null;
+  const pricingReady = Boolean(pricingConfirmation?.quote_id);
   const displayedPrimaryEstimate = pricing?.primaryEstimateLabel ?? pricing?.estimateLabel ?? "Estimate pending";
   const isPostpaidPricing =
     ((() => {
@@ -1840,14 +1928,20 @@ export default function FusionStudioScreen() {
         availability.includes("billed after completion")
       );
     })());
-  const displayedSecondaryEstimate = undefined;
-  const displayedCreditEstimate = isPostpaidPricing ? null : (pricing?.creditEstimateLabel ?? null);
-  const displayedCashEstimate = isPostpaidPricing
-    ? (cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || null)
-    : null;
-  const visiblePrimaryEstimate = isPostpaidPricing
-    ? displayedCashEstimate || displayedPrimaryEstimate
-    : displayedCreditEstimate || displayedPrimaryEstimate;
+  const displayedCreditEstimate = pricing?.creditEstimateLabel ?? null;
+  const displayedCashEstimate = cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || null;
+  const displayedCombinedEstimate = joinPricingLabels([displayedCreditEstimate, displayedCashEstimate]);
+  const displayedSecondaryEstimate = displayedCashEstimate ?? undefined;
+  const pricingPreviewUnavailable =
+    previewReady && !pricingQ.isFetching && !pricingReady && !pricing?.insufficientBalance && !pricing?.upgradeVisible;
+  const createVideoCtaLabel = pricing?.insufficientBalance || pricing?.upgradeVisible
+    ? (pricing?.ctaLabel ?? (pricing?.topUpVisible ? "Top up credits" : pricing?.upgradeVisible ? "Upgrade plan" : "Not enough credits"))
+    : pricingPreviewUnavailable
+      ? "Pricing preview unavailable"
+      : displayedCombinedEstimate
+        ? `Generate ${modeActionLabel(videoMode, cinematicOutputProfile)} — ${displayedCombinedEstimate}`
+        : (pricing?.ctaLabel ?? "Create Video");
+  const visiblePrimaryEstimate = displayedCombinedEstimate || displayedPrimaryEstimate;
   const displayedNoteLabel = pricing?.noteLabel ?? pricing?.settlementLabel ?? (isPostpaidPricing
     ? "Billed after completion through your postpaid account."
     : "Covered by your available credits.");
@@ -1999,7 +2093,8 @@ useEffect(() => {
     hasMeaningfulPrompt &&
     (!isCinematic || hasMeaningfulCinematicIntent);
 
-  const canGenerate = canPrimaryAction && !pricing?.insufficientBalance && !pricing?.upgradeVisible;
+  const pricingActionReady = pricingReady || !!pricing?.insufficientBalance || !!pricing?.upgradeVisible;
+  const canGenerate = canPrimaryAction && pricingReady && !pricing?.insufficientBalance && !pricing?.upgradeVisible;
 
   useEffect(() => {
     logFusionStudioFlow("snapshot", {
@@ -2210,6 +2305,11 @@ useEffect(() => {
       return;
     }
 
+    if (!pricingConfirmation?.quote_id) {
+      setStatusText("Pricing preview is not ready yet. Please wait a moment and try again.");
+      return;
+    }
+
     if (pricing?.upgradeVisible && String(pricing?.entitlementReason || "").includes("ENTITLEMENT_BLOCKED_FEATURE_FLAG")) {
       setStatusText("Upgrade your plan to use this video feature.");
       openUpgradeScreen();
@@ -2248,16 +2348,15 @@ useEffect(() => {
     animateTo(0.12, 450);
 
     try {
-      logFusionStudioFlow("generate.before_apiCreateFusionJob", { previewPayload, pricingConfirmation: pricing?.raw?.quote_id && pricing?.raw?.preview_fingerprint ? { quote_id: pricing.raw.quote_id, preview_fingerprint: pricing.raw.preview_fingerprint } : undefined });
+      logFusionStudioFlow("generate.before_apiCreateFusionJob", { previewPayload, pricingConfirmation });
       const created = await apiCreateFusionJob({
         ...previewPayload,
-        pricing_confirmation:
-          pricing?.raw?.quote_id && pricing?.raw?.preview_fingerprint
-            ? {
-                quote_id: pricing.raw.quote_id,
-                preview_fingerprint: pricing.raw.preview_fingerprint,
-              }
-            : undefined,
+        pricing_confirmation: {
+          quote_id: pricingConfirmation.quote_id,
+          ...(pricingConfirmation.preview_fingerprint
+            ? { preview_fingerprint: pricingConfirmation.preview_fingerprint }
+            : {}),
+        },
       });
       logFusionStudioFlow("generate.apiCreateFusionJob.response", created);
       const id = String((created as any)?.job_id || (created as any)?.id || "");
@@ -2525,6 +2624,11 @@ useEffect(() => {
       return;
     }
 
+    if (!pricingReady) {
+      setStatusText("Pricing preview is not ready yet. Please wait a moment and try again.");
+      return;
+    }
+
     void generate();
   }, [
     generate,
@@ -2534,6 +2638,7 @@ useEffect(() => {
     pricing?.upgradeVisible,
     pricing?.insufficientBalance,
     pricing?.topUpVisible,
+    pricingReady,
   ]);
 
   const promptRequiredMessage =
@@ -2560,9 +2665,9 @@ useEffect(() => {
     !pricingQ.isFetching &&
     !busy &&
     !pricing
-      ? "Pricing preview is temporarily unavailable right now. You can still create the video, and the final pricing summary will appear after completion."
+      ? "Pricing preview unavailable. Generate stays locked until the backend returns a complete quote."
       : pricing && pricing.preview
-        ? `Estimate shown: ${displayedPrimaryEstimate}. Final pricing confirmation will appear after completion.`
+        ? `Estimate shown: ${displayedPrimaryEstimate}. Generate will unlock as soon as pricing confirmation is ready.`
         : null;
 
 
@@ -2626,7 +2731,7 @@ const liveBillingValueLabel =
           studioName="Fusion Studio"
           estimate={visiblePrimaryEstimate}
           primaryEstimateLabel={visiblePrimaryEstimate}
-          secondaryEstimateLabel={undefined}
+          secondaryEstimateLabel={displayedSecondaryEstimate}
           creditEstimateLabel={displayedCreditEstimate}
           cashEstimateLabel={displayedCashEstimate}
           walletAfterRun={pricingDisplayAny.creditDetailLabel ?? liveAvailableLabel ?? undefined}
@@ -3407,7 +3512,7 @@ const liveBillingValueLabel =
 
         <Pressable
           onPress={handlePrimaryAction}
-          disabled={!canPrimaryAction}
+          disabled={!canPrimaryAction || !pricingActionReady}
           style={{
             marginTop: 12,
             borderRadius: 16,
@@ -3416,7 +3521,7 @@ const liveBillingValueLabel =
             borderWidth: 1,
             borderColor: "rgba(248,184,72,0.35)",
             backgroundColor:
-              canPrimaryAction ? "rgba(232,152,56,0.22)" : "rgba(255,255,255,0.06)",
+              canPrimaryAction && pricingActionReady ? "rgba(232,152,56,0.22)" : "rgba(255,255,255,0.06)",
             opacity: locked ? 0.85 : 1,
           }}
         >
@@ -3435,7 +3540,7 @@ const liveBillingValueLabel =
                   ? "Enter video prompt to continue"
                   : isCinematic && !hasMeaningfulCinematicIntent
                     ? "Add cinematic intent to continue"
-                    : pricing?.ctaLabel ?? "Create Video"}
+                    : createVideoCtaLabel}
             </Text>
           )}
         </Pressable>

@@ -57,6 +57,10 @@ const config: ExpoConfig = {
     ],
     "expo-audio",
     "expo-sharing",
+    "expo-localization",
+    "expo-secure-store",
+    "expo-video",
+    "expo-web-browser",
   ],
 
   ios: {

@@ -53,26 +53,46 @@ import { useFacePricingEstimate } from "./hooks/useFacePricingEstimate";
 
 type Mode = "text-to-image" | "image-to-image";
 
-const I2I_LOCKED_PRESERVATION_STRENGTH = 0.98;
+const I2I_LOCKED_PRESERVATION_STRENGTH = 0.995;
 const I2I_IDENTITY_LOCK_LEVEL = "strict";
 const I2I_LOCKED_FEATURES = [
   "face",
+  "facial_geometry",
+  "facial_proportions",
   "eyes",
+  "eye_spacing",
+  "eyebrows",
+  "nose",
   "lips",
   "jawline",
-  "eyebrows",
-  "gender",
+  "chin",
+  "cheekbones",
+  "skin_tone",
+  "age_group",
+  "gender_presentation",
+  "hairline",
+  "natural_skin_texture",
+  "expression",
 ] as const;
 const I2I_REQUEST_ONLY_EDITABLE_ATTRIBUTES = [
-  "facial_hair",
-  "glasses",
-  "dress",
+  "attire",
+  "clothing",
+  "outfit",
+  "accessories",
   "jewelry",
+  "glasses",
+  "facial_hair",
+  "beard",
+  "mustache",
+  "moustache",
   "background",
+  "environment",
   "lighting",
-  "camera_angle",
+  "color_grading",
   "framing",
-  "color_grade",
+  "camera",
+  "composition",
+  "style",
 ] as const;
 const I2I_FORBIDDEN_CHANGES = [
   "identity",
@@ -88,6 +108,16 @@ const I2I_FORBIDDEN_CHANGES = [
   "nose_shape",
   "mouth_shape",
   "age_group",
+  "gender_presentation",
+  "facial_geometry",
+  "facial_proportions",
+  "chin",
+  "cheekbones",
+  "hairline",
+  "expression",
+  "beautified_face",
+  "younger_face",
+  "slimmer_face",
 ] as const;
 type Opt = { code: string; label: string };
 
@@ -291,6 +321,65 @@ async function postFaceAiJson<T>(path: string, body: any, authLike: any): Promis
   return parsed as T;
 }
 
+
+function sanitizeFacePromptForMode(text: string, mode: Mode): string {
+  const raw = cleanParam(text).replace(/\s+/g, " ").trim();
+  if (!raw || mode !== "image-to-image") return raw;
+
+  let cleaned = raw
+    .replace(/\bSTRICT IDENTITY LOCK\b/gi, "")
+    .replace(/\bSYSTEM PROMPT\b/gi, "")
+    .replace(/\bNEGATIVE PROMPT\b/gi, "")
+    .replace(/\bFORBIDDEN CHANGES?\b/gi, "")
+    .replace(/\bQUALITY REQUIREMENT\b/gi, "")
+    .replace(/\bTASK:\s*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const sentences = cleaned
+    .split(/(?<=[.!?])\s+|\s*[;|]\s*/g)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const lower = part.toLowerCase();
+      return !(
+        lower.includes("different person") ||
+        lower.includes("new face") ||
+        lower.includes("gender-swap") ||
+        lower.includes("similar-looking person") ||
+        lower.includes("subordinate to this identity lock") ||
+        lower.includes("ignore only the conflicting") ||
+        lower.includes("do not generate") ||
+        lower.includes("forbidden")
+      );
+    });
+
+  const safeBody = (sentences.join(" ") || cleaned || raw).replace(/\s+/g, " ").trim();
+  const lower = safeBody.toLowerCase();
+  const prefixed = lower.startsWith("keep the same person") || lower.startsWith("same person") || lower.startsWith("same identity")
+    ? safeBody
+    : `Keep the same person from the source photo. ${safeBody}`;
+
+  return prefixed.slice(0, 900).trim();
+}
+
+function normalizeFaceEnhancerResult(result: PromptEnhancerResult, mode: Mode): PromptEnhancerResult {
+  if (mode !== "image-to-image") return result;
+
+  const normalized: PromptEnhancerResult = {
+    ...result,
+    enhanced_input: sanitizeFacePromptForMode(String(result?.enhanced_input ?? ""), mode),
+  };
+
+  const alternatives = Array.isArray((result as any)?.alternatives) ? (result as any).alternatives : [];
+  (normalized as any).alternatives = alternatives.map((alt: any) => ({
+    ...alt,
+    text: sanitizeFacePromptForMode(String(alt?.text ?? ""), mode),
+  }));
+
+  return normalized;
+}
+
 function buildLocalFacePrompt(
   userInput: string,
   lockedFields: Record<string, any>,
@@ -314,12 +403,20 @@ function buildLocalFacePrompt(
           ? "premium editorial portrait, refined styling, cinematic realism, elegant lighting"
           : "high-quality portrait, realistic lighting, clean composition, culturally respectful";
 
-  const identityGuard =
-    modeValue === "image-to-image"
-      ? "STRICT IDENTITY LOCK: preserve the exact same person from the source photo. The face, eyes, lips, jawline, eyebrows, and gender presentation must not change. Do not beautify into a different face. Change only the attributes the user explicitly requests, such as facial hair, glasses, clothing, lighting, background, or framing."
-      : gender
-        ? `${gender} presentation preserved`
-        : "";
+  if (modeValue === "image-to-image") {
+    return sanitizeFacePromptForMode(
+      dedupeParts([
+        userInput,
+        "Keep the exact same person from the source photo",
+        "change only the requested outfit, background, lighting, framing, or style",
+        aspect ? `optimized for ${aspect} aspect ratio` : "",
+        "realistic natural photo edit",
+      ]).join(", "),
+      "image-to-image"
+    );
+  }
+
+  const identityGuard = gender ? `${gender} presentation preserved` : "";
 
   return dedupeParts([
     userInput,
@@ -343,7 +440,7 @@ function buildLocalFaceEnhancement(
   const preservation = Number(lockedFields?.preservation_strength ?? 0);
   const sourceHint =
     cleanParam(lockedFields?.mode) === "image-to-image"
-      ? `Strict identity lock is ON. Face, eyes, lips, jawline, eyebrows, and gender must be preserved. Only user-requested styling, accessories, attire, lighting, or background changes may be applied.`
+      ? `Identity lock is ON. Face, eyes, nose, lips, jawline, eyebrows, skin tone, age, and natural facial features stay locked. Only requested outfit, glasses, beard, moustache, accessories, background, lighting, framing, or style changes may be applied.`
       : "The rewrite adds explicit framing, quality, and scene direction without changing your chosen identity inputs.";
 
   return {
@@ -1505,7 +1602,7 @@ export default function FaceStudioScreen() {
   const faceEnhancerLockedFields = useMemo(
     () => ({
       mode,
-      gender,
+      gender: mode === "image-to-image" ? undefined : gender,
       country: COUNTRY_LABEL,
       zone_code: zoneCode,
       zone_label: regionLabel,
@@ -1555,8 +1652,8 @@ export default function FaceStudioScreen() {
   const canGenerate = useMemo(() => {
     const hasPrompt = prompt.trim().length > 0;
     if (!hasPrompt) return false;
-    if (!gender || !zoneCode || !regionCode) return false;
     if (mode === "image-to-image") return hasValidI2ISource;
+    if (!gender || !zoneCode || !regionCode) return false;
     return true;
   }, [prompt, gender, zoneCode, regionCode, mode, hasValidI2ISource]);
 
@@ -1564,10 +1661,7 @@ export default function FaceStudioScreen() {
     prompt.trim().length > 0 &&
     !mdLoading &&
     !mdErr &&
-    !!gender &&
-    !!zoneCode &&
-    !!regionCode &&
-    hasValidI2ISource;
+    (mode === "image-to-image" ? hasValidI2ISource : !!gender && !!zoneCode && !!regionCode);
 
   const pricingPreviewEnabled = hasFacePricingAuth && pricingPreviewEligible;
 
@@ -1647,14 +1741,24 @@ export default function FaceStudioScreen() {
   const visiblePrimaryEstimate = isPostpaidPricing
     ? cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || displayedEstimateLabel
     : pricing?.creditEstimateLabel || displayedEstimateLabel;
-  const visibleSecondaryEstimate = undefined;
-  const visibleCreditEstimate = isPostpaidPricing ? null : (pricing?.creditEstimateLabel ?? null);
-  const visibleCashEstimate = isPostpaidPricing
-    ? (cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || null)
-    : null;
-  const displayedPricingDetail = isPostpaidPricing
-    ? `Estimated bill: ${visibleCashEstimate ?? "—"}`
-    : `Credits charged: ${visibleCreditEstimate ?? "—"}`;
+  const visibleSecondaryEstimate = isPostpaidPricing
+    ? (pricing?.creditEstimateLabel ?? undefined)
+    : (pricing?.moneyEstimateLabel ?? undefined);
+  const visibleCreditEstimate = pricing?.creditEstimateLabel ?? null;
+  const visibleCashEstimate = cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || null;
+  const visibleCombinedEstimate = dedupeParts([visibleCreditEstimate, visibleCashEstimate]).join(", ");
+  const createFaceCtaEstimateLabel =
+    visibleCombinedEstimate || cleanParam(displayedEstimateLabel);
+  const createFaceCtaLabel = pricing?.insufficientBalance
+    ? (pricing?.ctaLabel ?? (pricing?.topUpVisible ? "Top up credits" : pricing?.upgradeVisible ? "Upgrade plan" : "Not enough credits"))
+    : createFaceCtaEstimateLabel
+      ? `Create Face — ${createFaceCtaEstimateLabel}`
+      : "Create Face";
+  const displayedPricingDetail = visibleCombinedEstimate
+    ? `Estimated charge: ${visibleCombinedEstimate}`
+    : isPostpaidPricing
+      ? `Estimated bill: ${visibleCashEstimate ?? "—"}`
+      : `Credits charged: ${visibleCreditEstimate ?? "—"}`;
   const displayedSettlementLabel =
     isPostpaidPricing
       ? "Billed after completion through your postpaid account."
@@ -1774,10 +1878,11 @@ export default function FaceStudioScreen() {
         faceAiAuth
       );
 
-      setEnhancerResult(response?.enhanced_input ? response : fallbackResult);
+      const liveResult = response?.enhanced_input ? response : fallbackResult;
+      setEnhancerResult(normalizeFaceEnhancerResult(liveResult, mode));
       setEnhancerError(null);
     } catch {
-      setEnhancerResult(fallbackResult);
+      setEnhancerResult(normalizeFaceEnhancerResult(fallbackResult, mode));
       setEnhancerError("Live prompt enhancement is unavailable right now. Showing a smart local rewrite instead.");
     } finally {
       setEnhancerLoading(false);
@@ -2093,7 +2198,7 @@ export default function FaceStudioScreen() {
 
     if (mode === "image-to-image" && Math.abs(preservationStrength - I2I_LOCKED_PRESERVATION_STRENGTH) > 0.001) {
       setPreservationStrength(I2I_LOCKED_PRESERVATION_STRENGTH);
-      setInlineStatus("I2I identity lock is strict. Preservation strength has been locked to preserve the same face and gender.");
+      setInlineStatus("I2I identity lock is strict. The source photo owns the person’s identity and gender presentation.");
       return;
     }
 
@@ -2127,12 +2232,12 @@ export default function FaceStudioScreen() {
       const req: any = {
         mode,
         num_variants: numVariants,
-        user_prompt: prompt.trim(),
-        gender,
-        region_code: regionCode,
-        context_code: contextCode ?? undefined,
-        use_case: useCaseCode ?? undefined,
-        shot_type_code: shotTypeCode ?? undefined,
+        user_prompt: sanitizeFacePromptForMode(prompt, mode),
+        gender: mode === "image-to-image" ? undefined : gender,
+        region_code: mode === "image-to-image" ? undefined : regionCode,
+        context_code: mode === "image-to-image" ? undefined : contextCode ?? undefined,
+        use_case: mode === "image-to-image" ? undefined : useCaseCode ?? undefined,
+        shot_type_code: mode === "image-to-image" ? undefined : shotTypeCode ?? undefined,
         aspect_ratio: aspectRatio,
         source_image_url: mode === "image-to-image" ? sourceImageUrl : null,
         source_image_asset_id: mode === "image-to-image" ? sourceImageAssetId : null,
@@ -2148,7 +2253,7 @@ export default function FaceStudioScreen() {
         forbidden_i2i_changes: mode === "image-to-image" ? I2I_FORBIDDEN_CHANGES : undefined,
         identity_lock_instructions:
           mode === "image-to-image"
-            ? "Preserve the exact same human identity from the source image. Face, eyes, lips, jawline, eyebrows, and gender presentation must not change. Do not beautify, reshape, age, de-age, gender-swap, or replace the face. Apply only user-requested changes to facial hair, glasses, clothing, jewelry, lighting, background, color grade, camera angle, or framing. If the user did not request an attribute change, keep that attribute unchanged."
+            ? "Preserve the exact same human identity from the source image. Face, eyes, eye spacing, eyebrows, nose, lips, jawline, chin, cheekbones, skin tone, age appearance, hairline, expression, and gender presentation must not change. Do not beautify, reshape, de-age, slim, airbrush, or replace the face. Apply only user-requested changes to outfit, glasses, beard, moustache, accessories, background, environment, lighting, framing, camera, composition, or color grading. If the user did not request an attribute change, keep that attribute unchanged."
             : undefined,
       };
 
@@ -2416,9 +2521,9 @@ export default function FaceStudioScreen() {
       pricingError: pricingQ.error ? String((pricingQ.error as any)?.message || pricingQ.error) : null,
       mode,
       hasPrompt: prompt.trim().length > 0,
-      gender,
-      zoneCode,
-      regionCode,
+      gender: mode === "image-to-image" ? "source-controlled" : gender,
+      zoneCode: mode === "image-to-image" ? "not-used-for-i2i" : zoneCode,
+      regionCode: mode === "image-to-image" ? "not-used-for-i2i" : regionCode,
       hasValidI2ISource,
       sourceImageUrl: !!sourceImageUrl,
       sourceImageAssetId: !!sourceImageAssetId,
@@ -2713,10 +2818,10 @@ const liveBillingValueLabel =
                   Identity lock is always ON for I2I
                 </Text>
                 <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6, fontSize: 12 }}>
-                  Locked: face, eyes, lips, jawline, eyebrows, and gender presentation.
+                  Locked: face, eyes, nose, lips, jawline, eyebrows, skin tone, age, and gender presentation.
                 </Text>
                 <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 6, fontSize: 12 }}>
-                  DesiFaces will only change facial hair, glasses, dress, background, lighting, or framing when you explicitly ask for those changes in your prompt.
+                  DesiFaces will only change outfit, glasses, beard/moustache, accessories, background, lighting, framing, or style when you explicitly ask. Do not ask for face, age, skin tone, jawline, eyes, or lips changes in Strict Edit.
                 </Text>
               </View>
             </GlassCard>
@@ -2725,11 +2830,11 @@ const liveBillingValueLabel =
 
           <GlassCard>
             <SectionTitle
-              title="Creative setup"
-              subtitle="Use compact controls to shape location, framing, and intent."
+              title={mode === "image-to-image" ? "Edit controls" : "Creative setup"}
+              subtitle={mode === "image-to-image" ? "Strict Edit keeps the person locked. Only frame and output count are exposed." : "Use compact controls to shape location, framing, and intent."}
             />
 
-            <View style={{ marginTop: 12, gap: creativeGridGap }}>
+            <View style={{ marginTop: 12, gap: creativeGridGap, display: mode === "image-to-image" ? "none" : "flex" }}>
               <View
                 style={{
                   flexDirection: creativeSingleColumn ? "column" : "row",
@@ -2910,7 +3015,7 @@ const liveBillingValueLabel =
               subtitle={
                 mode === "text-to-image"
                   ? "Describe the look, vibe, styling, lighting, and scene."
-                  : "Keep the same person, then describe what should change."
+                  : "Describe only outfit, background, lighting, framing, or style changes. Identity stays locked."
               }
               right={
                 <Pressable
@@ -2953,7 +3058,7 @@ const liveBillingValueLabel =
                 placeholder={
                   mode === "text-to-image"
                     ? "Luxury editorial portrait, elegant Indian outfit, soft golden-hour light, clean premium background…"
-                    : "Same person, premium editorial styling, refined outfit, cinematic lighting, upscale background…"
+                    : "Same person. Change only the outfit to beach casual and the background to a beach-side restaurant…"
                 }
                 placeholderTextColor="rgba(248,216,104,0.35)"
                 multiline
@@ -2967,7 +3072,7 @@ const liveBillingValueLabel =
               />
             </View>
 
-            <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 12, display: mode === "image-to-image" ? "none" : "flex" }}>
               <Pressable
                 onPress={() => setGender("female")}
                 disabled={uiLocked}
@@ -3020,7 +3125,7 @@ const liveBillingValueLabel =
             <GlassCard style={{ padding: 12 }}>
               <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>Estimate</Text>
               <Text style={{ color: DF.text, fontWeight: "800", marginTop: 8, fontSize: 12 }}>
-                {isPostpaidPricing ? "Estimated bill" : "Credits charged"}: {isPostpaidPricing ? (visibleCashEstimate ?? "—") : (visibleCreditEstimate ?? "—")}
+                Estimated charge: {visibleCombinedEstimate || (visibleCashEstimate ?? visibleCreditEstimate ?? "—")}
               </Text>
               <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 6, fontSize: 12 }}>
                 {pricing.settlementLabel}
@@ -3100,8 +3205,13 @@ const liveBillingValueLabel =
                 <Text style={{ color: DF.text, fontWeight: "900" }}>Starting job…</Text>
               </View>
             ) : (
-              <Text style={{ color: DF.text, fontWeight: "900", fontSize: 15 }}>
-                {pricing?.insufficientBalance ? (pricing?.ctaLabel ?? (pricing?.topUpVisible ? "Top up credits" : pricing?.upgradeVisible ? "Upgrade plan" : "Not enough credits")) : (displayedEstimateLabel ? `Create Face — ${displayedEstimateLabel}` : "Create Face")}
+              <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.78}
+                style={{ color: DF.text, fontWeight: "900", fontSize: 15 }}
+              >
+                {createFaceCtaLabel}
               </Text>
             )}
           </Pressable>
@@ -3471,7 +3581,7 @@ const liveBillingValueLabel =
                 {!!(finalPricingLabel ?? pricing?.estimateLabel) && (
                   <>
                     <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>
-                      • {isPostpaidPricing ? "Estimated bill" : "Credits charged"}: {isPostpaidPricing ? (visibleCashEstimate ?? "—") : (visibleCreditEstimate ?? "—")}
+                      • Estimated charge: {visibleCombinedEstimate || (visibleCashEstimate ?? visibleCreditEstimate ?? "—")}
                     </Text>
                     <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>
                       • Settlement: {pricing?.settlementLabel ?? "Estimate shown before the run. Final pricing is confirmed after completion."}
@@ -3554,7 +3664,7 @@ const liveBillingValueLabel =
           void requestPromptEnhancement();
         }}
         onApply={(nextText) => {
-          setPrompt(nextText);
+          setPrompt(sanitizeFacePromptForMode(nextText, mode));
           setEnhancerOpen(false);
           setInlineStatus("Enhanced prompt applied. Review it and generate when ready.");
         }}
