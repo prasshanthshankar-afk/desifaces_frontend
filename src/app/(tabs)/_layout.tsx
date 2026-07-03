@@ -102,6 +102,8 @@ export default function TabsLayout() {
         name="settings"
         options={{
           href: null,
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: "none" },
         }}
       />
 
@@ -109,6 +111,8 @@ export default function TabsLayout() {
         name="billing"
         options={{
           href: null,
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: "none" },
         }}
       />
 
@@ -116,6 +120,8 @@ export default function TabsLayout() {
         name="media"
         options={{
           href: null,
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: "none" },
         }}
       />
     </Tabs>
