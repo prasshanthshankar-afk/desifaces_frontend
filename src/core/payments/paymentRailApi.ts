@@ -110,7 +110,17 @@ async function getHeaders(countryCode?: string): Promise<Record<string, string>>
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = token;
   if (userId) headers["X-User-Id"] = userId;
-  if (countryCode) headers["X-Country-Code"] = clean(countryCode).toUpperCase();
+  const forcedCountry = clean(process.env.EXPO_PUBLIC_DF_FORCE_COUNTRY_CODE).toUpperCase();
+  const forcedCurrency = clean(process.env.EXPO_PUBLIC_DF_FORCE_CURRENCY).toUpperCase();
+  const forcedLocale = clean(process.env.EXPO_PUBLIC_DF_FORCE_LOCALE);
+
+  // QA-only region override support. Forced country intentionally wins over
+  // caller/device country when present; without env override behavior is unchanged.
+  const normalizedCountry = forcedCountry || clean(countryCode).toUpperCase();
+  if (normalizedCountry) headers["X-Country-Code"] = normalizedCountry;
+  if (forcedCurrency) headers["X-Currency"] = forcedCurrency;
+  if (forcedLocale) headers["Accept-Language"] = forcedLocale;
+
   return headers;
 }
 

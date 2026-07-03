@@ -461,9 +461,23 @@ async function getHeaders(countryCode?: string): Promise<Record<string, string>>
   if (token) headers.Authorization = token;
   if (userId) headers["X-User-Id"] = userId;
 
-  const normalizedCountry = clean(countryCode).toUpperCase();
+  // QA-only region override support. When these Expo env values are absent,
+  // behavior is unchanged and callers may continue passing countryCode explicitly.
+  // When present, the forced country intentionally wins so controlled INR QA
+  // cannot be accidentally overridden by a device/default country value.
+  const forcedCountry = clean(process.env.EXPO_PUBLIC_DF_FORCE_COUNTRY_CODE).toUpperCase();
+  const forcedCurrency = clean(process.env.EXPO_PUBLIC_DF_FORCE_CURRENCY).toUpperCase();
+  const forcedLocale = clean(process.env.EXPO_PUBLIC_DF_FORCE_LOCALE);
+
+  const normalizedCountry = forcedCountry || clean(countryCode).toUpperCase();
   if (normalizedCountry) {
     headers["X-Country-Code"] = normalizedCountry;
+  }
+  if (forcedCurrency) {
+    headers["X-Currency"] = forcedCurrency;
+  }
+  if (forcedLocale) {
+    headers["Accept-Language"] = forcedLocale;
   }
 
   return headers;
@@ -507,6 +521,21 @@ async function fetchJson<T>(
 
   const headers = await getHeaders(countryCode);
   const url = `${apiBase}${path.startsWith("/") ? path : `/${path}`}`;
+
+  if (
+    process.env.EXPO_PUBLIC_DF_FORCE_COUNTRY_CODE ||
+    process.env.EXPO_PUBLIC_DF_FORCE_CURRENCY ||
+    process.env.EXPO_PUBLIC_DF_FORCE_LOCALE
+  ) {
+    console.log("DF_PAYMENTS_REGION_HEADERS", {
+      path,
+      countryCode: headers["X-Country-Code"] || null,
+      currency: headers["X-Currency"] || null,
+      locale: headers["Accept-Language"] || null,
+      hasAuth: !!headers.Authorization,
+      hasUserId: !!headers["X-User-Id"],
+    });
+  }
 
   const resp = await fetch(url, {
     ...init,

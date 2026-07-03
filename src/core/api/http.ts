@@ -134,11 +134,19 @@ export function pricingHeaders(
   userId: string,
   countryCode?: string | null
 ): Record<string, string> {
-  const cc = (countryCode || "").trim().toUpperCase();
+  const forcedCountry = (process.env.EXPO_PUBLIC_DF_FORCE_COUNTRY_CODE || "").trim().toUpperCase();
+  const forcedCurrency = (process.env.EXPO_PUBLIC_DF_FORCE_CURRENCY || "").trim().toUpperCase();
+  const forcedLocale = (process.env.EXPO_PUBLIC_DF_FORCE_LOCALE || "").trim();
+
+  // QA-only region override support. Forced country intentionally wins over
+  // caller/device country when present; without env override behavior is unchanged.
+  const cc = (forcedCountry || countryCode || "").trim().toUpperCase();
 
   return {
     Authorization: `Bearer ${token.trim()}`,
     "X-User-Id": userId.trim(),
     ...(cc ? { "X-Country-Code": cc } : {}),
+    ...(forcedCurrency ? { "X-Currency": forcedCurrency } : {}),
+    ...(forcedLocale ? { "Accept-Language": forcedLocale } : {}),
   };
 }
