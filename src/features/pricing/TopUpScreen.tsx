@@ -46,6 +46,32 @@ function formatCredits(value?: number | null, fallback = "—") {
   return `${Math.round(Math.max(0, value))}`;
 }
 
+
+function normalizeCountryCodeValue(value: unknown, fallback = ""): string {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : fallback;
+}
+
+function normalizeCurrencyCodeValue(value: unknown): string | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "₹" || normalized === "IN") return "INR";
+  if (normalized === "$" || normalized === "US") return "USD";
+  if (/^[A-Z]{3}$/.test(normalized)) return normalized;
+  return null;
+}
+
+function billingCurrencyForCountry(countryCode: string): "INR" | "USD" {
+  return String(countryCode || "").trim().toUpperCase() === "IN" ? "INR" : "USD";
+}
+
+const FORCED_BILLING_COUNTRY_CODE = normalizeCountryCodeValue(
+  process.env.EXPO_PUBLIC_DF_FORCE_COUNTRY_CODE
+);
+const FORCED_BILLING_CURRENCY = normalizeCurrencyCodeValue(
+  process.env.EXPO_PUBLIC_DF_FORCE_CURRENCY
+);
+
 function makeIdempotencyKey(packCode: string, prefix = "wallet-topup") {
   const rand = Math.random().toString(36).slice(2, 10);
   return `${prefix}-${packCode}-${Date.now()}-${rand}`;
@@ -227,18 +253,32 @@ function BillingFooterNav() {
 }
 
 export default function TopUpScreen() {
-  const params = useLocalSearchParams<{ billing_result?: string }>();
+  const params = useLocalSearchParams<{
+    billing_result?: string;
+    source?: string;
+    workflow?: string;
+    intent?: string;
+    countryCode?: string;
+    currency?: string;
+  }>();
   const billingResult = readString(params.billing_result);
+  const countryCodeParam = readString(params.countryCode, "");
+  const currencyParam = readString(params.currency, "");
 
   const queryClient = useQueryClient();
   const auth = useAuth() as any;
 
-  const countryCode =
-    auth?.countryCode ||
-    auth?.country_code ||
-    auth?.user?.countryCode ||
-    auth?.user?.country_code ||
-    "US";
+  const countryCode = normalizeCountryCodeValue(
+    firstNonEmptyString(
+      countryCodeParam,
+      FORCED_BILLING_COUNTRY_CODE,
+      auth?.countryCode,
+      auth?.country_code,
+      auth?.user?.countryCode,
+      auth?.user?.country_code
+    ),
+    "US"
+  );
 
   const currentUserId = String(
     auth?.userId || auth?.user_id || auth?.user?.id || auth?.user?.user_id || ""
@@ -273,6 +313,22 @@ export default function TopUpScreen() {
     queryFn: async () => PaymentsApi.apiGetTopupsCatalog(countryCode),
     ...BILLING_QUERY_OPTIONS,
   });
+
+  const billingCurrency =
+    normalizeCurrencyCodeValue(
+      firstNonEmptyString(
+        currencyParam,
+        FORCED_BILLING_CURRENCY,
+        (topups as any)?.currency,
+        (topups as any)?.currency_code,
+        (topups as any)?.display_currency,
+        (topups as any)?.price_currency,
+        (overview as any)?.currency,
+        (overview as any)?.currency_code,
+        (overview as any)?.display_currency,
+        (overview as any)?.price_currency
+      )
+    ) || billingCurrencyForCountry(countryCode);
 
   useFocusEffect(
     useCallback(() => {
@@ -327,8 +383,17 @@ export default function TopUpScreen() {
       "0"
     )} reserved • ${formatCredits(displayUsedCredits, "0")} used`;
 
-  const goBilling = () => router.push({ pathname: "/pricing/plan-billing" });
-  const goCompare = () => router.push({ pathname: "/pricing/compare" });
+  const goBilling = () =>
+    router.push({
+      pathname: "/pricing/plan-billing",
+      params: { source: "topup", workflow: "topup", countryCode, currency: billingCurrency },
+    });
+
+  const goCompare = () =>
+    router.push({
+      pathname: "/pricing/compare",
+      params: { source: "topup", workflow: "topup", intent: "upgrade", countryCode, currency: billingCurrency },
+    });
   const goBack = () => router.back();
 
   useEffect(() => {
@@ -635,6 +700,8 @@ export default function TopUpScreen() {
       console.log("GOOGLE_IAP_TOPUP_PRESS", {
         packCode: item.pack_code,
         productId,
+        countryCode,
+        currency: billingCurrency,
         hasHookRuntime,
         connected: iap?.connected ?? iap?.isConnected ?? iap?.ready ?? null,
       });
@@ -692,7 +759,22 @@ export default function TopUpScreen() {
       const metadata = raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {};
       const rawItem = item as any;
       const rawTopups = topups as any;
-      const currency = String(rawItem?.currency || rawTopups?.currency || (countryCode === "IN" ? "INR" : "USD")).toUpperCase();
+      const currency =
+        normalizeCurrencyCodeValue(
+          firstNonEmptyString(
+            currencyParam,
+            FORCED_BILLING_CURRENCY,
+            rawItem?.currency,
+            rawItem?.currency_code,
+            rawItem?.display_currency,
+            rawItem?.price_currency,
+            rawTopups?.currency,
+            rawTopups?.currency_code,
+            rawTopups?.display_currency,
+            rawTopups?.price_currency,
+            billingCurrency
+          )
+        ) || billingCurrency;
 
       if (Platform.OS === "ios") {
         if (!currentUserId) throw new Error("Apple top-up requires a signed-in user id.");

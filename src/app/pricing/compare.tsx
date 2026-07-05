@@ -51,6 +51,31 @@ function firstNonEmptyString(...values: unknown[]): string | null {
   return null;
 }
 
+function normalizeCountryCodeValue(value: unknown, fallback = ""): string {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : fallback;
+}
+
+function normalizeCurrencyCodeValue(value: unknown): string | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "₹" || normalized === "IN") return "INR";
+  if (normalized === "$" || normalized === "US") return "USD";
+  if (/^[A-Z]{3}$/.test(normalized)) return normalized;
+  return null;
+}
+
+const FORCED_BILLING_COUNTRY_CODE = normalizeCountryCodeValue(
+  process.env.EXPO_PUBLIC_DF_FORCE_COUNTRY_CODE
+);
+const FORCED_BILLING_CURRENCY = normalizeCurrencyCodeValue(
+  process.env.EXPO_PUBLIC_DF_FORCE_CURRENCY
+);
+
+function billingCurrencyForCountry(countryCode: string): "INR" | "USD" {
+  return normalizeCountryCodeValue(countryCode) === "IN" ? "INR" : "USD";
+}
+
 function findRawPlanItem(
   catalog: PaymentsApi.PaymentPlanCatalogResponse | null | undefined,
   planCode: string
@@ -326,12 +351,19 @@ export default function ComparePlansScreen() {
   const workflow = readString(params.workflow, source);
   const requiredFeature = readString(params.requiredFeature);
 
-  const countryCode =
-    auth?.countryCode ||
-    auth?.country_code ||
-    auth?.user?.countryCode ||
-    auth?.user?.country_code ||
-    "US";
+  const countryCode = normalizeCountryCodeValue(
+    firstNonEmptyString(
+      FORCED_BILLING_COUNTRY_CODE,
+      auth?.countryCode,
+      auth?.country_code,
+      auth?.user?.countryCode,
+      auth?.user?.country_code
+    ),
+    "US"
+  );
+
+  const billingCurrency =
+    FORCED_BILLING_CURRENCY || billingCurrencyForCountry(countryCode);
 
   const purchaseProvider = platformPurchaseProvider();
   const isAppleBilling = purchaseProvider === "apple_iap";
@@ -523,6 +555,8 @@ export default function ComparePlansScreen() {
         workflow,
         requiredFeature: requiredFeature || undefined,
         purchaseProvider,
+        countryCode,
+        currency: billingCurrency,
         appleProductId: appleProductId || undefined,
         googleProductId: googleProductId || undefined,
         googleBasePlanId: googleBasePlanId || undefined,

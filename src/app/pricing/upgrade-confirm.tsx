@@ -49,6 +49,8 @@ type PlanUiMeta = {
   googleProductId?: string | null;
   googleBasePlanId?: string | null;
   stripePriceId?: string | null;
+  currency?: string | null;
+  countryCode?: string | null;
   metadata?: Record<string, any> | null;
 };
 
@@ -84,6 +86,43 @@ function asRecord(value: unknown): Record<string, any> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, any>;
 }
+
+function normalizeCountryCodeValue(value: unknown, fallback = ""): string {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : fallback;
+}
+
+function normalizeCurrencyCodeValue(value: unknown): string | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "₹" || normalized === "IN") return "INR";
+  if (normalized === "$" || normalized === "US") return "USD";
+  if (normalized === "£") return "GBP";
+  if (normalized === "€") return "EUR";
+  if (/^[A-Z]{3}$/.test(normalized)) return normalized;
+  return null;
+}
+
+function inferCurrencyFromPriceLabel(priceLabel?: string | null): string | null {
+  const label = String(priceLabel || "").trim().toUpperCase();
+  if (!label) return null;
+  if (label.includes("₹") || label.includes("INR")) return "INR";
+  if (label.includes("$") || label.includes("USD")) return "USD";
+  if (label.includes("£") || label.includes("GBP")) return "GBP";
+  if (label.includes("€") || label.includes("EUR")) return "EUR";
+  return null;
+}
+
+function billingCurrencyForCountry(countryCode: string): "INR" | "USD" {
+  return String(countryCode || "").trim().toUpperCase() === "IN" ? "INR" : "USD";
+}
+
+const FORCED_BILLING_COUNTRY_CODE = normalizeCountryCodeValue(
+  process.env.EXPO_PUBLIC_DF_FORCE_COUNTRY_CODE
+);
+const FORCED_BILLING_CURRENCY = normalizeCurrencyCodeValue(
+  process.env.EXPO_PUBLIC_DF_FORCE_CURRENCY
+);
 
 function platformPurchaseProvider(rawProvider: string): "apple_iap" | "google_play" | "stripe" {
   // Native platform billing must always win over stale/deep-link route params.
@@ -322,6 +361,33 @@ function itemToPlan(item: PaymentsApi.PaymentPlanCatalogItem): PlanUiMeta {
       metadata.stripe_price_id,
       metadata.gateway_price_id
     ),
+    currency:
+      normalizeCurrencyCodeValue(
+        firstNonEmptyString(
+          raw.currency,
+          raw.currency_code,
+          raw.display_currency,
+          raw.price_currency,
+          raw.billing_currency,
+          metadata.currency,
+          metadata.currency_code,
+          metadata.display_currency,
+          metadata.price_currency,
+          metadata.billing_currency
+        )
+      ) || inferCurrencyFromPriceLabel(item.price_label),
+    countryCode: normalizeCountryCodeValue(
+      firstNonEmptyString(
+        raw.country_code,
+        raw.countryCode,
+        raw.region_country_code,
+        raw.billing_country_code,
+        metadata.country_code,
+        metadata.countryCode,
+        metadata.region_country_code,
+        metadata.billing_country_code
+      )
+    ),
     metadata,
   };
 }
@@ -444,6 +510,8 @@ export default function UpgradeConfirmScreen() {
     appleProductId?: string;
     googleProductId?: string;
     googleBasePlanId?: string;
+    countryCode?: string;
+    currency?: string;
   }>();
 
   const queryClient = useQueryClient();
@@ -457,15 +525,22 @@ export default function UpgradeConfirmScreen() {
   const appleProductIdParam = readString(params.appleProductId, "");
   const googleProductIdParam = readString(params.googleProductId, "");
   const googleBasePlanIdParam = readString(params.googleBasePlanId, "");
+  const countryCodeParam = readString(params.countryCode, "");
+  const currencyParam = readString(params.currency, "");
   const returnRoute = SOURCE_ROUTE_MAP[source] || "/(tabs)/dashboard";
 
   const auth = useAuth() as any;
-  const countryCode =
-    auth?.countryCode ||
-    auth?.country_code ||
-    auth?.user?.countryCode ||
-    auth?.user?.country_code ||
-    "US";
+  const countryCode = normalizeCountryCodeValue(
+    firstNonEmptyString(
+      countryCodeParam,
+      FORCED_BILLING_COUNTRY_CODE,
+      auth?.countryCode,
+      auth?.country_code,
+      auth?.user?.countryCode,
+      auth?.user?.country_code
+    ),
+    "US"
+  );
 
   const isAppleBilling =
     Platform.OS === "ios" &&
@@ -710,6 +785,29 @@ export default function UpgradeConfirmScreen() {
     );
   }, [isGooglePlayBilling, googleBasePlanIdParam, selectedPlan.googleBasePlanId, selectedPlan.planCode]);
 
+  const billingCurrency = useMemo(() => {
+    const fallbackCurrency = billingCurrencyForCountry(countryCode);
+    return (
+      normalizeCurrencyCodeValue(
+        firstNonEmptyString(
+          currencyParam,
+          FORCED_BILLING_CURRENCY,
+          selectedPlan.currency,
+          selectedPlan.metadata?.currency,
+          selectedPlan.metadata?.currency_code,
+          selectedPlan.metadata?.display_currency,
+          selectedPlan.metadata?.price_currency,
+          inferCurrencyFromPriceLabel(selectedPlan.priceLabel),
+          (planCatalog as any)?.currency,
+          (planCatalog as any)?.currency_code,
+          (planCatalog as any)?.display_currency,
+          (planCatalog as any)?.price_currency,
+          fallbackCurrency
+        )
+      ) || fallbackCurrency
+    );
+  }, [countryCode, currencyParam, planCatalog, selectedPlan.currency, selectedPlan.metadata, selectedPlan.priceLabel]);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -854,7 +952,7 @@ export default function UpgradeConfirmScreen() {
           productId: selectedAppleProductId as any,
           userId: currentUserId,
           countryCode,
-          currency: countryCode === "IN" ? "INR" : "USD",
+          currency: billingCurrency,
         });
 
         await refreshBillingQueries(queryClient, countryCode);
@@ -873,6 +971,8 @@ export default function UpgradeConfirmScreen() {
             billing_result: "success",
             source,
             workflow,
+            countryCode,
+            currency: billingCurrency,
           },
         });
         return;
@@ -891,7 +991,7 @@ export default function UpgradeConfirmScreen() {
           basePlanId: selectedGoogleBasePlanId || undefined,
           userId: currentUserId,
           countryCode,
-          currency: countryCode === "IN" ? "INR" : "USD",
+          currency: billingCurrency,
         };
 
         let confirmed: any = null;
@@ -950,6 +1050,8 @@ export default function UpgradeConfirmScreen() {
             billing_result: "success",
             source,
             workflow,
+            countryCode,
+            currency: billingCurrency,
           },
         });
         return;
@@ -1020,6 +1122,8 @@ export default function UpgradeConfirmScreen() {
             billing_result: "success",
             source,
             workflow,
+            countryCode,
+            currency: billingCurrency,
           },
         });
       }
@@ -1111,7 +1215,7 @@ export default function UpgradeConfirmScreen() {
             />
           ) : null}
           <Row label="Plan code" value={selectedPlan.planCode} />
-          <Row label="Currency" value={countryCode === "IN" ? "INR" : "USD"} />
+          <Row label="Currency" value={billingCurrency} />
           <Row
             label="Billing provider"
             value={

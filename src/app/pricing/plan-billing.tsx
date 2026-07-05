@@ -98,6 +98,43 @@ function cleanString(value: unknown): string | null {
   return text ? text : null;
 }
 
+function normalizeCountryCodeValue(value: unknown, fallback = ""): string {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : fallback;
+}
+
+function normalizeCurrencyCodeValue(value: unknown): string | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "₹" || normalized === "IN") return "INR";
+  if (normalized === "$" || normalized === "US") return "USD";
+  if (normalized === "£") return "GBP";
+  if (normalized === "€") return "EUR";
+  if (/^[A-Z]{3}$/.test(normalized)) return normalized;
+  return null;
+}
+
+function inferCurrencyFromPriceLabel(priceLabel?: string | null): string | null {
+  const label = String(priceLabel || "").trim().toUpperCase();
+  if (!label) return null;
+  if (label.includes("₹") || label.includes("INR")) return "INR";
+  if (label.includes("$") || label.includes("USD")) return "USD";
+  if (label.includes("£") || label.includes("GBP")) return "GBP";
+  if (label.includes("€") || label.includes("EUR")) return "EUR";
+  return null;
+}
+
+const FORCED_BILLING_COUNTRY_CODE = normalizeCountryCodeValue(
+  process.env.EXPO_PUBLIC_DF_FORCE_COUNTRY_CODE
+);
+const FORCED_BILLING_CURRENCY = normalizeCurrencyCodeValue(
+  process.env.EXPO_PUBLIC_DF_FORCE_CURRENCY
+);
+
+function billingCurrencyForCountry(countryCode: string): "INR" | "USD" {
+  return normalizeCountryCodeValue(countryCode) === "IN" ? "INR" : "USD";
+}
+
 function roundTo2(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.round(value * 100) / 100;
@@ -491,7 +528,8 @@ function normalizePlanOptions(
 
 function deriveCurrentPlanPriceLabel(
   overview: PaymentsApi.PaymentOverviewResponse | null | undefined,
-  currentPlanName: string
+  currentPlanName: string,
+  billingCurrency: string
 ) {
   const currentPlanCode = normalizePlanCode(
     overview?.current_plan?.plan_code ||
@@ -499,7 +537,7 @@ function deriveCurrentPlanPriceLabel(
       ""
   );
 
-  const currency = String(overview?.currency || "USD").trim().toUpperCase();
+  const currency = normalizeCurrencyCodeValue(billingCurrency) || "USD";
   const rawPrice = String(overview?.current_plan?.price_label || "").trim();
 
   const isFree =
@@ -690,12 +728,19 @@ export default function PlanBillingScreen() {
   const requiredFeature = readString(params.requiredFeature);
   const billingResult = readString(params.billing_result);
 
-  const countryCode =
-    auth?.countryCode ||
-    auth?.country_code ||
-    auth?.user?.countryCode ||
-    auth?.user?.country_code ||
-    "US";
+  const countryCode = normalizeCountryCodeValue(
+    firstNonEmptyString(
+      FORCED_BILLING_COUNTRY_CODE,
+      auth?.countryCode,
+      auth?.country_code,
+      auth?.user?.countryCode,
+      auth?.user?.country_code
+    ),
+    "US"
+  );
+
+  const billingCurrency =
+    FORCED_BILLING_CURRENCY || billingCurrencyForCountry(countryCode);
 
   const currentUserId = String(
     auth?.userId || auth?.user_id || auth?.user?.id || auth?.user?.user_id || ""
@@ -1052,6 +1097,8 @@ export default function PlanBillingScreen() {
         intent,
         requiredFeature: requiredFeature || undefined,
         purchaseProvider,
+        countryCode,
+        currency: billingCurrency,
         appleProductId: appleProductId || undefined,
         googleProductId: googleProductId || undefined,
         googleBasePlanId: googleBasePlanId || undefined,
@@ -1114,7 +1161,7 @@ export default function PlanBillingScreen() {
                 basePlanId: candidate.basePlanId || undefined,
                 userId: currentUserId,
                 countryCode,
-                currency: countryCode === "IN" ? "INR" : "USD",
+                currency: billingCurrency,
               });
 
               await refreshBillingQueries(queryClient, countryCode);
@@ -1297,7 +1344,7 @@ export default function PlanBillingScreen() {
         const result = await restoreAppleSubscriptionsAndConfirm({
           userId: currentUserId,
           countryCode,
-          currency: String(overview?.currency || "USD"),
+          currency: billingCurrency,
         });
 
         await refreshBillingQueries(queryClient, countryCode);
@@ -1351,7 +1398,7 @@ export default function PlanBillingScreen() {
               basePlanId: candidate.basePlanId || undefined,
               userId: currentUserId,
               countryCode,
-              currency: countryCode === "IN" ? "INR" : "USD",
+              currency: billingCurrency,
             });
 
             await refreshBillingQueries(queryClient, countryCode);
@@ -1438,15 +1485,22 @@ export default function PlanBillingScreen() {
 
   const currentPriceLabel = deriveCurrentPlanPriceLabel(
     overview,
-    currentPlanDisplayName
+    currentPlanDisplayName,
+    billingCurrency
   );
 
   const goToTopUpCredits = useCallback(() => {
     router.push({
       pathname: "/pricing/top-up",
-      params: { source: "billing", workflow, intent: "topup" },
+      params: {
+        source: "billing",
+        workflow,
+        intent: "topup",
+        countryCode,
+        currency: billingCurrency,
+      },
     });
-  }, [workflow]);
+  }, [billingCurrency, countryCode, workflow]);
 
   const billingRecoveryTitle = isAppleBilling
     ? "Restore Apple purchases"
@@ -1685,7 +1739,7 @@ export default function PlanBillingScreen() {
 
           <View style={styles.infoCard}>
             <Row label="Current plan" value={String(currentPlanDisplayName)} />
-            <Row label="Currency" value={String(overview?.currency || "USD")} />
+            <Row label="Currency" value={billingCurrency} />
             <Row
               label="Subscription state"
               value={stringifyState(currentSubscription?.subscription_state)}
