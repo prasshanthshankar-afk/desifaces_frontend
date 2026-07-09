@@ -12,7 +12,7 @@ const BRAND_LOGO = "./assets/brand/desifaces-logo-softblend.png";
 const SPLASH_IMAGE = "./assets/brand/desifaces-logo-softblend.png";
 
 const config: ExpoConfig = {
-  name: "DesiFaces",
+  name: "desifaces.ai",
   slug: "desifaces-mobile",
   scheme: "desifaces",
   version: "1.0.0",

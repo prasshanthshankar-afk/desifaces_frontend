@@ -23,18 +23,6 @@
       "ios": {
         "distribution": "store"
       }
-    },
-    "android-inr-qa": {
-      "extends": "production",
-      "android": {
-        "buildType": "app-bundle"
-      },
-      "env": {
-        "EXPO_PUBLIC_PRICING_BASE_URL": "https://api.desifaces.ai/pricing",
-        "EXPO_PUBLIC_DF_FORCE_COUNTRY_CODE": "IN",
-        "EXPO_PUBLIC_DF_FORCE_CURRENCY": "INR",
-        "EXPO_PUBLIC_DF_FORCE_LOCALE": "en-IN"
-      }
     }
   },
   "submit": {
