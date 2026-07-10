@@ -3063,10 +3063,15 @@ const liveBillingValueLabel =
                 placeholderTextColor="rgba(248,216,104,0.35)"
                 multiline
                 editable={!uiLocked && !creatingJob}
+                scrollEnabled
                 style={{
                   color: DF.text,
                   fontWeight: "700",
-                  minHeight: 104,
+                  height: 128,
+                  minHeight: 128,
+                  maxHeight: 128,
+                  lineHeight: 20,
+                  padding: 0,
                   textAlignVertical: "top",
                 }}
               />

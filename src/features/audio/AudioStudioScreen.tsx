@@ -3095,8 +3095,11 @@ const proceedToFusion = useCallback(
           placeholderTextColor="rgba(255,255,255,0.35)"
           multiline
           editable={!locked}
+          scrollEnabled
           style={{
-            minHeight: 120,
+            height: 148,
+            minHeight: 148,
+            maxHeight: 148,
             borderRadius: 16,
             borderWidth: 1,
             borderColor: "rgba(255,255,255,0.10)",
@@ -3104,6 +3107,7 @@ const proceedToFusion = useCallback(
             color: DF.text,
             padding: 12,
             fontWeight: "700",
+            lineHeight: 20,
             textAlignVertical: "top",
           }}
         />

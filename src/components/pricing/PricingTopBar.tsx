@@ -576,6 +576,7 @@ export function PricingTopBar({
 
 const styles = StyleSheet.create({
   card: {
+    minHeight: 190,
     borderRadius: Radii.xxl,
     borderWidth: 1,
     borderColor: Colors.dark.border,

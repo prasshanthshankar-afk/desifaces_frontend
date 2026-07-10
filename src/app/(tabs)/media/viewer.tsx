@@ -722,14 +722,21 @@ function VideoHero({ url, bg }: { url: string; bg: string }) {
     );
   }
 
-  const player = ExpoVideo.useVideoPlayer(url, (instance: any) => {
+  return <VideoHeroPlayer url={url} bg={bg} />;
+}
+
+function VideoHeroPlayer({ url, bg }: { url: string; bg: string }) {
+  const Video = ExpoVideo!;
+  const Core = ExpoCore!;
+
+  const player = Video.useVideoPlayer(url, (instance: any) => {
     instance.loop = false;
     instance.muted = false;
     instance.staysActiveInBackground = false;
   });
 
-  const statusEvent = ExpoCore.useEvent(player, "statusChange", { status: player.status });
-  const playingEvent = ExpoCore.useEvent(player, "playingChange", { isPlaying: player.playing });
+  const statusEvent = Core.useEvent(player, "statusChange", { status: player.status });
+  const playingEvent = Core.useEvent(player, "playingChange", { isPlaying: player.playing });
 
   const status = statusEvent?.status;
   const statusErrorText = readVideoEventError((statusEvent as any)?.error);
@@ -772,7 +779,7 @@ function VideoHero({ url, bg }: { url: string; bg: string }) {
 
   return (
     <View style={{ flex: 1, backgroundColor: bg }}>
-      <ExpoVideo.VideoView player={player} style={{ width: "100%", height: "100%" }} nativeControls={false} contentFit="contain" />
+      <Video.VideoView player={player} style={{ width: "100%", height: "100%" }} nativeControls={false} contentFit="contain" />
 
       <Pressable onPress={() => void toggle()} style={styles.videoOverlay}>
         {loading ? (
@@ -832,8 +839,14 @@ function AudioHero({ url, bg }: { url: string; bg: string }) {
     );
   }
 
-  const player = ExpoAudio.useAudioPlayer(url, { updateInterval: 250 });
-  const status = ExpoAudio.useAudioPlayerStatus(player);
+  return <AudioHeroPlayer url={url} bg={bg} />;
+}
+
+function AudioHeroPlayer({ url, bg }: { url: string; bg: string }) {
+  const Audio = ExpoAudio!;
+
+  const player = Audio.useAudioPlayer(url, { updateInterval: 250 });
+  const status = Audio.useAudioPlayerStatus(player);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {

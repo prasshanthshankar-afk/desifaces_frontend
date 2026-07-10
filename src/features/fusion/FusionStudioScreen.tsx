@@ -3037,8 +3037,11 @@ const liveBillingValueLabel =
                 textAlignVertical="top"
                 placeholder="Example: Create a premium launch intro for Instagram and YouTube that starts intimate, expands into a celebratory visual mood, and ends with a strong brand close."
                 placeholderTextColor="rgba(255,255,255,0.32)"
+                scrollEnabled
                 style={{
-                  minHeight: 110,
+                  height: 132,
+                  minHeight: 132,
+                  maxHeight: 132,
                   color: DF.text,
                   fontWeight: "700",
                   fontSize: 13,
@@ -3246,8 +3249,11 @@ const liveBillingValueLabel =
               textAlignVertical="top"
               placeholder="Example: Warm festive delivery, expressive hands, natural upper-body movement, bright eyes, graceful body language, premium cinematic background motion."
               placeholderTextColor="rgba(255,255,255,0.32)"
+              scrollEnabled
               style={{
-                minHeight: 118,
+                height: 148,
+                minHeight: 148,
+                maxHeight: 148,
                 color: DF.text,
                 fontWeight: "700",
                 fontSize: 13,
