@@ -14,10 +14,12 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
+import Slider from "@react-native-community/slider";
 import { router } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { DF } from "../../core/theme/colors";
+import { FACE_BASE } from "../../core/config/env";
 import DFHeader from "../../core/ui/DFHeader";
 import { useAuth } from "../../core/auth/AuthContext";
 import { shareUrl } from "../../core/share/share";
@@ -30,6 +32,7 @@ import {
   apiCheckFaceSourceImageSafety,
   apiCreateFaceJob,
   apiGetFaceJobStatus,
+  apiPreviewFacePricing,
   apiUploadSourceImage,
 } from "./api/creatorFace";
 import { fetchFaceMasterdata } from "./api/masterdataFace";
@@ -49,76 +52,8 @@ import PromptEnhancerSheet, {
 import StudioTipsRail, {
   type StudioCoachTip,
 } from "../../components/ai/StudioTipsRail";
-import { useFacePricingEstimate } from "./hooks/useFacePricingEstimate";
 
 type Mode = "text-to-image" | "image-to-image";
-
-const I2I_LOCKED_PRESERVATION_STRENGTH = 0.995;
-const I2I_IDENTITY_LOCK_LEVEL = "strict";
-const I2I_LOCKED_FEATURES = [
-  "face",
-  "facial_geometry",
-  "facial_proportions",
-  "eyes",
-  "eye_spacing",
-  "eyebrows",
-  "nose",
-  "lips",
-  "jawline",
-  "chin",
-  "cheekbones",
-  "skin_tone",
-  "age_group",
-  "gender_presentation",
-  "hairline",
-  "natural_skin_texture",
-  "expression",
-] as const;
-const I2I_REQUEST_ONLY_EDITABLE_ATTRIBUTES = [
-  "attire",
-  "clothing",
-  "outfit",
-  "accessories",
-  "jewelry",
-  "glasses",
-  "facial_hair",
-  "beard",
-  "mustache",
-  "moustache",
-  "background",
-  "environment",
-  "lighting",
-  "color_grading",
-  "framing",
-  "camera",
-  "composition",
-  "style",
-] as const;
-const I2I_FORBIDDEN_CHANGES = [
-  "identity",
-  "face",
-  "gender",
-  "eyes",
-  "lips",
-  "jawline",
-  "eyebrows",
-  "facial_structure",
-  "skin_tone",
-  "eye_shape",
-  "nose_shape",
-  "mouth_shape",
-  "age_group",
-  "gender_presentation",
-  "facial_geometry",
-  "facial_proportions",
-  "chin",
-  "cheekbones",
-  "hairline",
-  "expression",
-  "beautified_face",
-  "younger_face",
-  "slimmer_face",
-] as const;
 type Opt = { code: string; label: string };
 
 type FaceVariant = {
@@ -165,6 +100,8 @@ function resolveVariantHandoffId(v?: FaceVariant | null): string {
 }
 
 function logFaceStudioFlow(step: string, payload: any) {
+  if (!__DEV__) return;
+
   try {
     console.log("[DF_FLOW][FaceStudio]", step, JSON.stringify(payload, null, 2));
   } catch {
@@ -321,63 +258,54 @@ async function postFaceAiJson<T>(path: string, body: any, authLike: any): Promis
   return parsed as T;
 }
 
-
-function sanitizeFacePromptForMode(text: string, mode: Mode): string {
-  const raw = cleanParam(text).replace(/\s+/g, " ").trim();
-  if (!raw || mode !== "image-to-image") return raw;
-
-  let cleaned = raw
-    .replace(/\bSTRICT IDENTITY LOCK\b/gi, "")
-    .replace(/\bSYSTEM PROMPT\b/gi, "")
-    .replace(/\bNEGATIVE PROMPT\b/gi, "")
-    .replace(/\bFORBIDDEN CHANGES?\b/gi, "")
-    .replace(/\bQUALITY REQUIREMENT\b/gi, "")
-    .replace(/\bTASK:\s*/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const sentences = cleaned
-    .split(/(?<=[.!?])\s+|\s*[;|]\s*/g)
-    .map((part) => part.trim())
+function isFacePricingAuthError(error: any): boolean {
+  const message = [
+    cleanParam(error?.message),
+    cleanParam(error?.body?.detail),
+    cleanParam(error?.body?.message),
+    cleanParam(error?.body?.error),
+  ]
     .filter(Boolean)
-    .filter((part) => {
-      const lower = part.toLowerCase();
-      return !(
-        lower.includes("different person") ||
-        lower.includes("new face") ||
-        lower.includes("gender-swap") ||
-        lower.includes("similar-looking person") ||
-        lower.includes("subordinate to this identity lock") ||
-        lower.includes("ignore only the conflicting") ||
-        lower.includes("do not generate") ||
-        lower.includes("forbidden")
-      );
-    });
+    .join(" | ")
+    .toLowerCase();
 
-  const safeBody = (sentences.join(" ") || cleaned || raw).replace(/\s+/g, " ").trim();
-  const lower = safeBody.toLowerCase();
-  const prefixed = lower.startsWith("keep the same person") || lower.startsWith("same person") || lower.startsWith("same identity")
-    ? safeBody
-    : `Keep the same person from the source photo. ${safeBody}`;
-
-  return prefixed.slice(0, 900).trim();
+  return (
+    message.includes("auth_required") ||
+    message.includes("invalid_token") ||
+    message.includes("missing_token") ||
+    message.includes("signature has expired") ||
+    message.includes("session expired") ||
+    message.includes("unauthorized")
+  );
 }
 
-function normalizeFaceEnhancerResult(result: PromptEnhancerResult, mode: Mode): PromptEnhancerResult {
-  if (mode !== "image-to-image") return result;
+async function postFacePricingPreviewDirect<T>(
+  studioInput: any,
+  _authLike: any
+): Promise<T> {
+  const url = `${FACE_BASE.replace(/\/+$/, "")}/api/face/creator/pricing/preview`;
+  const startedAt = Date.now();
 
-  const normalized: PromptEnhancerResult = {
-    ...result,
-    enhanced_input: sanitizeFacePromptForMode(String(result?.enhanced_input ?? ""), mode),
-  };
 
-  const alternatives = Array.isArray((result as any)?.alternatives) ? (result as any).alternatives : [];
-  (normalized as any).alternatives = alternatives.map((alt: any) => ({
-    ...alt,
-    text: sanitizeFacePromptForMode(String(alt?.text ?? ""), mode),
-  }));
+  try {
+    // Use the shared API client so pricing reads the latest access token from
+    // secure storage and performs the standard refresh-and-retry flow.
+    const parsed = await apiPreviewFacePricing(studioInput);
 
-  return normalized;
+
+    return parsed as T;
+  } catch (error: any) {
+    const message =
+      cleanParam(error?.message) ||
+      "Face pricing preview failed. Please try again.";
+
+
+    if (isFacePricingAuthError(error)) {
+      throw new Error("AUTH_REQUIRED");
+    }
+
+    throw error instanceof Error ? error : new Error(message);
+  }
 }
 
 function buildLocalFacePrompt(
@@ -403,20 +331,12 @@ function buildLocalFacePrompt(
           ? "premium editorial portrait, refined styling, cinematic realism, elegant lighting"
           : "high-quality portrait, realistic lighting, clean composition, culturally respectful";
 
-  if (modeValue === "image-to-image") {
-    return sanitizeFacePromptForMode(
-      dedupeParts([
-        userInput,
-        "Keep the exact same person from the source photo",
-        "change only the requested outfit, background, lighting, framing, or style",
-        aspect ? `optimized for ${aspect} aspect ratio` : "",
-        "realistic natural photo edit",
-      ]).join(", "),
-      "image-to-image"
-    );
-  }
-
-  const identityGuard = gender ? `${gender} presentation preserved` : "";
+  const identityGuard =
+    modeValue === "image-to-image"
+      ? "same person and identity preserved from the source photo"
+      : gender
+        ? `${gender} presentation preserved`
+        : "";
 
   return dedupeParts([
     userInput,
@@ -440,7 +360,7 @@ function buildLocalFaceEnhancement(
   const preservation = Number(lockedFields?.preservation_strength ?? 0);
   const sourceHint =
     cleanParam(lockedFields?.mode) === "image-to-image"
-      ? `Identity lock is ON. Face, eyes, nose, lips, jawline, eyebrows, skin tone, age, and natural facial features stay locked. Only requested outfit, glasses, beard, moustache, accessories, background, lighting, framing, or style changes may be applied.`
+      ? `Identity strength ${preservation.toFixed(2)} keeps the same person while allowing styling change.`
       : "The rewrite adds explicit framing, quality, and scene direction without changing your chosen identity inputs.";
 
   return {
@@ -655,6 +575,175 @@ function pickFinalPricingMessage(resp: any): string | null {
   if (state === "committed") return "Final charge recorded after execution.";
 
   return null;
+}
+
+function facePricingString(value: any): string {
+  return String(value ?? "").trim();
+}
+
+function facePricingNumber(value: any): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseFaceCreditLabel(value: any): string | null {
+  const raw = facePricingString(value);
+  return raw.toLowerCase().includes("credit") ? raw : null;
+}
+
+function pickFaceCreditLabel(raw: any): string | null {
+  return (
+    parseFaceCreditLabel(raw?.summary?.display_total) ||
+    parseFaceCreditLabel(raw?.summary?.estimated_credits_label) ||
+    parseFaceCreditLabel(raw?.pricing?.summary?.display_total) ||
+    parseFaceCreditLabel(raw?.pricing?.summary?.estimated_credits_label) ||
+    parseFaceCreditLabel(raw?.pricing_summary?.display_total) ||
+    parseFaceCreditLabel(raw?.pricing_summary?.estimated_credits_label) ||
+    null
+  );
+}
+
+function pickFaceMoneyEstimate(raw: any): { amount: number; currency: string } | null {
+  const amount =
+    facePricingNumber(raw?.estimated_amount) ??
+    facePricingNumber(raw?.amount) ??
+    facePricingNumber(raw?.pricing?.estimated_amount) ??
+    facePricingNumber(raw?.pricing?.amount) ??
+    facePricingNumber(raw?.pricing_summary?.estimated_amount) ??
+    facePricingNumber(raw?.pricing_summary?.amount) ??
+    facePricingNumber(raw?.summary?.estimated_amount) ??
+    facePricingNumber(raw?.summary?.amount) ??
+    facePricingNumber(raw?.pricing?.summary?.estimated_amount) ??
+    facePricingNumber(raw?.pricing?.summary?.amount) ??
+    facePricingNumber(raw?.pricing?.meta?.estimated_amount) ??
+    facePricingNumber(raw?.pricing?.meta?.amount) ??
+    facePricingNumber(raw?.meta?.estimated_amount) ??
+    facePricingNumber(raw?.meta?.amount);
+
+  if (amount == null) return null;
+
+  const currency =
+    facePricingString(raw?.currency) ||
+    facePricingString(raw?.pricing?.currency) ||
+    facePricingString(raw?.pricing_summary?.currency) ||
+    facePricingString(raw?.summary?.currency) ||
+    facePricingString(raw?.pricing?.summary?.currency) ||
+    facePricingString(raw?.pricing?.meta?.currency) ||
+    facePricingString(raw?.meta?.currency) ||
+    "USD";
+
+  return { amount, currency };
+}
+
+function joinFacePricingLabels(parts: Array<string | null | undefined>): string {
+  const output: string[] = [];
+  const seen = new Set<string>();
+
+  for (const part of parts) {
+    const value = facePricingString(part);
+    if (!value) continue;
+
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    output.push(value);
+  }
+
+  return output.join(", ");
+}
+
+function formatFaceMoney(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency || "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${currency || "USD"} ${amount.toFixed(2)}`;
+  }
+}
+
+function readFacePricingConfirmation(raw: any): { quote_id: string; preview_fingerprint?: string | null } | null {
+  const quoteId =
+    raw?.quote_id ||
+    raw?.pricing_confirmation?.quote_id ||
+    raw?.confirmation?.quote_id ||
+    raw?.pricing?.quote_id ||
+    null;
+
+  if (!quoteId) return null;
+
+  return {
+    quote_id: String(quoteId),
+    preview_fingerprint:
+      raw?.preview_fingerprint ||
+      raw?.pricing_confirmation?.preview_fingerprint ||
+      raw?.confirmation?.preview_fingerprint ||
+      raw?.pricing?.preview_fingerprint ||
+      null,
+  };
+}
+
+function buildFacePricingUi(raw: any) {
+  if (!raw) return null;
+
+  const confirmation = readFacePricingConfirmation(raw);
+  const creditEstimateLabel = pickFaceCreditLabel(raw) || "Price checked";
+  const money = pickFaceMoneyEstimate(raw);
+  const moneyEstimateLabel = money ? formatFaceMoney(money.amount, money.currency) : undefined;
+  const combinedEstimateLabel =
+    joinFacePricingLabels([creditEstimateLabel, moneyEstimateLabel]) ||
+    creditEstimateLabel;
+  const settlementMode = facePricingString(raw?.pricing?.settlement_mode || raw?.pricing?.settlementMode).toLowerCase();
+  const billingMode = facePricingString(raw?.pricing?.billing_mode || raw?.pricing?.billingMode).toLowerCase();
+  const insufficientBalance = Boolean(raw?.insufficient_balance || raw?.pricing?.insufficient_balance);
+  const postpaid = settlementMode === "postpaid" || billingMode === "postpaid";
+
+  return {
+    preview: !confirmation?.quote_id,
+    estimateLabel: combinedEstimateLabel,
+    primaryEstimateLabel: postpaid
+      ? joinFacePricingLabels([moneyEstimateLabel, creditEstimateLabel])
+      : combinedEstimateLabel,
+    secondaryEstimateLabel: postpaid ? creditEstimateLabel : moneyEstimateLabel,
+    creditEstimateLabel,
+    moneyEstimateLabel,
+    combinedEstimateLabel,
+    detailLabel: postpaid
+      ? `Estimated bill: ${moneyEstimateLabel ?? "—"} • Credits used: ${creditEstimateLabel}`
+      : `Credits charged: ${creditEstimateLabel} • Cash estimate: ${moneyEstimateLabel ?? "—"}`,
+    settlementLabel: insufficientBalance
+      ? "Not enough available credits for this run."
+      : postpaid
+        ? "Billed after completion through your postpaid account."
+        : "Covered by your available credits.",
+    planLabel:
+      facePricingString(raw?.pricing?.tier_code) ||
+      facePricingString(raw?.tier_code) ||
+      "Current plan",
+    availableLabel: postpaid ? "Billed after completion" : "Balance available",
+    ctaLabel: `Create Face — ${
+      postpaid
+        ? joinFacePricingLabels([moneyEstimateLabel, creditEstimateLabel])
+        : combinedEstimateLabel
+    }`,
+    insufficientBalance,
+    topUpVisible: insufficientBalance && !postpaid,
+    upgradeVisible: insufficientBalance && !postpaid,
+    raw,
+    confirmation,
+    pricing: {
+      settlementMode: postpaid ? "postpaid" : "prepaid",
+      settlement_mode: postpaid ? "postpaid" : "prepaid",
+      billingMode: postpaid ? "postpaid" : "bill",
+      billing_mode: postpaid ? "postpaid" : "bill",
+    },
+    pricingSummary: raw?.summary ?? raw?.pricing?.summary ?? null,
+  };
 }
 
 function Stepper({ step }: { step: 1 | 2 | 3 }) {
@@ -1106,7 +1195,7 @@ function ImageViewerModal({
     if (!cleanUri) return;
 
     try {
-      await shareUrl(cleanUri, { title: "DesiFaces • Face", message: "Generated face" });
+      await shareUrl(cleanUri, { title: "desifaces • Face", message: "Generated face" });
       return;
     } catch {}
 
@@ -1344,7 +1433,7 @@ export default function FaceStudioScreen() {
   const [pickedUri, setPickedUri] = useState<string | null>(null);
   const [sourceImageUrl, setSourceImageUrl] = useState<string | null>(null);
   const [sourceImageAssetId, setSourceImageAssetId] = useState<string | null>(null);
-  const [preservationStrength, setPreservationStrength] = useState(I2I_LOCKED_PRESERVATION_STRENGTH);
+  const [preservationStrength, setPreservationStrength] = useState(0.25);
 
   const [imageSafetyState, setImageSafetyState] = useState<ImageSafetyState>("idle");
   const [imageSafetyReason, setImageSafetyReason] = useState<string | null>(null);
@@ -1401,6 +1490,10 @@ export default function FaceStudioScreen() {
     setFinalPricingLabel(null);
     setFinalPricingState("estimated");
     setFinalPricingMessage(null);
+    setPricingPreviewRaw(null);
+    setPricingPreviewInputKey(null);
+    setCheckingPrice(false);
+    setPricingPreviewError(null);
 
     void queryClient.removeQueries({
       predicate: (query: any) => {
@@ -1436,6 +1529,10 @@ export default function FaceStudioScreen() {
   const [finalPricingLabel, setFinalPricingLabel] = useState<string | null>(null);
   const [finalPricingState, setFinalPricingState] = useState<"estimated" | "committed" | "released">("estimated");
   const [finalPricingMessage, setFinalPricingMessage] = useState<string | null>(null);
+  const [pricingPreviewRaw, setPricingPreviewRaw] = useState<any | null>(null);
+  const [pricingPreviewInputKey, setPricingPreviewInputKey] = useState<string | null>(null);
+  const [checkingPrice, setCheckingPrice] = useState(false);
+  const [pricingPreviewError, setPricingPreviewError] = useState<string | null>(null);
   const [workflowSummaryOpen, setWorkflowSummaryOpen] = useState(false);
   const [enhancerOpen, setEnhancerOpen] = useState(false);
   const [enhancerLoading, setEnhancerLoading] = useState(false);
@@ -1587,12 +1684,6 @@ export default function FaceStudioScreen() {
     }
   }, [mode, resetI2ISourceState]);
 
-  useEffect(() => {
-    if (mode === "image-to-image" && preservationStrength !== I2I_LOCKED_PRESERVATION_STRENGTH) {
-      setPreservationStrength(I2I_LOCKED_PRESERVATION_STRENGTH);
-    }
-  }, [mode, preservationStrength]);
-
   const regionLabel = zoneOptions.find((x) => x.code === zoneCode)?.label ?? "Select";
   const stateLabel = regionOptions.find((x) => x.code === regionCode)?.label ?? "Select";
   const contextLabel = contextOptions.find((x) => x.code === contextCode)?.label ?? "Optional";
@@ -1602,7 +1693,7 @@ export default function FaceStudioScreen() {
   const faceEnhancerLockedFields = useMemo(
     () => ({
       mode,
-      gender: mode === "image-to-image" ? undefined : gender,
+      gender,
       country: COUNTRY_LABEL,
       zone_code: zoneCode,
       zone_label: regionLabel,
@@ -1616,15 +1707,7 @@ export default function FaceStudioScreen() {
       shot_type_label: shotTypeLabel,
       aspect_ratio: aspectRatio,
       num_variants: numVariants,
-      preservation_strength: mode === "image-to-image" ? I2I_LOCKED_PRESERVATION_STRENGTH : undefined,
-      identity_lock: mode === "image-to-image",
-      identity_lock_level: mode === "image-to-image" ? I2I_IDENTITY_LOCK_LEVEL : undefined,
-      preserve_source_identity: mode === "image-to-image" ? true : undefined,
-      preserve_source_gender: mode === "image-to-image" ? true : undefined,
-      locked_identity_features: mode === "image-to-image" ? I2I_LOCKED_FEATURES : undefined,
-      request_only_editable_attributes: mode === "image-to-image" ? I2I_REQUEST_ONLY_EDITABLE_ATTRIBUTES : undefined,
-      allowed_changes: mode === "image-to-image" ? I2I_REQUEST_ONLY_EDITABLE_ATTRIBUTES : undefined,
-      forbidden_changes: mode === "image-to-image" ? I2I_FORBIDDEN_CHANGES : undefined,
+      preservation_strength: mode === "image-to-image" ? preservationStrength : undefined,
     }),
     [
       mode,
@@ -1652,8 +1735,8 @@ export default function FaceStudioScreen() {
   const canGenerate = useMemo(() => {
     const hasPrompt = prompt.trim().length > 0;
     if (!hasPrompt) return false;
-    if (mode === "image-to-image") return hasValidI2ISource;
     if (!gender || !zoneCode || !regionCode) return false;
+    if (mode === "image-to-image") return hasValidI2ISource;
     return true;
   }, [prompt, gender, zoneCode, regionCode, mode, hasValidI2ISource]);
 
@@ -1661,70 +1744,83 @@ export default function FaceStudioScreen() {
     prompt.trim().length > 0 &&
     !mdLoading &&
     !mdErr &&
-    (mode === "image-to-image" ? hasValidI2ISource : !!gender && !!zoneCode && !!regionCode);
+    !!gender &&
+    !!zoneCode &&
+    !!regionCode &&
+    hasValidI2ISource;
 
   const pricingPreviewEnabled = hasFacePricingAuth && pricingPreviewEligible;
 
-  const pricingQ = useFacePricingEstimate({
-    mode,
-    prompt,
-    numVariants,
-    preservationStrength,
-    sourceImageUrl,
-    sourceImageAssetId,
-    aspectRatio,
-    gender,
-    regionCode,
-    contextCode,
-    useCaseCode,
-    shotTypeCode,
-    enabled: pricingPreviewEnabled,
-  });
+  const buildFaceRequest = useCallback(() => {
+    const req: any = {
+      mode,
+      num_variants: numVariants,
+      user_prompt: prompt.trim(),
+      aspect_ratio: aspectRatio,
+    };
 
-  const rawPricing = pricingQ.data;
-  const pricing =
-    mode === "image-to-image" && !hasValidI2ISource
-      ? null
-      : rawPricing;
+    if (mode === "image-to-image") {
+      req.source_image_url = sourceImageUrl || undefined;
+      req.source_image_asset_id = sourceImageAssetId || undefined;
+      req.preservation_strength = preservationStrength;
+    } else {
+      req.gender = gender;
+      req.region_code = regionCode || undefined;
+      req.context_code = contextCode || undefined;
+      req.use_case = useCaseCode || undefined;
+      req.shot_type_code = shotTypeCode || undefined;
+    }
 
-  const pricingConfirmation = pricing?.confirmation ?? null;
-  const pricingReady = Boolean(pricingConfirmation?.quote_id);
-  const pricingHasResponse = pricing != null || pricingQ.data != null;
-
-  useEffect(() => {
-    if (!pricingPreviewEnabled) return;
-    if (pricingReady) return;
-    if (pricingHasResponse) return;
-    if (pricingQ.isFetching) return;
-
-    const t = setTimeout(() => {
-      pricingQ.refetch().catch(() => {});
-    }, 120);
-    return () => clearTimeout(t);
+    return req;
   }, [
-    pricingPreviewEnabled,
-    pricingReady,
-    pricingHasResponse,
-    pricingQ.isFetching,
-    pricingQ.refetch,
     mode,
-    prompt,
     numVariants,
-    preservationStrength,
+    prompt,
+    aspectRatio,
     sourceImageUrl,
     sourceImageAssetId,
-    aspectRatio,
+    preservationStrength,
     gender,
     regionCode,
     contextCode,
     useCaseCode,
     shotTypeCode,
   ]);
+
+  const currentPricingInputKey = useMemo(
+    () => JSON.stringify(buildFaceRequest()),
+    [buildFaceRequest]
+  );
+
+  useEffect(() => {
+    if (pricingPreviewError) setPricingPreviewError(null);
+
+    if (!pricingPreviewInputKey) return;
+    if (pricingPreviewInputKey === currentPricingInputKey) return;
+
+    setPricingPreviewRaw(null);
+    setPricingPreviewInputKey(null);
+    setFinalPricingLabel(null);
+  }, [currentPricingInputKey, pricingPreviewInputKey]);
+
+  const pricing = useMemo(() => {
+    if (!pricingPreviewRaw) return null;
+    if (pricingPreviewInputKey !== currentPricingInputKey) return null;
+    if (mode === "image-to-image" && !hasValidI2ISource) return null;
+    return buildFacePricingUi(pricingPreviewRaw);
+  }, [pricingPreviewRaw, pricingPreviewInputKey, currentPricingInputKey, mode, hasValidI2ISource]);
+
+  const pricingConfirmation = pricing?.confirmation ?? null;
+  const pricingReady =
+    Boolean(pricingConfirmation?.quote_id) &&
+    pricingPreviewInputKey === currentPricingInputKey;
+  const pricingHasResponse = pricing != null;
+
   const displayedEstimateLabel =
     finalPricingLabel ??
     pricing?.primaryEstimateLabel ??
     pricing?.estimateLabel ??
-    (pricingQ.isFetching ? "Refreshing estimate…" : "Enter prompt to see estimate");
+    (checkingPrice ? "Checking price…" : "Tap Check Price to see estimate");
   const isPostpaidPricing =
     ((() => {
       const settlementMode = cleanParam(pricing?.pricing?.settlementMode).toLowerCase();
@@ -1738,27 +1834,24 @@ export default function FaceStudioScreen() {
         availability.includes("billed after completion")
       );
     })());
-  const visiblePrimaryEstimate = isPostpaidPricing
-    ? cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || displayedEstimateLabel
-    : pricing?.creditEstimateLabel || displayedEstimateLabel;
-  const visibleSecondaryEstimate = isPostpaidPricing
-    ? (pricing?.creditEstimateLabel ?? undefined)
-    : (pricing?.moneyEstimateLabel ?? undefined);
   const visibleCreditEstimate = pricing?.creditEstimateLabel ?? null;
-  const visibleCashEstimate = cleanParam(finalPricingLabel) || pricing?.moneyEstimateLabel || null;
-  const visibleCombinedEstimate = dedupeParts([visibleCreditEstimate, visibleCashEstimate]).join(", ");
-  const createFaceCtaEstimateLabel =
-    visibleCombinedEstimate || cleanParam(displayedEstimateLabel);
-  const createFaceCtaLabel = pricing?.insufficientBalance
-    ? (pricing?.ctaLabel ?? (pricing?.topUpVisible ? "Top up credits" : pricing?.upgradeVisible ? "Upgrade plan" : "Not enough credits"))
-    : createFaceCtaEstimateLabel
-      ? `Create Face — ${createFaceCtaEstimateLabel}`
-      : "Create Face";
-  const displayedPricingDetail = visibleCombinedEstimate
-    ? `Estimated charge: ${visibleCombinedEstimate}`
-    : isPostpaidPricing
-      ? `Estimated bill: ${visibleCashEstimate ?? "—"}`
-      : `Credits charged: ${visibleCreditEstimate ?? "—"}`;
+  const visibleCashEstimate = pricing?.moneyEstimateLabel ?? null;
+  const visibleCombinedEstimate =
+    joinFacePricingLabels(
+      isPostpaidPricing
+        ? [visibleCashEstimate, visibleCreditEstimate]
+        : [visibleCreditEstimate, visibleCashEstimate]
+    ) || displayedEstimateLabel;
+  const visiblePrimaryEstimate =
+    cleanParam(finalPricingLabel) ||
+    visibleCombinedEstimate ||
+    displayedEstimateLabel;
+  const visibleSecondaryEstimate = isPostpaidPricing
+    ? visibleCreditEstimate || undefined
+    : visibleCashEstimate || undefined;
+  const displayedPricingDetail = isPostpaidPricing
+    ? `Estimated bill: ${visibleCashEstimate ?? "—"} • Credits used: ${visibleCreditEstimate ?? "—"}`
+    : `Credits charged: ${visibleCreditEstimate ?? "—"} • Cash estimate: ${visibleCashEstimate ?? "—"}`;
   const displayedSettlementLabel =
     isPostpaidPricing
       ? "Billed after completion through your postpaid account."
@@ -1878,11 +1971,10 @@ export default function FaceStudioScreen() {
         faceAiAuth
       );
 
-      const liveResult = response?.enhanced_input ? response : fallbackResult;
-      setEnhancerResult(normalizeFaceEnhancerResult(liveResult, mode));
+      setEnhancerResult(response?.enhanced_input ? response : fallbackResult);
       setEnhancerError(null);
     } catch {
-      setEnhancerResult(normalizeFaceEnhancerResult(fallbackResult, mode));
+      setEnhancerResult(fallbackResult);
       setEnhancerError("Live prompt enhancement is unavailable right now. Showing a smart local rewrite instead.");
     } finally {
       setEnhancerLoading(false);
@@ -2196,14 +2288,8 @@ export default function FaceStudioScreen() {
       return;
     }
 
-    if (mode === "image-to-image" && Math.abs(preservationStrength - I2I_LOCKED_PRESERVATION_STRENGTH) > 0.001) {
-      setPreservationStrength(I2I_LOCKED_PRESERVATION_STRENGTH);
-      setInlineStatus("I2I identity lock is strict. The source photo owns the person’s identity and gender presentation.");
-      return;
-    }
-
-    if (!pricingConfirmation?.quote_id) {
-      setInlineStatus("Pricing preview is not ready yet. Please wait a moment and try again.");
+    if (!pricingReady || !pricingConfirmation?.quote_id) {
+      setInlineStatus("Please tap Check Price before creating. Any setup change requires a fresh price check.");
       return;
     }
 
@@ -2229,33 +2315,7 @@ export default function FaceStudioScreen() {
     setCreatingJob(true);
 
     try {
-      const req: any = {
-        mode,
-        num_variants: numVariants,
-        user_prompt: sanitizeFacePromptForMode(prompt, mode),
-        gender: mode === "image-to-image" ? undefined : gender,
-        region_code: mode === "image-to-image" ? undefined : regionCode,
-        context_code: mode === "image-to-image" ? undefined : contextCode ?? undefined,
-        use_case: mode === "image-to-image" ? undefined : useCaseCode ?? undefined,
-        shot_type_code: mode === "image-to-image" ? undefined : shotTypeCode ?? undefined,
-        aspect_ratio: aspectRatio,
-        source_image_url: mode === "image-to-image" ? sourceImageUrl : null,
-        source_image_asset_id: mode === "image-to-image" ? sourceImageAssetId : null,
-        preservation_strength: mode === "image-to-image" ? I2I_LOCKED_PRESERVATION_STRENGTH : undefined,
-        identity_lock: mode === "image-to-image",
-        identity_lock_level: mode === "image-to-image" ? I2I_IDENTITY_LOCK_LEVEL : undefined,
-        preserve_source_identity: mode === "image-to-image" ? true : undefined,
-        preserve_source_gender: mode === "image-to-image" ? true : undefined,
-        gender_lock_mode: mode === "image-to-image" ? "preserve_from_source" : undefined,
-        locked_identity_features: mode === "image-to-image" ? I2I_LOCKED_FEATURES : undefined,
-        request_only_editable_attributes: mode === "image-to-image" ? I2I_REQUEST_ONLY_EDITABLE_ATTRIBUTES : undefined,
-        allowed_i2i_changes: mode === "image-to-image" ? I2I_REQUEST_ONLY_EDITABLE_ATTRIBUTES : undefined,
-        forbidden_i2i_changes: mode === "image-to-image" ? I2I_FORBIDDEN_CHANGES : undefined,
-        identity_lock_instructions:
-          mode === "image-to-image"
-            ? "Preserve the exact same human identity from the source image. Face, eyes, eye spacing, eyebrows, nose, lips, jawline, chin, cheekbones, skin tone, age appearance, hairline, expression, and gender presentation must not change. Do not beautify, reshape, de-age, slim, airbrush, or replace the face. Apply only user-requested changes to outfit, glasses, beard, moustache, accessories, background, environment, lighting, framing, camera, composition, or color grading. If the user did not request an attribute change, keep that attribute unchanged."
-            : undefined,
-      };
+      const req = buildFaceRequest();
 
       const created = await apiCreateFaceJob(req, pricingConfirmation);
       const id = created?.job_id;
@@ -2447,11 +2507,82 @@ export default function FaceStudioScreen() {
     }
   }, [openPlanScreen, pricing?.availableLabel, pricing?.planLabel, pricing?.settlementLabel]);
 
-  const waitingForEstimate =
-    canGenerate &&
-    pricingPreviewEnabled &&
-    !pricingReady &&
-    (!pricingHasResponse || pricingQ.isFetching);
+  const checkFacePrice = useCallback(async () => {
+    if (checkingPrice) return;
+
+    if (!canGenerate) {
+      setInlineStatus("Complete the Face Studio setup before checking price.");
+      return;
+    }
+
+    if (!hasFacePricingAuth) {
+      setInlineStatus("Please sign in before checking price.");
+      return;
+    }
+
+    if (mode === "image-to-image" && imageSafetyState === "checking") {
+      setInlineStatus("Image safety check is still running. Please wait.");
+      return;
+    }
+
+    if (mode === "image-to-image" && imageSafetyState !== "passed") {
+      setInlineStatus(imageSafetyReason || "Please choose a source image that passes content safety.");
+      return;
+    }
+
+    const req = buildFaceRequest();
+
+    setCheckingPrice(true);
+    setPricingPreviewError(null);
+    setPricingPreviewRaw(null);
+    setPricingPreviewInputKey(null);
+    setFinalPricingLabel(null);
+    setInlineStatus("Checking price…");
+
+    try {
+      const preview = await postFacePricingPreviewDirect<any>(req, faceAiAuth);
+      const ui = buildFacePricingUi(preview);
+
+      if (!ui?.confirmation?.quote_id) {
+        throw new Error("Pricing preview did not return a quote. Please try again.");
+      }
+
+      setPricingPreviewRaw(preview);
+      setPricingPreviewInputKey(currentPricingInputKey);
+      setFinalPricingLabel(ui.primaryEstimateLabel);
+      setInlineStatus(`Price checked: ${ui.primaryEstimateLabel}`);
+    } catch (e: any) {
+      const rawMessage =
+        cleanParam(e?.message) ||
+        "Pricing preview failed. Please try again.";
+      const authRequired =
+        rawMessage === "AUTH_REQUIRED" ||
+        isFacePricingAuthError(e);
+      const message = authRequired
+        ? "Your session expired. Please sign in again."
+        : rawMessage;
+
+      setPricingPreviewRaw(null);
+      setPricingPreviewInputKey(null);
+      setPricingPreviewError(message);
+      setFinalPricingLabel(null);
+      setInlineStatus(message);
+    } finally {
+      setCheckingPrice(false);
+    }
+  }, [
+    checkingPrice,
+    canGenerate,
+    hasFacePricingAuth,
+    mode,
+    imageSafetyState,
+    imageSafetyReason,
+    buildFaceRequest,
+    currentPricingInputKey,
+    faceAiAuth,
+  ]);
+
+  const waitingForEstimate = checkingPrice;
 
   const onPrimaryAction = useCallback(() => {
     if (pricing?.insufficientBalance) {
@@ -2470,6 +2601,7 @@ export default function FaceStudioScreen() {
   const generateDisabled =
     !canGenerate ||
     waitingForEstimate ||
+    !pricingReady ||
     creatingJob ||
     uploadingSource ||
     mdLoading ||
@@ -2486,49 +2618,18 @@ export default function FaceStudioScreen() {
         : mode === "image-to-image" && imageSafetyState === "error"
           ? imageSafetyReason || "Image safety validation failed. Please choose another photo."
           : mode === "image-to-image" && !sourceImageUrl && !sourceImageAssetId
-            ? "Upload a source photo that passes content safety to unlock the estimate and enable Generate."
+            ? "Upload a source photo that passes content safety before checking price."
             : canGenerate && !hasFacePricingAuth
-              ? "We’re still syncing your sign-in state for live pricing. Please wait a moment."
-              : canGenerate &&
-                pricingPreviewEnabled &&
-                !pricingReady &&
-                pricingQ.isFetching
-                  ? "Refreshing estimate for your current setup…"
-                  : canGenerate &&
-                    pricingPreviewEnabled &&
-                    !pricingReady &&
-                    !pricingHasResponse &&
-                    !creatingJob &&
-                    !mdLoading &&
-                    !mdErr
-                      ? "We’re still preparing the estimate for this edit. Please wait a moment."
-                      : canGenerate &&
-                        pricingPreviewEnabled &&
-                        !pricingReady &&
-                        !!pricingQ.error
-                        ? "We couldn’t load the live estimate. Please adjust the setup or try again."
-                        : null;
+              ? "We’re still syncing your sign-in state for pricing. Please wait a moment."
+              : canGenerate && checkingPrice
+                ? "Checking price for your current setup…"
+                : canGenerate && pricingPreviewError
+                  ? pricingPreviewError
+                  : canGenerate && pricingPreviewEnabled && !pricingReady
+                    ? "Tap Check Price to preview credits before creating."
+                    : null;
 
   useEffect(() => {
-    console.log("[DF_FACE_PRICING_GATE]", {
-      hasFacePricingAuth,
-      pricingPreviewEligible,
-      pricingPreviewEnabled,
-      canGenerate,
-      pricingReady,
-      pricingHasResponse,
-      pricingFetching: pricingQ.isFetching,
-      pricingError: pricingQ.error ? String((pricingQ.error as any)?.message || pricingQ.error) : null,
-      mode,
-      hasPrompt: prompt.trim().length > 0,
-      gender: mode === "image-to-image" ? "source-controlled" : gender,
-      zoneCode: mode === "image-to-image" ? "not-used-for-i2i" : zoneCode,
-      regionCode: mode === "image-to-image" ? "not-used-for-i2i" : regionCode,
-      hasValidI2ISource,
-      sourceImageUrl: !!sourceImageUrl,
-      sourceImageAssetId: !!sourceImageAssetId,
-      imageSafetyState,
-    });
   }, [
     hasFacePricingAuth,
     pricingPreviewEligible,
@@ -2536,8 +2637,8 @@ export default function FaceStudioScreen() {
     canGenerate,
     pricingReady,
     pricingHasResponse,
-    pricingQ.isFetching,
-    pricingQ.error,
+    checkingPrice,
+    pricingPreviewError,
     mode,
     prompt,
     gender,
@@ -2570,20 +2671,15 @@ export default function FaceStudioScreen() {
                 title: "Blocked by content safety",
                 message:
                   imageSafetyReason ||
-                  "This source photo did not pass DesiFaces content safety checks.",
+                  "This source photo did not pass desifaces content safety checks.",
               }
             : imageSafetyState === "error"
               ? {
                   tone: "error" as const,
-                  title:
-                    imageSafetyReason?.toLowerCase().includes("upload") ||
-                    imageSafetyReason?.toLowerCase().includes("network") ||
-                    imageSafetyReason?.toLowerCase().includes("post ")
-                      ? "Source image upload failed"
-                      : "Image validation failed",
+                  title: "Safety validation failed",
                   message:
                     imageSafetyReason ||
-                    "We couldn’t validate or upload this image. Please try another photo.",
+                    "We couldn’t validate this image. Please try another photo.",
                 }
               : {
                   tone: "neutral" as const,
@@ -2705,136 +2801,14 @@ const liveBillingValueLabel =
               />
             </View>
           </GlassCard>
-          {mode === "image-to-image" && (
-            <GlassCard>
-              <SectionTitle
-                title="I2I source image"
-                subtitle="Upload a source photo first. DesiFaces will safety-check it, upload it, then enable Image-to-Image generation."
-              />
-
-              <Pressable
-                onPress={pickImage}
-                disabled={uiLocked || creatingJob || uploadingSource || imageSafetyState === "checking"}
-                style={{
-                  marginTop: 12,
-                  minHeight: 52,
-                  borderRadius: 16,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderWidth: 1,
-                  borderColor: "rgba(248,184,72,0.42)",
-                  backgroundColor: "rgba(232,152,56,0.20)",
-                  opacity: uiLocked || creatingJob || uploadingSource || imageSafetyState === "checking" ? 0.72 : 1,
-                  paddingHorizontal: 14,
-                }}
-              >
-                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 14 }}>
-                  {uploadingSource
-                    ? imageSafetyState === "checking"
-                      ? "Checking Source Image…"
-                      : "Uploading Source Image…"
-                    : pickedUri || sourceImageUrl
-                      ? "Change Source Image"
-                      : "Upload Source Image"}
-                </Text>
-                <Text
-                  style={{
-                    color: "rgba(248,216,104,0.78)",
-                    fontWeight: "800",
-                    fontSize: 11,
-                    marginTop: 4,
-                    textAlign: "center",
-                  }}
-                >
-                  Required for I2I / Edit Face
-                </Text>
-              </Pressable>
-
-              <View
-                style={{
-                  marginTop: 12,
-                  borderRadius: 14,
-                  borderWidth: 1,
-                  borderColor:
-                    imageSafetyBanner?.tone === "success"
-                      ? "rgba(120,255,180,0.20)"
-                      : imageSafetyBanner?.tone === "error"
-                        ? "rgba(255,120,120,0.24)"
-                        : imageSafetyBanner?.tone === "info"
-                          ? "rgba(120,180,255,0.20)"
-                          : "rgba(255,255,255,0.10)",
-                  backgroundColor:
-                    imageSafetyBanner?.tone === "success"
-                      ? "rgba(120,255,180,0.08)"
-                      : imageSafetyBanner?.tone === "error"
-                        ? "rgba(255,120,120,0.08)"
-                        : imageSafetyBanner?.tone === "info"
-                          ? "rgba(120,180,255,0.08)"
-                          : "rgba(255,255,255,0.04)",
-                  padding: 12,
-                }}
-              >
-                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 12 }}>
-                  {imageSafetyBanner?.title}
-                </Text>
-                <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 6, fontSize: 12 }}>
-                  {imageSafetyBanner?.message}
-                </Text>
-              </View>
-
-              {!!(pickedUri || sourceImageUrl) && (
-                <View
-                  style={{
-                    marginTop: 12,
-                    borderRadius: 14,
-                    overflow: "hidden",
-                    borderWidth: 1,
-                    borderColor: DF.border,
-                    backgroundColor: BG2,
-                    height: 240,
-                  }}
-                >
-                  <Image
-                    source={{ uri: pickedUri ?? sourceImageUrl ?? "" }}
-                    style={{ width: "100%", height: "100%" }}
-                    cachePolicy="none"
-                    contentFit="contain"
-                    contentPosition="center"
-                  />
-                </View>
-              )}
-
-              <View
-                style={{
-                  marginTop: 12,
-                  borderRadius: 14,
-                  borderWidth: 1,
-                  borderColor: "rgba(120,255,180,0.22)",
-                  backgroundColor: "rgba(120,255,180,0.08)",
-                  padding: 12,
-                }}
-              >
-                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>
-                  Identity lock is always ON for I2I
-                </Text>
-                <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6, fontSize: 12 }}>
-                  Locked: face, eyes, nose, lips, jawline, eyebrows, skin tone, age, and gender presentation.
-                </Text>
-                <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 6, fontSize: 12 }}>
-                  DesiFaces will only change outfit, glasses, beard/moustache, accessories, background, lighting, framing, or style when you explicitly ask. Do not ask for face, age, skin tone, jawline, eyes, or lips changes in Strict Edit.
-                </Text>
-              </View>
-            </GlassCard>
-          )}
-
 
           <GlassCard>
             <SectionTitle
-              title={mode === "image-to-image" ? "Edit controls" : "Creative setup"}
-              subtitle={mode === "image-to-image" ? "Strict Edit keeps the person locked. Only frame and output count are exposed." : "Use compact controls to shape location, framing, and intent."}
+              title="Creative setup"
+              subtitle="Use compact controls to shape location, framing, and intent."
             />
 
-            <View style={{ marginTop: 12, gap: creativeGridGap, display: mode === "image-to-image" ? "none" : "flex" }}>
+            <View style={{ marginTop: 12, gap: creativeGridGap }}>
               <View
                 style={{
                   flexDirection: creativeSingleColumn ? "column" : "row",
@@ -3015,7 +2989,7 @@ const liveBillingValueLabel =
               subtitle={
                 mode === "text-to-image"
                   ? "Describe the look, vibe, styling, lighting, and scene."
-                  : "Describe only outfit, background, lighting, framing, or style changes. Identity stays locked."
+                  : "Keep the same person, then describe what should change."
               }
               right={
                 <Pressable
@@ -3058,26 +3032,21 @@ const liveBillingValueLabel =
                 placeholder={
                   mode === "text-to-image"
                     ? "Luxury editorial portrait, elegant Indian outfit, soft golden-hour light, clean premium background…"
-                    : "Same person. Change only the outfit to beach casual and the background to a beach-side restaurant…"
+                    : "Same person, premium editorial styling, refined outfit, cinematic lighting, upscale background…"
                 }
                 placeholderTextColor="rgba(248,216,104,0.35)"
                 multiline
                 editable={!uiLocked && !creatingJob}
-                scrollEnabled
                 style={{
                   color: DF.text,
                   fontWeight: "700",
-                  height: 128,
-                  minHeight: 128,
-                  maxHeight: 128,
-                  lineHeight: 20,
-                  padding: 0,
+                  minHeight: 104,
                   textAlignVertical: "top",
                 }}
               />
             </View>
 
-            <View style={{ flexDirection: "row", gap: 10, marginTop: 12, display: mode === "image-to-image" ? "none" : "flex" }}>
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
               <Pressable
                 onPress={() => setGender("female")}
                 disabled={uiLocked}
@@ -3118,6 +3087,115 @@ const liveBillingValueLabel =
             </View>
           </GlassCard>
 
+          {mode === "image-to-image" && (
+            <GlassCard>
+              <SectionTitle
+                title="Identity lock"
+                subtitle="Upload a source photo and tune how closely the result follows it."
+              />
+
+              <Pressable
+                onPress={pickImage}
+                disabled={uiLocked || creatingJob || imageSafetyState === "checking"}
+                style={{
+                  marginTop: 12,
+                  height: 46,
+                  borderRadius: 14,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderWidth: 1,
+                  borderColor: "rgba(248,184,72,0.35)",
+                  backgroundColor: "rgba(232,152,56,0.18)",
+                  opacity: uiLocked || imageSafetyState === "checking" ? 0.75 : 1,
+                }}
+              >
+                <Text style={{ color: DF.text, fontWeight: "900" }}>
+                  {uploadingSource
+                    ? imageSafetyState === "checking"
+                      ? "Checking Safety…"
+                      : "Uploading…"
+                    : pickedUri || sourceImageUrl
+                      ? "Change Source Photo"
+                      : "Upload Source Photo"}
+                </Text>
+              </Pressable>
+
+              <View
+                style={{
+                  marginTop: 12,
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor:
+                    imageSafetyBanner?.tone === "success"
+                      ? "rgba(120,255,180,0.20)"
+                      : imageSafetyBanner?.tone === "error"
+                        ? "rgba(255,120,120,0.24)"
+                        : imageSafetyBanner?.tone === "info"
+                          ? "rgba(120,180,255,0.20)"
+                          : "rgba(255,255,255,0.10)",
+                  backgroundColor:
+                    imageSafetyBanner?.tone === "success"
+                      ? "rgba(120,255,180,0.08)"
+                      : imageSafetyBanner?.tone === "error"
+                        ? "rgba(255,120,120,0.08)"
+                        : imageSafetyBanner?.tone === "info"
+                          ? "rgba(120,180,255,0.08)"
+                          : "rgba(255,255,255,0.04)",
+                  padding: 12,
+                }}
+              >
+                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 12 }}>
+                  {imageSafetyBanner?.title}
+                </Text>
+                <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 6, fontSize: 12 }}>
+                  {imageSafetyBanner?.message}
+                </Text>
+              </View>
+
+              {!!(pickedUri || sourceImageUrl) && (
+                <View
+                  style={{
+                    marginTop: 12,
+                    borderRadius: 14,
+                    overflow: "hidden",
+                    borderWidth: 1,
+                    borderColor: DF.border,
+                    backgroundColor: BG2,
+                    height: 240,
+                  }}
+                >
+                  <Image
+                    source={{ uri: pickedUri ?? sourceImageUrl ?? "" }}
+                    style={{ width: "100%", height: "100%" }}
+                    cachePolicy="none"
+              contentFit="contain"
+                    contentPosition="center"
+                  />
+                </View>
+              )}
+
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>Identity strength</Text>
+                <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 4, fontSize: 12 }}>
+                  Lower = more creative change. Higher = closer to the source photo.
+                </Text>
+
+                <View style={{ marginTop: 8 }}>
+                  <Slider
+                    minimumValue={0}
+                    maximumValue={1}
+                    value={preservationStrength}
+                    onValueChange={setPreservationStrength}
+                    disabled={uiLocked || imageSafetyState === "checking"}
+                  />
+                  <Text style={{ color: DF.muted, fontWeight: "800", marginTop: 6, fontSize: 12 }}>
+                    preservation_strength: {preservationStrength.toFixed(2)} (recommended 0.15–0.35)
+                  </Text>
+                </View>
+              </View>
+            </GlassCard>
+          )}
+
           {!!previewPendingMessage && (
             <GlassCard style={{ padding: 12 }}>
               <Text style={{ color: DF.text, fontWeight: "800", fontSize: 12 }}>
@@ -3130,8 +3208,13 @@ const liveBillingValueLabel =
             <GlassCard style={{ padding: 12 }}>
               <Text style={{ color: DF.text, fontWeight: "900", fontSize: 13 }}>Estimate</Text>
               <Text style={{ color: DF.text, fontWeight: "800", marginTop: 8, fontSize: 12 }}>
-                Estimated charge: {visibleCombinedEstimate || (visibleCashEstimate ?? visibleCreditEstimate ?? "—")}
+                {isPostpaidPricing ? "Estimated bill" : "Credits charged"}: {isPostpaidPricing ? (visibleCashEstimate ?? "—") : (visibleCreditEstimate ?? "—")}
               </Text>
+              {!!(isPostpaidPricing ? visibleCreditEstimate : visibleCashEstimate) && (
+                <Text style={{ color: DF.text, fontWeight: "800", marginTop: 6, fontSize: 12 }}>
+                  {isPostpaidPricing ? "Credits used" : "Cash estimate"}: {isPostpaidPricing ? visibleCreditEstimate : visibleCashEstimate}
+                </Text>
+              )}
               <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 6, fontSize: 12 }}>
                 {pricing.settlementLabel}
               </Text>
@@ -3187,6 +3270,25 @@ const liveBillingValueLabel =
           )}
 
           <Pressable
+            onPress={checkFacePrice}
+            disabled={!canGenerate || checkingPrice || creatingJob || uploadingSource || mdLoading || !!mdErr}
+            style={{
+              borderRadius: 18,
+              paddingVertical: 14,
+              alignItems: "center",
+              justifyContent: "center",
+              borderWidth: 1,
+              borderColor: "rgba(248,184,72,0.35)",
+              backgroundColor: pricingReady ? "rgba(120,255,180,0.12)" : "rgba(232,152,56,0.16)",
+              opacity: !canGenerate || checkingPrice || creatingJob || uploadingSource || mdLoading || !!mdErr ? 0.58 : 1,
+            }}
+          >
+            <Text style={{ color: DF.text, fontWeight: "900", fontSize: 15 }}>
+              {checkingPrice ? "Checking price…" : pricingReady ? "Price checked" : "Check Price"}
+            </Text>
+          </Pressable>
+
+          <Pressable
             onPress={onPrimaryAction}
             disabled={generateDisabled}
             style={{
@@ -3210,13 +3312,20 @@ const liveBillingValueLabel =
                 <Text style={{ color: DF.text, fontWeight: "900" }}>Starting job…</Text>
               </View>
             ) : (
-              <Text
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.78}
-                style={{ color: DF.text, fontWeight: "900", fontSize: 15 }}
-              >
-                {createFaceCtaLabel}
+              <Text style={{ color: DF.text, fontWeight: "900", fontSize: 15 }}>
+                {pricing?.insufficientBalance
+                  ? (pricing?.ctaLabel ??
+                    (pricing?.topUpVisible
+                      ? "Top up credits"
+                      : pricing?.upgradeVisible
+                        ? "Upgrade plan"
+                        : "Not enough credits"))
+                  : pricingReady
+                    ? (pricing?.ctaLabel ??
+                      (visibleCombinedEstimate
+                        ? `Create Face — ${visibleCombinedEstimate}`
+                        : "Create Face"))
+                    : "Create Face"}
               </Text>
             )}
           </Pressable>
@@ -3586,7 +3695,7 @@ const liveBillingValueLabel =
                 {!!(finalPricingLabel ?? pricing?.estimateLabel) && (
                   <>
                     <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>
-                      • Estimated charge: {visibleCombinedEstimate || (visibleCashEstimate ?? visibleCreditEstimate ?? "—")}
+                      • {isPostpaidPricing ? "Estimated bill" : "Credits charged"}: {isPostpaidPricing ? (visibleCashEstimate ?? "—") : (visibleCreditEstimate ?? "—")}
                     </Text>
                     <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 12 }}>
                       • Settlement: {pricing?.settlementLabel ?? "Estimate shown before the run. Final pricing is confirmed after completion."}
@@ -3669,7 +3778,7 @@ const liveBillingValueLabel =
           void requestPromptEnhancement();
         }}
         onApply={(nextText) => {
-          setPrompt(sanitizeFacePromptForMode(nextText, mode));
+          setPrompt(nextText);
           setEnhancerOpen(false);
           setInlineStatus("Enhanced prompt applied. Review it and generate when ready.");
         }}

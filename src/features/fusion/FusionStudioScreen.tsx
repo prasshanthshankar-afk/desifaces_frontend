@@ -75,6 +75,8 @@ function cleanParam(v: any): string {
 }
 
 function logFusionStudioFlow(step: string, payload: any) {
+  if (!__DEV__) return;
+
   try {
     console.log("[DF_FLOW][FusionStudio]", step, JSON.stringify(payload, null, 2));
   } catch {
@@ -522,22 +524,90 @@ function formatCreditEstimateLabel(credits: number): string {
 }
 
 function readBackendCreditEstimate(raw: any): number | null {
-  // Backend/database only. Do not read unit-count fields here;
-  // those can be quantity fields such as seconds, segments, or variants.
-  return (
-    asEstimateNumber(raw?.estimated_credits) ??
-    asEstimateNumber(raw?.credits_used) ??
-    asEstimateNumber(raw?.reserved_credits) ??
-    asEstimateNumber(raw?.total_credits) ??
-    asEstimateNumber(raw?.pricing?.estimated_credits) ??
-    asEstimateNumber(raw?.pricing?.credits_used) ??
-    asEstimateNumber(raw?.pricing?.reserved_credits) ??
-    asEstimateNumber(raw?.pricing?.total_credits) ??
-    asEstimateNumber(raw?.pricing_summary?.estimated_credits) ??
-    asEstimateNumber(raw?.pricing_summary?.credits_used) ??
-    asEstimateNumber(raw?.pricing_summary?.reserved_credits) ??
-    asEstimateNumber(raw?.pricing_summary?.total_credits)
-  );
+  /*
+   * Read only backend-authoritative credit totals.
+   *
+   * Do not use estimated_units: Fusion returns job/bucket quantity there,
+   * not the customer credit charge.
+   */
+  const candidates = [
+    raw?.estimated_credits,
+    raw?.credits_used,
+    raw?.reserved_credits,
+    raw?.total_credits,
+
+    raw?.meta?.estimated_credits,
+    raw?.meta?.credits_used,
+    raw?.meta?.reserved_credits,
+    raw?.meta?.total_credits,
+
+    raw?.pricing?.estimated_credits,
+    raw?.pricing?.credits_used,
+    raw?.pricing?.reserved_credits,
+    raw?.pricing?.total_credits,
+
+    raw?.pricing?.meta?.estimated_credits,
+    raw?.pricing?.meta?.credits_used,
+    raw?.pricing?.meta?.reserved_credits,
+    raw?.pricing?.meta?.total_credits,
+
+    raw?.pricing?.pricing?.estimated_credits,
+    raw?.pricing?.pricing?.credits_used,
+    raw?.pricing?.pricing?.reserved_credits,
+    raw?.pricing?.pricing?.total_credits,
+
+    raw?.pricing?.pricing?.meta?.estimated_credits,
+    raw?.pricing?.pricing?.meta?.credits_used,
+    raw?.pricing?.pricing?.meta?.reserved_credits,
+    raw?.pricing?.pricing?.meta?.total_credits,
+
+    raw?.pricing_summary?.estimated_credits,
+    raw?.pricing_summary?.credits_used,
+    raw?.pricing_summary?.reserved_credits,
+    raw?.pricing_summary?.total_credits,
+
+    raw?.summary?.estimated_credits,
+    raw?.summary?.credits_used,
+    raw?.summary?.reserved_credits,
+    raw?.summary?.total_credits,
+  ];
+
+  for (const candidate of candidates) {
+    const value = asEstimateNumber(candidate);
+    if (value != null) return value;
+  }
+
+  /*
+   * Defensive fallback: sum authoritative pricing line credits when the
+   * backend does not project total_credits onto the enclosing response.
+   */
+  const lineGroups = [
+    raw?.meta?.lines,
+    raw?.pricing?.meta?.lines,
+    raw?.pricing?.pricing?.meta?.lines,
+  ];
+
+  for (const lines of lineGroups) {
+    if (!Array.isArray(lines) || lines.length === 0) continue;
+
+    let total = 0;
+    let found = false;
+
+    for (const line of lines) {
+      const lineCredits =
+        asEstimateNumber(line?.line_credits) ??
+        asEstimateNumber(line?.lineCredits);
+
+      if (lineCredits == null) continue;
+
+      total += lineCredits;
+      found = true;
+    }
+
+    if (found) return total;
+  }
+
+  return null;
 }
 
 function readBackendMoneyEstimate(raw: any): { amount: number; currency: string } | null {
@@ -1796,6 +1866,8 @@ export default function FusionStudioScreen() {
         const creditUnits = readBackendCreditEstimate(raw);
         const money = readBackendMoneyEstimate(raw);
 
+
+
         if (!featureBlocked && (creditUnits == null || !money || !confirmation?.quote_id)) {
           throw new Error("Pricing preview unavailable. Backend did not return a complete billable fusion quote.");
         }
@@ -2595,7 +2667,7 @@ useEffect(() => {
   const onShare = useCallback(async () => {
     if (!videoUrl) return;
     try {
-      await shareUrl(videoUrl, { title: `DesiFaces • ${modeShortTitle(videoMode)}`, message: "Generated video" });
+      await shareUrl(videoUrl, { title: `desifaces • ${modeShortTitle(videoMode)}`, message: "Generated video" });
     } catch {
       await openLink(videoUrl);
     }

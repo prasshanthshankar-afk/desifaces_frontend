@@ -17,7 +17,11 @@ import { Image } from "expo-image";
 import { useLocalSearchParams, router } from "expo-router";
 import { useIsFocused } from "@react-navigation/native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
+import {
+  createAudioPlayer,
+  setAudioModeAsync,
+  setIsAudioActiveAsync,
+} from "expo-audio";
 
 import { DF } from "../../core/theme/colors";
 import DFHeader from "../../core/ui/DFHeader";
@@ -26,7 +30,6 @@ import { shareUrl } from "../../core/share/share";
 import { saveCreateFlowContext } from "../../core/media/createFlow";
 import { useResolvedPricingDisplay } from "../../core/pricing/resolvePricingDisplay";
 import { api } from "../../core/api/client";
-import { endpoints } from "../../core/api/endpoints";
 import { AUDIO_BASE, FACE_BASE } from "../../core/config/env";
 import { derivePricingUiSummary } from "../../core/pricing/pricingSummary";
 
@@ -55,7 +58,14 @@ import {
   UiVoice,
 } from "./api/masterdataAudio";
 
-import { apiGetTtsJobStatus, TTSCreateRequest, VariantAudio } from "./api/creatorAudio";
+import {
+  apiCreateTtsJob,
+  apiGetTtsJobStatus,
+  previewAudioTtsPricing,
+  type AudioGender,
+  type TTSCreateRequest,
+  type VariantAudio,
+} from "./api/creatorAudio";
 
 type Opt = { code: string; label: string };
 
@@ -67,6 +77,22 @@ function clamp01(x: number) {
 function cleanParam(v: any): string {
   if (Array.isArray(v)) v = v[0];
   return String(v ?? "").trim().replace(/^"+|"+$/g, "");
+}
+
+function normalizeAudioGender(value: unknown): AudioGender {
+  const raw = cleanParam(value).toLowerCase();
+
+  if (raw === "female" || raw === "f" || raw === "woman" || raw === "girl") {
+    return "female";
+  }
+  if (raw === "male" || raw === "m" || raw === "man" || raw === "boy") {
+    return "male";
+  }
+  if (raw === "neutral" || raw === "nonbinary" || raw === "non-binary") {
+    return "neutral";
+  }
+
+  return "unspecified";
 }
 
 function encodeNavUrl(url: string) {
@@ -158,6 +184,8 @@ function normalizeIncomingMediaUrl(raw: unknown, params: Record<string, any>) {
 }
 
 function logAudioStudioFlow(step: string, payload: any) {
+  if (!__DEV__) return;
+
   try {
     console.log("[DF_FLOW][AudioStudio]", step, JSON.stringify(payload, null, 2));
   } catch {
@@ -319,9 +347,95 @@ async function resolveVariantDuration(variant: any): Promise<UiAudioDuration> {
   return readAudioDuration(probed);
 }
 
+type AudioFlowMetadata = {
+  sourceScriptText: string;
+  finalSynthesisText: string;
+  speakerGender: AudioGender;
+  voiceGender: AudioGender;
+  voiceLocale: string;
+  translationProvider: string;
+  translationModel: string;
+};
+
+function readAudioFlowMetadata(
+  source: any,
+  fallback: {
+    sourceScriptText: string;
+    speakerGender: AudioGender;
+    voiceGender: AudioGender;
+    voiceLocale: string;
+  }
+): AudioFlowMetadata {
+  const sourceScriptText =
+    cleanParam(source?.source_script_text) ||
+    cleanParam(source?.sourceScriptText) ||
+    fallback.sourceScriptText;
+
+  const finalSynthesisText =
+    cleanParam(source?.final_synthesis_text) ||
+    cleanParam(source?.translated_text) ||
+    cleanParam(source?.scriptText) ||
+    sourceScriptText;
+
+  return {
+    sourceScriptText,
+    finalSynthesisText,
+    speakerGender:
+      normalizeAudioGender(source?.speaker_gender ?? source?.speakerGender) !== "unspecified"
+        ? normalizeAudioGender(source?.speaker_gender ?? source?.speakerGender)
+        : fallback.speakerGender,
+    voiceGender:
+      normalizeAudioGender(source?.voice_gender ?? source?.voiceGender) !== "unspecified"
+        ? normalizeAudioGender(source?.voice_gender ?? source?.voiceGender)
+        : fallback.voiceGender,
+    voiceLocale:
+      cleanParam(source?.voice_locale) ||
+      cleanParam(source?.voiceLocale) ||
+      fallback.voiceLocale,
+    translationProvider:
+      cleanParam(source?.translation_provider) ||
+      cleanParam(source?.translationProvider),
+    translationModel:
+      cleanParam(source?.translation_model) ||
+      cleanParam(source?.translationModel),
+  };
+}
+
 function normalizeAudioVariants(status: any): VariantAudio[] {
   const vars = status?.variants || status?.outputs || [];
   if (!Array.isArray(vars)) return [];
+
+  const payload = status?.payload ?? {};
+  const ttsMeta = payload?.tts_meta ?? {};
+
+  const statusMetadata = {
+    final_synthesis_text:
+      cleanParam(payload?.final_synthesis_text) ||
+      cleanParam(payload?.translated_text) ||
+      cleanParam(ttsMeta?.translated_text) ||
+      cleanParam(status?.final_synthesis_text),
+    source_script_text:
+      cleanParam(payload?.source_script_text) ||
+      cleanParam(payload?.text) ||
+      cleanParam(status?.source_script_text),
+    translated_text:
+      cleanParam(payload?.translated_text) ||
+      cleanParam(ttsMeta?.translated_text),
+    speaker_gender:
+      normalizeAudioGender(payload?.speaker_gender ?? ttsMeta?.speaker_gender),
+    voice_gender:
+      normalizeAudioGender(payload?.voice_gender ?? ttsMeta?.voice_gender),
+    voice_locale:
+      cleanParam(payload?.voice_locale) ||
+      cleanParam(ttsMeta?.voice_locale),
+    translation_provider:
+      cleanParam(payload?.translation_provider) ||
+      cleanParam(ttsMeta?.translation_provider),
+    translation_model:
+      cleanParam(payload?.translation_model) ||
+      cleanParam(ttsMeta?.translation_model),
+  };
+
   return vars
     .map((v: any) => {
       const duration = readAudioDuration(v, status);
@@ -332,6 +446,38 @@ function normalizeAudioVariants(status: any): VariantAudio[] {
         bytes: v?.bytes ?? null,
         duration_ms: duration.duration_ms ?? null,
         duration_sec: duration.duration_sec ?? null,
+        final_synthesis_text:
+          cleanParam(v?.final_synthesis_text) ||
+          statusMetadata.final_synthesis_text ||
+          null,
+        source_script_text:
+          cleanParam(v?.source_script_text) ||
+          statusMetadata.source_script_text ||
+          null,
+        translated_text:
+          cleanParam(v?.translated_text) ||
+          statusMetadata.translated_text ||
+          null,
+        speaker_gender:
+          normalizeAudioGender(v?.speaker_gender) !== "unspecified"
+            ? normalizeAudioGender(v?.speaker_gender)
+            : statusMetadata.speaker_gender,
+        voice_gender:
+          normalizeAudioGender(v?.voice_gender) !== "unspecified"
+            ? normalizeAudioGender(v?.voice_gender)
+            : statusMetadata.voice_gender,
+        voice_locale:
+          cleanParam(v?.voice_locale) ||
+          statusMetadata.voice_locale ||
+          null,
+        translation_provider:
+          cleanParam(v?.translation_provider) ||
+          statusMetadata.translation_provider ||
+          null,
+        translation_model:
+          cleanParam(v?.translation_model) ||
+          statusMetadata.translation_model ||
+          null,
       };
     })
     .filter((v: any) => !!cleanParam(v.audio_url));
@@ -573,8 +719,8 @@ function isUnauthorized(e: any): boolean {
   );
 }
 
-function readVoiceGender(v: UiVoice | undefined | null): string {
-  return String((v as any)?.raw?.gender ?? (v as any)?.gender ?? "").toLowerCase();
+function readVoiceGender(v: UiVoice | undefined | null): AudioGender {
+  return normalizeAudioGender((v as any)?.raw?.gender ?? (v as any)?.gender);
 }
 
 function pickPricingLabel(resp: any): string | undefined {
@@ -678,7 +824,7 @@ function formatCreditEstimateLabel(credits: number): string {
 function readBackendCreditEstimate(raw: any): number | null {
   // Backend/database only. Do not read unit-count fields here;
   // those can be quantity fields such as characters, seconds, or variants.
-  return (
+  const directEstimate =
     asEstimateNumber(raw?.estimated_credits) ??
     asEstimateNumber(raw?.credits_used) ??
     asEstimateNumber(raw?.reserved_credits) ??
@@ -687,11 +833,44 @@ function readBackendCreditEstimate(raw: any): number | null {
     asEstimateNumber(raw?.pricing?.credits_used) ??
     asEstimateNumber(raw?.pricing?.reserved_credits) ??
     asEstimateNumber(raw?.pricing?.total_credits) ??
+    asEstimateNumber(raw?.pricing?.meta?.estimated_credits) ??
+    asEstimateNumber(raw?.pricing?.meta?.credits_used) ??
+    asEstimateNumber(raw?.pricing?.meta?.reserved_credits) ??
+    asEstimateNumber(raw?.pricing?.meta?.total_credits) ??
+    asEstimateNumber(raw?.meta?.estimated_credits) ??
+    asEstimateNumber(raw?.meta?.credits_used) ??
+    asEstimateNumber(raw?.meta?.reserved_credits) ??
+    asEstimateNumber(raw?.meta?.total_credits) ??
     asEstimateNumber(raw?.pricing_summary?.estimated_credits) ??
     asEstimateNumber(raw?.pricing_summary?.credits_used) ??
     asEstimateNumber(raw?.pricing_summary?.reserved_credits) ??
-    asEstimateNumber(raw?.pricing_summary?.total_credits)
-  );
+    asEstimateNumber(raw?.pricing_summary?.total_credits);
+
+  if (directEstimate != null) return directEstimate;
+
+  const lines =
+    raw?.pricing?.meta?.lines ??
+    raw?.meta?.lines ??
+    raw?.pricing?.lines ??
+    raw?.lines;
+
+  if (!Array.isArray(lines)) return null;
+
+  let total = 0;
+  let foundLineCredits = false;
+
+  for (const line of lines) {
+    const lineCredits =
+      asEstimateNumber(line?.line_credits) ??
+      asEstimateNumber(line?.total_credits) ??
+      asEstimateNumber(line?.credits);
+
+    if (lineCredits == null) continue;
+    total += lineCredits;
+    foundLineCredits = true;
+  }
+
+  return foundLineCredits ? total : null;
 }
 
 function readBackendMoneyEstimate(raw: any): { amount: number; currency: string } | null {
@@ -1420,6 +1599,32 @@ export default function AudioStudioScreen() {
       ""
   );
   const existingAudioTitle = cleanParam(flowAudio?.title ?? "");
+  const existingAudioScriptText = cleanParam(
+    flowAudio?.scriptText ??
+      flowAudio?.script_text ??
+      flowAudio?.translatedText ??
+      flowAudio?.translated_text ??
+      ""
+  );
+  const existingAudioSourceScriptText = cleanParam(
+    flowAudio?.sourceScriptText ??
+      flowAudio?.source_script_text ??
+      existingAudioScriptText
+  );
+  const existingAudioSpeakerGender = normalizeAudioGender(
+    flowAudio?.speakerGender ??
+      flowAudio?.speaker_gender
+  );
+  const existingAudioVoiceGender = normalizeAudioGender(
+    flowAudio?.voiceGender ??
+      flowAudio?.voice_gender
+  );
+  const existingAudioVoiceLocale = cleanParam(
+    flowAudio?.voiceLocale ??
+      flowAudio?.voice_locale ??
+      flowAudio?.locale ??
+      ""
+  );
   const existingAudioDuration = toDuration(
     asPositiveNumber(flowAudio?.durationMs ?? flowAudio?.duration_ms),
     asPositiveNumber(flowAudio?.durationSec ?? flowAudio?.duration_sec)
@@ -1554,46 +1759,6 @@ export default function AudioStudioScreen() {
     return withIndex.map((item) => item.locale);
   }, [uiLocales]);
 
-  useEffect(() => {
-    try {
-      console.log(
-        "[DF_AUDIO][locales][backend_raw]",
-        JSON.stringify(localesQ.data ?? null, null, 2)
-      );
-      console.log(
-        "[DF_AUDIO][locales][normalized]",
-        JSON.stringify(
-          uiLocales.map((locale: any, index: number) => ({
-            index,
-            code: locale?.code,
-            label: locale?.label,
-            display_rank: locale?.display_rank ?? locale?.displayRank ?? locale?.raw?.display_rank ?? locale?.raw?.displayRank,
-            sort_order: locale?.sort_order ?? locale?.sortOrder ?? locale?.raw?.sort_order ?? locale?.raw?.sortOrder,
-            rank: locale?.rank ?? locale?.raw?.rank,
-            priority: locale?.priority ?? locale?.raw?.priority,
-          })),
-          null,
-          2
-        )
-      );
-      console.log(
-        "[DF_AUDIO][locales][final_screen_list]",
-        JSON.stringify(
-          filteredLocales.map((locale: any, index: number) => ({
-            index,
-            code: locale?.code,
-            label: locale?.label,
-            backend_order:
-              readBackendLocaleOrder(locale),
-          })),
-          null,
-          2
-        )
-      );
-    } catch (error) {
-      console.log("[DF_AUDIO][locales][log_error]", String(error));
-    }
-  }, [localesQ.data, uiLocales, filteredLocales]);
 
   useEffect(() => {
     if (!filteredLocales.length) return;
@@ -1645,6 +1810,17 @@ export default function AudioStudioScreen() {
       : "Auto";
   const selectedVoice = uiVoices.find((x) => x.key === voice) ?? null;
   const voiceLabel = selectedVoice?.label ?? (voice ?? "Select");
+  const faceSpeakerGender = normalizeAudioGender(effectiveFaceGender);
+  const selectedVoiceGender = readVoiceGender(selectedVoice);
+  const speakerGender: AudioGender =
+    faceSpeakerGender !== "unspecified"
+      ? faceSpeakerGender
+      : selectedVoiceGender;
+  const translationTone = "neutral" as const;
+  const voiceGenderMismatch =
+    faceSpeakerGender !== "unspecified" &&
+    selectedVoiceGender !== "unspecified" &&
+    faceSpeakerGender !== selectedVoiceGender;
 
   const localeOptions: Opt[] = useMemo(
     () => filteredLocales.map((l) => ({ code: l.code, label: `${l.label} (${l.code})` })),
@@ -1652,20 +1828,41 @@ export default function AudioStudioScreen() {
   );
   const voiceOptions: Opt[] = useMemo(() => uiVoices.map((v) => ({ code: v.key, label: v.label })), [uiVoices]);
 
-  const pricingPreviewPayload = useMemo(
+  const pricingPreviewPayload = useMemo<
+    Omit<TTSCreateRequest, "pricing_confirmation">
+  >(
     () => ({
-      text: debouncedText || undefined,
-      target_locale: targetLocale || undefined,
+      text: debouncedText,
+      target_locale: targetLocale,
       source_language: translate ? sourceLanguage || undefined : undefined,
       translate,
       voice: voice || undefined,
       voice_id: voice || undefined,
+      voice_locale: targetLocale || undefined,
+      speaker_gender: speakerGender,
+      voice_gender: selectedVoiceGender,
+      translation_tone: translationTone,
       context: debouncedContext || undefined,
     }),
-    [debouncedText, targetLocale, sourceLanguage, translate, voice, debouncedContext]
+    [
+      debouncedText,
+      targetLocale,
+      sourceLanguage,
+      translate,
+      voice,
+      speakerGender,
+      selectedVoiceGender,
+      translationTone,
+      debouncedContext,
+    ]
   );
 
-  const pricingPreviewEnabled = tokenReady && !!faceImageUrl && !!debouncedText && !!voice;
+  const pricingPreviewEnabled =
+    tokenReady &&
+    !!faceImageUrl &&
+    !!debouncedText &&
+    !!voice &&
+    !voiceGenderMismatch;
 
   const pricingQ = useQuery<AudioEstimateResult>({
     queryKey: ["audio-pricing-estimate", authSessionKey, pricingPreviewPayload],
@@ -1675,9 +1872,7 @@ export default function AudioStudioScreen() {
     refetchOnReconnect: true,
     retry: 0,
     queryFn: async () => {
-      const raw = await api.post<any>(
-        AUDIO_BASE,
-        (endpoints as any)?.audio?.pricingPreview || "/api/audio/tts/pricing/preview",
+      const raw: any = await previewAudioTtsPricing(
         pricingPreviewPayload
       );
 
@@ -1715,7 +1910,9 @@ export default function AudioStudioScreen() {
       const money = readBackendMoneyEstimate(raw);
 
       if (creditUnits == null || !money || !confirmation.quote_id) {
-        throw new Error("Pricing preview unavailable. Backend did not return a complete billable audio quote.");
+        throw new Error(
+          "Pricing preview unavailable. Backend did not return a complete billable audio quote."
+        );
       }
 
       const creditEstimateLabel = formatCreditEstimateLabel(creditUnits);
@@ -1793,19 +1990,42 @@ export default function AudioStudioScreen() {
 
   const pricing = pricingQ.data;
   const pricingConfirmation = pricing?.confirmation ?? null;
-  const pricingReady = Boolean(pricingConfirmation?.quote_id);
+  const pricingInputSettled =
+    text.trim() === debouncedText &&
+    context.trim() === debouncedContext;
+  const pricingReady = Boolean(
+    pricingConfirmation?.quote_id && pricingInputSettled
+  );
 
   const audioEnhancerLockedFields = useMemo(() => ({
     target_locale: targetLocale,
     target_locale_label: localeLabel,
     voice: voice ?? undefined,
+    voice_id: voice ?? undefined,
     voice_label: voiceLabel,
+    voice_locale: targetLocale,
+    speaker_gender: speakerGender,
+    voice_gender: selectedVoiceGender,
+    translation_tone: translationTone,
     translate,
     source_language: sourceLanguage ?? undefined,
     source_language_label: sourceLabel,
     context: context?.trim() || undefined,
     face_ready: hasFacePreview,
-  }), [targetLocale, localeLabel, voice, voiceLabel, translate, sourceLanguage, sourceLabel, context, hasFacePreview]);
+  }), [
+    targetLocale,
+    localeLabel,
+    voice,
+    voiceLabel,
+    speakerGender,
+    selectedVoiceGender,
+    translationTone,
+    translate,
+    sourceLanguage,
+    sourceLabel,
+    context,
+    hasFacePreview,
+  ]);
 
   const displayedPrimaryEstimate = pricing?.primaryEstimateLabel ?? pricing?.estimateLabel ?? "Estimate pending";
   const isPostpaidPricing =
@@ -1827,13 +2047,15 @@ export default function AudioStudioScreen() {
   const displayedSecondaryEstimate = displayedCashEstimate ?? undefined;
   const pricingPreviewUnavailable =
     pricingPreviewEnabled && !pricingQ.isFetching && !pricingReady && !pricing?.insufficientBalance;
-  const createAudioCtaLabel = pricing?.insufficientBalance
-    ? (pricing?.ctaLabel ?? (pricing?.topUpVisible ? "Top up credits" : pricing?.upgradeVisible ? "Upgrade plan" : "Not enough credits"))
-    : pricingPreviewUnavailable
-      ? "Pricing preview unavailable"
-      : displayedCombinedEstimate
-        ? `Create Audio — ${displayedCombinedEstimate}`
-        : (pricing?.ctaLabel ?? "Create Audio");
+  const createAudioCtaLabel = voiceGenderMismatch
+    ? "Select matching voice"
+    : pricing?.insufficientBalance
+      ? (pricing?.ctaLabel ?? (pricing?.topUpVisible ? "Top up credits" : pricing?.upgradeVisible ? "Upgrade plan" : "Not enough credits"))
+      : pricingPreviewUnavailable
+        ? "Pricing preview unavailable"
+        : displayedCombinedEstimate
+          ? `Create Audio — ${displayedCombinedEstimate}`
+          : (pricing?.ctaLabel ?? "Create Audio");
   const visiblePrimaryEstimate = displayedCombinedEstimate || displayedPrimaryEstimate;
   const displayedNoteLabel = pricing?.noteLabel ?? pricing?.settlementLabel ?? (isPostpaidPricing
     ? "Billed after completion through your postpaid account."
@@ -2069,19 +2291,21 @@ useEffect(() => {
 }, [isFocused, tokenReady, faceJobId, flowFaceUrl, faceImageUrlParam, targetLocale, pricingPreviewEnabled]);
 
   const previewPendingMessage =
-    !!text.trim() &&
-    !!voice &&
-    !!faceImageUrl &&
-    text.trim() !== debouncedText
-      ? "Estimate refreshes shortly after you pause typing."
-      : !!debouncedText &&
+    voiceGenderMismatch
+      ? "The selected voice does not match the selected face. Choose a matching voice to continue."
+      : !!text.trim() &&
         !!voice &&
         !!faceImageUrl &&
-        !pricingReady &&
-        !pricingQ.isFetching &&
-        !pricingQ.error
-          ? "Pricing preview unavailable. Generate stays locked until the backend returns a complete quote."
-          : null;
+        text.trim() !== debouncedText
+        ? "Estimate refreshes shortly after you pause typing."
+        : !!debouncedText &&
+          !!voice &&
+          !!faceImageUrl &&
+          !pricingReady &&
+          !pricingQ.isFetching &&
+          !pricingQ.error
+            ? "Pricing preview unavailable. Generate stays locked until the backend returns a complete quote."
+            : null;
 
   const soundRef = useRef<AudioPlayerHandle | null>(null);
   const playbackSubscriptionRef = useRef<AudioPlayerSubscription>(null);
@@ -2132,18 +2356,29 @@ useEffect(() => {
       await stopSound();
 
       try {
+        // Reset any stale recording, video, Bluetooth, or earpiece session
+        // before configuring this screen for speaker media playback.
+        await setIsAudioActiveAsync(false);
+        await delay(150);
+
         await setAudioModeAsync({
           allowsRecording: false,
           playsInSilentMode: true,
           shouldPlayInBackground: false,
           shouldRouteThroughEarpiece: false,
-          interruptionMode: "duckOthers",
+          interruptionMode: "doNotMix",
         });
+
+        await setIsAudioActiveAsync(true);
 
         const player = createAudioPlayer(u, {
           updateInterval: 250,
           downloadFirst: true,
+          keepAudioSessionActive: true,
         });
+
+        player.muted = false;
+        player.volume = 1.0;
 
         soundRef.current = player;
         playbackSubscriptionRef.current = (player as any)?.addListener?.(
@@ -2167,8 +2402,25 @@ useEffect(() => {
           throw new Error("Audio could not be loaded for playback.");
         }
 
-        await Promise.resolve((player as any)?.seekTo?.(0));
-        await Promise.resolve((player as any)?.play?.());
+        await Promise.resolve(player.seekTo(0));
+
+        // Reassert audible state immediately before starting playback.
+        player.muted = false;
+        player.volume = 1.0;
+        player.play();
+
+        if (__DEV__) {
+          setTimeout(() => {
+            console.log("[DF_AUDIO_PLAYBACK]", {
+              isLoaded: player.isLoaded,
+              playing: player.playing,
+              currentTime: player.currentTime,
+              duration: player.duration,
+              muted: player.muted,
+              volume: player.volume,
+            });
+          }, 500);
+        }
       } catch (error: any) {
         setStatusText(error?.message || "Audio playback failed.");
         await stopSound();
@@ -2183,7 +2435,7 @@ useEffect(() => {
     if (!url) return;
 
     try {
-      await shareUrl(url, { title: "DesiFaces Audio", message: "Audio shared from DesiFaces" });
+      await shareUrl(url, { title: "desifaces audio", message: "Audio shared from desifaces" });
     } catch {
       try {
         await RNShare.share({ message: url });
@@ -2302,6 +2554,13 @@ useEffect(() => {
       animateTo(0, 350);
       return;
     }
+    if (voiceGenderMismatch) {
+      setStatusText(
+        "The selected voice does not match the selected face. Choose a matching voice before generating audio."
+      );
+      animateTo(0, 350);
+      return;
+    }
     if (!pricingConfirmation?.quote_id) {
       setStatusText("Pricing preview is not ready yet. Please wait a moment and try again.");
       animateTo(0, 350);
@@ -2341,22 +2600,25 @@ useEffect(() => {
         target_locale: targetLocale,
         source_language: translate ? sourceLanguage : null,
         translate,
-        voice: voice as any,
-        voice_id: voice as any,
+        voice,
+        voice_id: voice,
+        voice_locale: targetLocale,
+        speaker_gender: speakerGender,
+        voice_gender: selectedVoiceGender,
+        translation_tone: translationTone,
         context: context?.trim() || null,
-      } as any;
+      };
 
-      const created = await api.post<any>(
-        AUDIO_BASE,
-        (endpoints as any)?.audio?.tts || "/api/audio/tts",
+      const created = await apiCreateTtsJob(
+        payload,
         {
-          ...payload,
-          pricing_confirmation: {
-            quote_id: pricingConfirmation.quote_id,
-            ...(pricingConfirmation.preview_fingerprint
-              ? { preview_fingerprint: pricingConfirmation.preview_fingerprint }
-              : {}),
-          },
+          quote_id: pricingConfirmation.quote_id,
+          ...(pricingConfirmation.preview_fingerprint
+            ? {
+                preview_fingerprint:
+                  pricingConfirmation.preview_fingerprint,
+              }
+            : {}),
         }
       );
       const newJobId = created?.job_id ?? (created as any)?.id ?? null;
@@ -2450,6 +2712,13 @@ useEffect(() => {
             const firstUrl = cleanParam((first as any)?.audio_url);
             if (firstUrl && setAudioSelection) {
               const firstDuration = readAudioDuration(first, last);
+              const flowMetadata = readAudioFlowMetadata(first, {
+                sourceScriptText: text.trim(),
+                speakerGender,
+                voiceGender: selectedVoiceGender,
+                voiceLocale: targetLocale,
+              });
+
               setAudioSelection({
                 artifactId: cleanParam((first as any)?.artifact_id || "") || undefined,
                 mediaAssetId: undefined,
@@ -2457,7 +2726,22 @@ useEffect(() => {
                 audioUrl: firstUrl,
                 locale: targetLocale || undefined,
                 voice: voice || undefined,
-                scriptText: text.trim() || undefined,
+                scriptText: flowMetadata.finalSynthesisText || undefined,
+                script_text: flowMetadata.finalSynthesisText || undefined,
+                sourceScriptText: flowMetadata.sourceScriptText || undefined,
+                source_script_text: flowMetadata.sourceScriptText || undefined,
+                translatedText: flowMetadata.finalSynthesisText || undefined,
+                translated_text: flowMetadata.finalSynthesisText || undefined,
+                speakerGender: flowMetadata.speakerGender,
+                speaker_gender: flowMetadata.speakerGender,
+                voiceGender: flowMetadata.voiceGender,
+                voice_gender: flowMetadata.voiceGender,
+                voiceLocale: flowMetadata.voiceLocale || undefined,
+                voice_locale: flowMetadata.voiceLocale || undefined,
+                translationProvider: flowMetadata.translationProvider || undefined,
+                translation_provider: flowMetadata.translationProvider || undefined,
+                translationModel: flowMetadata.translationModel || undefined,
+                translation_model: flowMetadata.translationModel || undefined,
                 durationSec: firstDuration.duration_sec,
                 durationMs: firstDuration.duration_ms,
                 variantIndex: 0,
@@ -2507,6 +2791,10 @@ useEffect(() => {
     faceImageUrl,
     text,
     voice,
+    voiceGenderMismatch,
+    speakerGender,
+    selectedVoiceGender,
+    translationTone,
     targetLocale,
     sourceLanguage,
     translate,
@@ -2529,6 +2817,16 @@ const proceedToFusion = useCallback(
     const audioArtifactId = cleanParam((variant as any)?.artifact_id || "");
     const imageUrl = cleanParam(faceImageUrl);
     const faceArtifactId = cleanParam(effectiveFaceArtifactId);
+    const flowMetadata = readAudioFlowMetadata(variant, {
+      sourceScriptText: text.trim(),
+      speakerGender,
+      voiceGender: selectedVoiceGender,
+      voiceLocale: targetLocale,
+    });
+    const fusionScriptText =
+      flowMetadata.finalSynthesisText ||
+      flowMetadata.sourceScriptText ||
+      text.trim();
 
     logAudioStudioFlow("proceedToFusion", {
       authUserId,
@@ -2541,7 +2839,13 @@ const proceedToFusion = useCallback(
       targetLocale,
       voice,
       selectedAspectRatio,
-      text: text.trim(),
+      speakerGender: flowMetadata.speakerGender,
+      voiceGender: flowMetadata.voiceGender,
+      voiceLocale: flowMetadata.voiceLocale,
+      sourceScriptText: flowMetadata.sourceScriptText,
+      finalSynthesisText: fusionScriptText,
+      translationProvider: flowMetadata.translationProvider,
+      translationModel: flowMetadata.translationModel,
     });
 
     if (!audioUrl || !imageUrl) return;
@@ -2576,20 +2880,33 @@ const proceedToFusion = useCallback(
         gender: effectiveFaceGender || undefined,
       } as any);
 
-      if (setAudioSelection) {
-        setAudioSelection({
-          artifactId: audioArtifactId || undefined,
-          mediaAssetId: undefined,
-          sasUrl: audioUrl,
-          audioUrl: audioUrl,
-          locale: targetLocale || undefined,
-          voice: voice || undefined,
-          scriptText: text.trim() || undefined,
-          durationSec: duration.duration_sec,
-          durationMs: duration.duration_ms,
-          variantIndex: undefined,
-        });
-      }
+      setAudioSelection?.({
+        artifactId: audioArtifactId || undefined,
+        mediaAssetId: undefined,
+        sasUrl: audioUrl,
+        audioUrl,
+        locale: targetLocale || undefined,
+        voice: voice || undefined,
+        scriptText: fusionScriptText || undefined,
+        script_text: fusionScriptText || undefined,
+        sourceScriptText: flowMetadata.sourceScriptText || undefined,
+        source_script_text: flowMetadata.sourceScriptText || undefined,
+        translatedText: fusionScriptText || undefined,
+        translated_text: fusionScriptText || undefined,
+        speakerGender: flowMetadata.speakerGender,
+        speaker_gender: flowMetadata.speakerGender,
+        voiceGender: flowMetadata.voiceGender,
+        voice_gender: flowMetadata.voiceGender,
+        voiceLocale: flowMetadata.voiceLocale || undefined,
+        voice_locale: flowMetadata.voiceLocale || undefined,
+        translationProvider: flowMetadata.translationProvider || undefined,
+        translation_provider: flowMetadata.translationProvider || undefined,
+        translationModel: flowMetadata.translationModel || undefined,
+        translation_model: flowMetadata.translationModel || undefined,
+        durationSec: duration.duration_sec,
+        durationMs: duration.duration_ms,
+        variantIndex: undefined,
+      });
 
       await saveCreateFlowContext({
         image_url: imageUrl,
@@ -2601,9 +2918,18 @@ const proceedToFusion = useCallback(
 
         audio_url: audioUrl,
         audio_sas_url: audioUrl,
-        script_text: text.trim() || undefined,
+        script_text: fusionScriptText || undefined,
+        source_script_text: flowMetadata.sourceScriptText || undefined,
+        translated_script_text: fusionScriptText || undefined,
         audio_locale: targetLocale || undefined,
         audio_voice: voice || undefined,
+        audio_speaker_gender: flowMetadata.speakerGender,
+        audio_voice_gender: flowMetadata.voiceGender,
+        audio_voice_locale: flowMetadata.voiceLocale || undefined,
+        audio_translation_provider:
+          flowMetadata.translationProvider || undefined,
+        audio_translation_model:
+          flowMetadata.translationModel || undefined,
 
         face_profile_id: faceProfileId || undefined,
         face_media_asset_id: effectiveFaceMediaAssetId || undefined,
@@ -2633,11 +2959,26 @@ const proceedToFusion = useCallback(
           audio_artifact_id: audioArtifactId ?? "",
           audio_url: audioUrl ?? "",
           audio_sas_url: audioUrl ?? "",
-          audio_duration_sec: duration.duration_sec != null ? String(duration.duration_sec) : "",
-          audio_duration_ms: duration.duration_ms != null ? String(duration.duration_ms) : "",
-          script_text: text.trim() || "",
+          audio_duration_sec:
+            duration.duration_sec != null
+              ? String(duration.duration_sec)
+              : "",
+          audio_duration_ms:
+            duration.duration_ms != null
+              ? String(duration.duration_ms)
+              : "",
+          script_text: fusionScriptText || "",
+          source_script_text: flowMetadata.sourceScriptText || "",
+          translated_script_text: fusionScriptText || "",
           audio_locale: targetLocale || "",
           audio_voice: voice || "",
+          audio_speaker_gender: flowMetadata.speakerGender,
+          audio_voice_gender: flowMetadata.voiceGender,
+          audio_voice_locale: flowMetadata.voiceLocale || "",
+          audio_translation_provider:
+            flowMetadata.translationProvider || "",
+          audio_translation_model:
+            flowMetadata.translationModel || "",
           gender: effectiveFaceGender || "",
           aspect_ratio: selectedAspectRatio,
           stage: "audio_done",
@@ -2648,6 +2989,7 @@ const proceedToFusion = useCallback(
     }
   },
   [
+    authUserId,
     faceImageUrl,
     effectiveFaceArtifactId,
     effectiveFaceMediaAssetId,
@@ -2660,6 +3002,8 @@ const proceedToFusion = useCallback(
     targetLocale,
     voice,
     text,
+    speakerGender,
+    selectedVoiceGender,
     selectedAspectRatio,
   ]
 );
@@ -2680,14 +3024,40 @@ const proceedToFusion = useCallback(
             setSelectedIdx(index);
             if (audioUrl && setAudioSelection) {
               const itemDuration = readAudioDuration(item);
+              const flowMetadata = readAudioFlowMetadata(item, {
+                sourceScriptText: text.trim(),
+                speakerGender,
+                voiceGender: selectedVoiceGender,
+                voiceLocale: targetLocale,
+              });
+
               setAudioSelection({
                 artifactId: cleanParam((item as any)?.artifact_id || "") || undefined,
                 mediaAssetId: undefined,
                 sasUrl: audioUrl,
-                audioUrl: audioUrl,
+                audioUrl,
                 locale: targetLocale || undefined,
                 voice: voice || undefined,
-                scriptText: text.trim() || undefined,
+                scriptText: flowMetadata.finalSynthesisText || undefined,
+                script_text: flowMetadata.finalSynthesisText || undefined,
+                sourceScriptText: flowMetadata.sourceScriptText || undefined,
+                source_script_text: flowMetadata.sourceScriptText || undefined,
+                translatedText: flowMetadata.finalSynthesisText || undefined,
+                translated_text: flowMetadata.finalSynthesisText || undefined,
+                speakerGender: flowMetadata.speakerGender,
+                speaker_gender: flowMetadata.speakerGender,
+                voiceGender: flowMetadata.voiceGender,
+                voice_gender: flowMetadata.voiceGender,
+                voiceLocale: flowMetadata.voiceLocale || undefined,
+                voice_locale: flowMetadata.voiceLocale || undefined,
+                translationProvider:
+                  flowMetadata.translationProvider || undefined,
+                translation_provider:
+                  flowMetadata.translationProvider || undefined,
+                translationModel:
+                  flowMetadata.translationModel || undefined,
+                translation_model:
+                  flowMetadata.translationModel || undefined,
                 durationSec: itemDuration.duration_sec,
                 durationMs: itemDuration.duration_ms,
                 variantIndex: index,
@@ -2771,7 +3141,20 @@ const proceedToFusion = useCallback(
         </Pressable>
       );
     },
-    [selectedIdx, locked, playingIdx, playPause, proceedToFusion, setAudioSelection]
+    [
+      selectedIdx,
+      locked,
+      playingIdx,
+      playPause,
+      proceedToFusion,
+      setAudioSelection,
+      targetLocale,
+      voice,
+      text,
+      speakerGender,
+      selectedVoiceGender,
+      hasFacePreview,
+    ]
   );
 
   const onPrimaryAction = useCallback(() => {
@@ -3025,6 +3408,20 @@ const proceedToFusion = useCallback(
                   audio_url: existingAudioUrl,
                   duration_ms: existingAudioDuration.duration_ms ?? undefined,
                   duration_sec: existingAudioDuration.duration_sec ?? undefined,
+                  final_synthesis_text: existingAudioScriptText || undefined,
+                  source_script_text:
+                    existingAudioSourceScriptText || undefined,
+                  translated_text: existingAudioScriptText || undefined,
+                  speaker_gender:
+                    existingAudioSpeakerGender !== "unspecified"
+                      ? existingAudioSpeakerGender
+                      : speakerGender,
+                  voice_gender:
+                    existingAudioVoiceGender !== "unspecified"
+                      ? existingAudioVoiceGender
+                      : selectedVoiceGender,
+                  voice_locale:
+                    existingAudioVoiceLocale || targetLocale || undefined,
                 } as any)
               }
               disabled={locked || !hasFacePreview}
@@ -3306,7 +3703,7 @@ const proceedToFusion = useCallback(
       <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
         <Pressable
           onPress={onPrimaryAction}
-          disabled={locked || !faceImageUrl || !tokenReady || !text.trim() || !voice || (!pricingReady && !pricing?.insufficientBalance)}
+          disabled={locked || voiceGenderMismatch || !faceImageUrl || !tokenReady || !text.trim() || !voice || (!pricingReady && !pricing?.insufficientBalance)}
           style={{
             flex: 1,
             height: 52,
@@ -3314,12 +3711,12 @@ const proceedToFusion = useCallback(
             borderWidth: 1,
             borderColor: "rgba(248,184,72,0.55)",
             backgroundColor:
-              !locked && !!faceImageUrl && !!tokenReady && !!text.trim() && !!voice && (pricingReady || !!pricing?.insufficientBalance)
+              !locked && !voiceGenderMismatch && !!faceImageUrl && !!tokenReady && !!text.trim() && !!voice && (pricingReady || !!pricing?.insufficientBalance)
                 ? "rgba(232,152,56,0.18)"
                 : "rgba(255,255,255,0.06)",
             alignItems: "center",
             justifyContent: "center",
-            opacity: locked || !faceImageUrl || !tokenReady || !text.trim() || !voice || (!pricingReady && !pricing?.insufficientBalance) ? 0.6 : 1,
+            opacity: locked || voiceGenderMismatch || !faceImageUrl || !tokenReady || !text.trim() || !voice || (!pricingReady && !pricing?.insufficientBalance) ? 0.6 : 1,
           }}
         >
           {busy ? <ActivityIndicator /> : <Text style={{ color: DF.text, fontWeight: "900" }}>{createAudioCtaLabel}</Text>}

@@ -7,12 +7,28 @@ import type {
 } from "../../../core/pricing/pricePreview";
 import { normalizePricingErrorForUser } from "../../../core/pricing/studioAffordability";
 
+export type AudioGender =
+  | "male"
+  | "female"
+  | "neutral"
+  | "unspecified";
+
+export type AudioTranslationTone =
+  | "neutral"
+  | "formal"
+  | "informal";
+
 export type TTSCreateRequest = {
   text: string;
   target_locale: string;
   source_language?: string | null;
   translate?: boolean;
   voice?: string | null;
+  voice_id?: string | null;
+  voice_locale?: string | null;
+  speaker_gender?: AudioGender | null;
+  voice_gender?: AudioGender | null;
+  translation_tone?: AudioTranslationTone | null;
   style?: string | null;
   style_degree?: number | null;
   rate?: number | null;
@@ -28,6 +44,16 @@ export type VariantAudio = {
   artifact_id?: string | null;
   content_type?: string | null;
   bytes?: number | null;
+  duration_ms?: number | null;
+  duration_sec?: number | null;
+  final_synthesis_text?: string | null;
+  source_script_text?: string | null;
+  translated_text?: string | null;
+  speaker_gender?: AudioGender | null;
+  voice_gender?: AudioGender | null;
+  voice_locale?: string | null;
+  translation_provider?: string | null;
+  translation_model?: string | null;
 };
 
 export type JobCreatedResponse = {
@@ -101,6 +127,11 @@ function buildPreviewRequest(
     source_language: payload.source_language ?? undefined,
     translate: payload.translate ?? undefined,
     voice: payload.voice ?? undefined,
+    voice_id: payload.voice_id ?? undefined,
+    voice_locale: payload.voice_locale ?? undefined,
+    speaker_gender: payload.speaker_gender ?? undefined,
+    voice_gender: payload.voice_gender ?? undefined,
+    translation_tone: payload.translation_tone ?? undefined,
     style: payload.style ?? undefined,
     style_degree: payload.style_degree ?? undefined,
     rate: payload.rate ?? undefined,
@@ -121,6 +152,11 @@ function buildCreateRequest(
     source_language: payload.source_language ?? undefined,
     translate: payload.translate ?? undefined,
     voice: payload.voice ?? undefined,
+    voice_id: payload.voice_id ?? undefined,
+    voice_locale: payload.voice_locale ?? undefined,
+    speaker_gender: payload.speaker_gender ?? undefined,
+    voice_gender: payload.voice_gender ?? undefined,
+    translation_tone: payload.translation_tone ?? undefined,
     style: payload.style ?? undefined,
     style_degree: payload.style_degree ?? undefined,
     rate: payload.rate ?? undefined,
