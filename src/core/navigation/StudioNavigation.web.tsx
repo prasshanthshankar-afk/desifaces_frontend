@@ -31,7 +31,7 @@ function NavButton({ item, active }: { item: NavItem; active: boolean }) {
       accessibilityRole="link"
       accessibilityState={{ selected: active }}
       onPress={() => router.push(item.href as any)}
-      style={({ hovered, pressed }) => ({
+      style={({ pressed }) => ({
         minHeight: 46,
         borderRadius: 14,
         paddingHorizontal: 14,
@@ -42,7 +42,7 @@ function NavButton({ item, active }: { item: NavItem; active: boolean }) {
         borderColor: active ? "rgba(210,176,122,0.34)" : "transparent",
         backgroundColor: active
           ? "rgba(210,176,122,0.13)"
-          : hovered || pressed
+          : pressed
             ? "rgba(255,255,255,0.055)"
             : "transparent",
       })}
@@ -56,7 +56,7 @@ function NavButton({ item, active }: { item: NavItem; active: boolean }) {
         style={{
           color: active ? DF.textStrong : DF.textSoft,
           fontSize: 14,
-          fontWeight: active ? "800" : "650",
+          fontWeight: active ? "800" : "700",
         }}
       >
         {item.label}
