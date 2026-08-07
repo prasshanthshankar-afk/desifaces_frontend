@@ -1,15 +1,19 @@
 import type { ExpoConfig } from "expo/config";
 
-/**
- * DesiFaces app config
- *
- * Android EAS failed because the generated native project referenced
- * @drawable/splashscreen_logo but no splash image was configured/generated.
- * Keep these paths pointed at real PNG files committed under assets/brand.
- */
 const SPLASH_BG = "#020000";
 const BRAND_LOGO = "./assets/brand/desifaces-logo-softblend.png";
 const SPLASH_IMAGE = "./assets/brand/desifaces-logo-softblend.png";
+
+const coreBase = process.env.EXPO_PUBLIC_CORE_BASE_URL ?? process.env.EXPO_PUBLIC_CORE_URL;
+const faceBase = process.env.EXPO_PUBLIC_FACE_BASE_URL ?? process.env.EXPO_PUBLIC_FACE_URL;
+const audioBase = process.env.EXPO_PUBLIC_AUDIO_BASE_URL ?? process.env.EXPO_PUBLIC_AUDIO_URL;
+const videoBase = process.env.EXPO_PUBLIC_VIDEO_BASE_URL ?? process.env.EXPO_PUBLIC_VIDEO_URL;
+const dashboardBase = process.env.EXPO_PUBLIC_DASHBOARD_BASE_URL ?? process.env.EXPO_PUBLIC_DASH_URL;
+const pricingBase = process.env.EXPO_PUBLIC_PRICING_BASE_URL ?? process.env.EXPO_PUBLIC_PRICING_URL;
+const fusionBase = process.env.EXPO_PUBLIC_FUSION_BASE_URL ?? process.env.EXPO_PUBLIC_FUSION_URL;
+const fusionExtensionBase =
+  process.env.EXPO_PUBLIC_FUSION_EXTENSION_BASE_URL ??
+  process.env.EXPO_PUBLIC_FUSION_EXTENSION_BASE;
 
 const config: ExpoConfig = {
   name: "DesiFaces",
@@ -71,8 +75,6 @@ const config: ExpoConfig = {
 
   android: {
     package: "ai.desifaces.app",
-    // Must be greater than the last Google Play build.
-    // Previous Play build observed in testing was versionCode=5.
     versionCode: 12,
     adaptiveIcon: {
       foregroundImage: BRAND_LOGO,
@@ -93,19 +95,26 @@ const config: ExpoConfig = {
   },
 
   extra: {
-    // Canonical API bases consumed by src/core/config/env.ts.
-    CORE: process.env.EXPO_PUBLIC_CORE_BASE_URL ?? process.env.EXPO_PUBLIC_CORE_URL,
-    FACE: process.env.EXPO_PUBLIC_FACE_BASE_URL ?? process.env.EXPO_PUBLIC_FACE_URL,
-    AUDIO: process.env.EXPO_PUBLIC_AUDIO_BASE_URL ?? process.env.EXPO_PUBLIC_AUDIO_URL,
-    VIDEO: process.env.EXPO_PUBLIC_VIDEO_BASE_URL ?? process.env.EXPO_PUBLIC_VIDEO_URL,
-    DASH: process.env.EXPO_PUBLIC_DASHBOARD_BASE_URL ?? process.env.EXPO_PUBLIC_DASH_URL,
-    PRICING: process.env.EXPO_PUBLIC_PRICING_BASE_URL ?? process.env.EXPO_PUBLIC_PRICING_URL,
-    FUSION: process.env.EXPO_PUBLIC_FUSION_BASE_URL ?? process.env.EXPO_PUBLIC_FUSION_URL,
-    FUSION_EXTENSION:
-      process.env.EXPO_PUBLIC_FUSION_EXTENSION_BASE_URL ??
-      process.env.EXPO_PUBLIC_FUSION_EXTENSION_BASE,
+    CORE: coreBase,
+    FACE: faceBase,
+    AUDIO: audioBase,
+    VIDEO: videoBase,
+    DASH: dashboardBase,
+    PRICING: pricingBase,
+    FUSION: fusionBase,
+    FUSION_EXTENSION: fusionExtensionBase,
 
-    // Backward-compatible names already used by parts of the app.
+    // Web has explicit keys so src/core/config/env.ts never falls through to
+    // an Android-specific override when Platform.OS === "web".
+    CORE_WEB: process.env.EXPO_PUBLIC_CORE_WEB_BASE_URL ?? coreBase,
+    FACE_WEB: process.env.EXPO_PUBLIC_FACE_WEB_BASE_URL ?? faceBase,
+    AUDIO_WEB: process.env.EXPO_PUBLIC_AUDIO_WEB_BASE_URL ?? audioBase,
+    VIDEO_WEB: process.env.EXPO_PUBLIC_VIDEO_WEB_BASE_URL ?? videoBase,
+    DASH_WEB: process.env.EXPO_PUBLIC_DASHBOARD_WEB_BASE_URL ?? dashboardBase,
+    PRICING_WEB: process.env.EXPO_PUBLIC_PRICING_WEB_BASE_URL ?? pricingBase,
+    FUSION_EXTENSION_WEB:
+      process.env.EXPO_PUBLIC_FUSION_EXTENSION_WEB_BASE_URL ?? fusionExtensionBase,
+
     pricingBaseUrl: process.env.EXPO_PUBLIC_PRICING_BASE_URL,
     billingReturnUrlBase: process.env.EXPO_PUBLIC_BILLING_RETURN_URL_BASE,
 
