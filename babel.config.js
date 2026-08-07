@@ -8,12 +8,17 @@ module.exports = function (api) {
         'module-resolver',
         {
           alias: {
-            '@': './',
+            '@': './src',
           },
           extensions: [
             '.ios.ts',
             '.android.ts',
             '.web.ts',
+            '.native.ts',
+            '.ios.tsx',
+            '.android.tsx',
+            '.web.tsx',
+            '.native.tsx',
             '.ts',
             '.tsx',
             '.js',
