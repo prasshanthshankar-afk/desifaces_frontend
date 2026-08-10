@@ -18,7 +18,7 @@ const config: ExpoConfig = {
   name: "desifaces.ai",
   slug: "desifaces-mobile",
   scheme: "desifaces",
-  version: "1.0.0",
+  version: "2.1.0",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
   icon: BRAND_LOGO,
