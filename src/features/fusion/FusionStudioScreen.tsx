@@ -2667,11 +2667,12 @@ useEffect(() => {
   const onShare = useCallback(async () => {
     if (!videoUrl) return;
     try {
-      await shareUrl(videoUrl, { title: `desifaces • ${modeShortTitle(videoMode)}`, message: "Generated video" });
-    } catch {
-      await openLink(videoUrl);
-    }
-  }, [videoUrl, openLink, videoMode]);
+      await shareUrl(videoUrl, {
+        title: `desifaces • ${modeShortTitle(videoMode)}`,
+        type: "video",
+      });
+    } catch {}
+  }, [videoUrl, videoMode]);
 
 
   const handlePrimaryAction = useCallback(() => {

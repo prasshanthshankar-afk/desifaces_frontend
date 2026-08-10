@@ -188,7 +188,7 @@ async function shareMediaToSheet(url: string, type: MediaType) {
     }
 
     if (typeof mod.shareUrl === "function") {
-      await mod.shareUrl(safeUrl);
+      await mod.shareUrl(safeUrl, { type });
       return;
     }
 

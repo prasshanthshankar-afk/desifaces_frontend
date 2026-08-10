@@ -21,7 +21,46 @@ export type LocalesResponse =
   | LocaleItem[]
   | Record<string, any>;
 
-export type UiLocale = { code: string; label: string };
+export type CountryCatalogItem = {
+  country_code: string;
+  locale_count: number;
+};
+
+export type CountriesResponse = { items: CountryCatalogItem[] };
+
+export type TargetLanguageCatalogItem = {
+  locale: string;
+  language_code?: string | null;
+  country_code: string;
+  translator_lang?: string | null;
+  display_name?: string | null;
+  native_name?: string | null;
+  tts_supported?: boolean;
+  translate_supported?: boolean;
+  is_user_selectable?: boolean;
+};
+
+export type TargetLanguagesResponse = {
+  country_code: string;
+  items: TargetLanguageCatalogItem[];
+};
+
+export type UiCountry = {
+  code: string;
+  label: string;
+  localeCount: number;
+  raw: CountryCatalogItem;
+};
+
+export type UiLocale = {
+  code: string;
+  label: string;
+  countryCode?: string;
+  languageCode?: string;
+  nativeName?: string;
+  raw?: TargetLanguageCatalogItem | Record<string, any>;
+};
+
 export type UiVoice = {
   key: string;     // voice_name
   label: string;   // display label
@@ -49,6 +88,20 @@ export async function fetchAudioLocales(token?: string) {
   return getJson<LocalesResponse>(`${base()}/api/audio/catalog/locales`, token);
 }
 
+export async function fetchAudioCountries(token?: string) {
+  return getJson<CountriesResponse>(`${base()}/api/audio/catalog/countries`, token);
+}
+
+export async function fetchAudioTargetLanguages(
+  token: string | undefined,
+  countryCode: string
+) {
+  return getJson<TargetLanguagesResponse>(
+    `${base()}/api/audio/catalog/target-languages?country_code=${encodeURIComponent(countryCode)}`,
+    token
+  );
+}
+
 export async function fetchAudioVoices(token: string | undefined, locale: string) {
   // REQUIRED param: locale
   return getJson<VoicesResponse>(
@@ -62,6 +115,57 @@ function safeParse(meta_json?: string): any | null {
   try { return JSON.parse(meta_json); } catch { return null; }
 }
 
+function countryDisplayName(countryCode: string): string {
+  const code = String(countryCode || "").trim().toUpperCase();
+  if (!code) return "";
+
+  try {
+    const DisplayNames = (Intl as any)?.DisplayNames;
+    if (typeof DisplayNames === "function") {
+      return new DisplayNames(["en"], { type: "region" }).of(code) || code;
+    }
+  } catch {}
+
+  return code;
+}
+
+export function normalizeCountries(resp: CountriesResponse): UiCountry[] {
+  return (resp?.items ?? [])
+    .map((item) => {
+      const code = String(item?.country_code ?? "").trim().toUpperCase();
+      return {
+        code,
+        label: countryDisplayName(code),
+        localeCount: Number(item?.locale_count ?? 0),
+        raw: item,
+      };
+    })
+    .filter((item) => item.code);
+}
+
+export function normalizeTargetLanguages(
+  resp: TargetLanguagesResponse
+): UiLocale[] {
+  return (resp?.items ?? [])
+    .map((item) => {
+      const code = String(item?.locale ?? "").trim();
+      const label =
+        String(item?.display_name ?? "").trim() ||
+        String(item?.native_name ?? "").trim() ||
+        code;
+
+      return {
+        code,
+        label,
+        countryCode: String(item?.country_code ?? "").trim().toUpperCase(),
+        languageCode: String(item?.language_code ?? "").trim().toLowerCase(),
+        nativeName: String(item?.native_name ?? "").trim() || undefined,
+        raw: item,
+      };
+    })
+    .filter((item) => item.code);
+}
+
 export function normalizeLocales(payload: LocalesResponse): UiLocale[] {
   const items: any[] =
     Array.isArray(payload) ? payload :
@@ -73,7 +177,7 @@ export function normalizeLocales(payload: LocalesResponse): UiLocale[] {
       if (typeof x === "string") return { code: x, label: x };
       const code = x.locale || x.code || x.id || "";
       const label = x.label || x.name || x.display_name || code || "Unknown";
-      return { code: String(code), label: String(label) };
+      return { code: String(code), label: String(label), raw: x };
     }).filter((x) => x.code);
   }
 

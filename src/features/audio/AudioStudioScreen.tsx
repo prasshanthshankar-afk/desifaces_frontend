@@ -1,20 +1,4 @@
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  Pressable,
-  TextInput,
-  ActivityIndicator,
-  Modal,
-  FlatList,
-  ScrollView,
-  Animated,
-  Easing,
-  Share as RNShare,
-} from "react-native";
-import { Image } from "expo-image";
-import { useLocalSearchParams, router } from "expo-router";
 import { useIsFocused } from "@react-navigation/native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -22,38 +6,57 @@ import {
   setAudioModeAsync,
   setIsAudioActiveAsync,
 } from "expo-audio";
+import { Image } from "expo-image";
+import { getLocales } from "expo-localization";
+import { router, useLocalSearchParams } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Animated,
+  Easing,
+  FlatList,
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
+import { api } from "../../core/api/client";
+import { useAuth } from "../../core/auth/AuthContext";
+import { AUDIO_BASE, FACE_BASE } from "../../core/config/env";
+import { saveCreateFlowContext } from "../../core/media/createFlow";
+import { derivePricingUiSummary } from "../../core/pricing/pricingSummary";
+import { useResolvedPricingDisplay } from "../../core/pricing/resolvePricingDisplay";
+import { shareUrl } from "../../core/share/share";
 import { DF } from "../../core/theme/colors";
 import DFHeader from "../../core/ui/DFHeader";
-import { useAuth } from "../../core/auth/AuthContext";
-import { shareUrl } from "../../core/share/share";
-import { saveCreateFlowContext } from "../../core/media/createFlow";
-import { useResolvedPricingDisplay } from "../../core/pricing/resolvePricingDisplay";
-import { api } from "../../core/api/client";
-import { AUDIO_BASE, FACE_BASE } from "../../core/config/env";
-import { derivePricingUiSummary } from "../../core/pricing/pricingSummary";
 
-import { useCreatorFlow } from "../../core/flow/creatorFlowStore";
-import DFBlockingOverlay from "../../core/ui/DFBlockingOverlay";
-import { PricingTopBar } from "../../components/pricing/PricingTopBar";
 import PromptEnhancerSheet, {
   type PromptEnhancerResult,
 } from "../../components/ai/PromptEnhancerSheet";
 import StudioTipsRail, {
   type StudioCoachTip,
 } from "../../components/ai/StudioTipsRail";
-import { UpgradePromptSheet } from "../../components/pricing/UpgradePromptSheet";
-import { PricingBreakdownSheet } from "../../components/pricing/PricingBreakdownSheet";
-import { RunReceiptCard } from "../../components/pricing/RunReceiptCard";
 import { JobPricingTimeline } from "../../components/pricing/JobPricingTimeline";
-import { normalizePricing, normalizePricingSummary } from "../pricing/normalizers";
+import { PricingBreakdownSheet } from "../../components/pricing/PricingBreakdownSheet";
+import { PricingTopBar } from "../../components/pricing/PricingTopBar";
+import { RunReceiptCard } from "../../components/pricing/RunReceiptCard";
+import { UpgradePromptSheet } from "../../components/pricing/UpgradePromptSheet";
+import { useCreatorFlow } from "../../core/flow/creatorFlowStore";
+import DFBlockingOverlay from "../../core/ui/DFBlockingOverlay";
 import GlobalJobsTray, { type StudioJobItem } from "../jobs/components/GlobalJobsTray";
+import { normalizePricing, normalizePricingSummary } from "../pricing/normalizers";
 
 import {
-  fetchAudioLocales,
+  fetchAudioCountries,
+  fetchAudioTargetLanguages,
   fetchAudioVoices,
-  normalizeLocales,
+  normalizeCountries,
+  normalizeTargetLanguages,
   normalizeVoices,
+  UiCountry,
   UiLocale,
   UiVoice,
 } from "./api/masterdataAudio";
@@ -77,6 +80,44 @@ function clamp01(x: number) {
 function cleanParam(v: any): string {
   if (Array.isArray(v)) v = v[0];
   return String(v ?? "").trim().replace(/^"+|"+$/g, "");
+}
+
+function resolveCountryDisplayName(country: UiCountry): string {
+  const raw = (country as any)?.raw ?? {};
+  const code = cleanParam((country as any)?.code).toUpperCase();
+
+  const masterdataLabel =
+    cleanParam((country as any)?.displayName) ||
+    cleanParam((country as any)?.display_name) ||
+    cleanParam((country as any)?.countryName) ||
+    cleanParam((country as any)?.country_name) ||
+    cleanParam(raw?.display_name) ||
+    cleanParam(raw?.displayName) ||
+    cleanParam(raw?.country_name) ||
+    cleanParam(raw?.countryName) ||
+    cleanParam(raw?.name) ||
+    cleanParam(raw?.label) ||
+    cleanParam((country as any)?.label);
+
+  if (
+    masterdataLabel &&
+    (!code || masterdataLabel.toUpperCase() !== code)
+  ) {
+    return masterdataLabel;
+  }
+
+  try {
+    const DisplayNames = (Intl as any)?.DisplayNames;
+    if (DisplayNames && code) {
+      const regionNames = new DisplayNames(["en"], { type: "region" });
+      const resolved = cleanParam(regionNames.of(code));
+      if (resolved && resolved.toUpperCase() !== code) {
+        return resolved;
+      }
+    }
+  } catch {}
+
+  return masterdataLabel || code;
 }
 
 function normalizeAudioGender(value: unknown): AudioGender {
@@ -665,14 +706,14 @@ function CompactChip({
 }: {
   label: string;
   value: string;
-  onPress: () => void;
+  onPress?: () => void;
   disabled?: boolean;
   active?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
-      disabled={disabled}
+      disabled={disabled || !onPress}
       style={{
         flex: 1,
         borderRadius: 14,
@@ -698,7 +739,9 @@ function CompactChip({
         >
           {value}
         </Text>
-        <Text style={{ color: "rgba(248,216,104,0.65)", fontWeight: "900", fontSize: 14 }}>›</Text>
+        {!!onPress && (
+          <Text style={{ color: "rgba(248,216,104,0.65)", fontWeight: "900", fontSize: 14 }}>›</Text>
+        )}
       </View>
     </Pressable>
   );
@@ -1100,8 +1143,31 @@ async function postAudioAiJson<T>(paths: string | string[], body: any, authLike:
   throw lastError ?? new Error("Request failed");
 }
 
+function hasAudioEnhancerDirectiveLeak(input: unknown): boolean {
+  const normalized = cleanParam(input)
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+  if (!normalized) return false;
+
+  const markers = [
+    "write for ",
+    "delivery style:",
+    "pacing:",
+    "target locale:",
+    "source locale:",
+    "voice style:",
+    "voice direction:",
+    "tts direction:",
+    "tts guidance:",
+    "tts instruction:",
+  ];
+
+  return markers.some((marker) => normalized.includes(marker));
+}
+
 function normalizeAudioEnhancerResult(raw: any, fallback: PromptEnhancerResult): PromptEnhancerResult {
-  const enhancedInput =
+  const rawEnhancedInput =
     cleanParam(raw?.enhanced_input) ||
     cleanParam(raw?.enhanced_script) ||
     cleanParam(raw?.enhanced_text) ||
@@ -1109,6 +1175,12 @@ function normalizeAudioEnhancerResult(raw: any, fallback: PromptEnhancerResult):
     cleanParam(raw?.result?.enhanced_input) ||
     cleanParam(raw?.result?.enhanced_script) ||
     cleanParam(raw?.result?.enhanced_text);
+
+  const enhancedInput =
+    rawEnhancedInput &&
+    !hasAudioEnhancerDirectiveLeak(rawEnhancedInput)
+      ? rawEnhancedInput
+      : "";
 
   const rawAlternatives = Array.isArray(raw?.alternatives)
     ? raw.alternatives
@@ -1127,7 +1199,9 @@ function normalizeAudioEnhancerResult(raw: any, fallback: PromptEnhancerResult):
         cleanParam(item?.enhanced_input) ||
         cleanParam(item?.enhanced_script) ||
         cleanParam(item?.enhanced_text);
-      return text ? { label, text } : null;
+      return text && !hasAudioEnhancerDirectiveLeak(text)
+        ? { label, text }
+        : null;
     })
     .filter(Boolean) as Array<{ label: string; text: string }>;
 
@@ -1202,9 +1276,14 @@ function buildLocalAudioEnhancement(
     original_input: userInput,
     enhanced_input: buildAudioSpeechRewrite(userInput, "primary"),
     alternatives: [
-      { label: "Clear narration", text: buildAudioSpeechRewrite(userInput, "clear") },
-      { label: "Warm delivery", text: buildAudioSpeechRewrite(userInput, "warm") },
-      { label: "Expressive", text: buildAudioSpeechRewrite(userInput, "expressive") },
+      {
+        label: "Shorter",
+        text: buildAudioSpeechRewrite(userInput, "clear"),
+      },
+      {
+        label: "Premium",
+        text: buildAudioSpeechRewrite(userInput, "expressive"),
+      },
     ],
     tips: [
       chars > 360 ? "Shorter sentences usually sound better in generated speech." : "Use short sentences for cleaner speech pacing.",
@@ -1452,9 +1531,9 @@ export default function AudioStudioScreen() {
   const isFocused = useIsFocused();
 
   const [text, setText] = useState("");
-  const [targetLocale, setTargetLocale] = useState("hi-IN");
-  const [sourceLanguage, setSourceLanguage] = useState<string | null>(null);
-  const [translate, setTranslate] = useState(true);
+  const [countryCode, setCountryCode] = useState<string | null>(null);
+  const [targetLocale, setTargetLocale] = useState("");
+  const sourceLanguage = "en";
 
   const [voice, setVoice] = useState<string | null>(null);
   const [context, setContext] = useState<string>("");
@@ -1509,8 +1588,8 @@ export default function AudioStudioScreen() {
     router.replace("/(tabs)/audio" as any);
   }, [authSessionKey, authUserId, isReady, queryClient, resetCreatorFlow, setCreatorFlowOwner]);
 
+  const [openCountry, setOpenCountry] = useState(false);
   const [openLocale, setOpenLocale] = useState(false);
-  const [openSource, setOpenSource] = useState(false);
   const [openVoice, setOpenVoice] = useState(false);
 
   const progress = useRef(new Animated.Value(0)).current;
@@ -1720,18 +1799,61 @@ export default function AudioStudioScreen() {
     } as any).catch(() => {});
   }, [faceImageUrl, effectiveFaceArtifactId, faceProfileId, effectiveFaceMediaAssetId, effectiveFaceGender, selectedAspectRatio]);
 
-  const localesQ = useQuery({
-    queryKey: ["audio-locales", authSessionKey],
-    queryFn: () => fetchAudioLocales(token),
+  const countriesQ = useQuery({
+    queryKey: ["audio-countries", authSessionKey],
+    queryFn: () => fetchAudioCountries(token),
     enabled: tokenReady,
-    staleTime: 0,
+    staleTime: 10 * 60_000,
+    refetchOnMount: "always",
+    refetchOnReconnect: true,
+    retry: 0,
+  });
+
+  const countriesErr = (countriesQ.error as any)?.message
+    ? String((countriesQ.error as any).message)
+    : null;
+  const uiCountries: UiCountry[] = useMemo(
+    () => normalizeCountries(countriesQ.data as any),
+    [countriesQ.data]
+  );
+  const countryOptions: Opt[] = useMemo(
+    () =>
+      uiCountries
+        .map((country) => ({
+          code: cleanParam(country.code).toUpperCase(),
+          label: resolveCountryDisplayName(country),
+        }))
+        .filter((country) => !!country.code)
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [uiCountries]
+  );
+
+  useEffect(() => {
+    if (!countryOptions.length) return;
+    if (countryCode && countryOptions.some((country) => country.code === countryCode)) return;
+
+    const deviceCountry = cleanParam(getLocales()?.[0]?.regionCode).toUpperCase();
+    const preferred = countryOptions.find((country) => country.code === deviceCountry);
+    setCountryCode(preferred?.code ?? countryOptions[0]?.code ?? null);
+    setTargetLocale("");
+    setVoice(null);
+  }, [countryCode, countryOptions]);
+
+  const localesQ = useQuery({
+    queryKey: ["audio-target-languages", authSessionKey, countryCode],
+    queryFn: () => fetchAudioTargetLanguages(token, countryCode || ""),
+    enabled: tokenReady && !!countryCode,
+    staleTime: 10 * 60_000,
     refetchOnMount: "always",
     refetchOnReconnect: true,
     retry: 0,
   });
 
   const localesErr = (localesQ.error as any)?.message ? String((localesQ.error as any).message) : null;
-  const uiLocales: UiLocale[] = useMemo(() => normalizeLocales(localesQ.data as any), [localesQ.data]);
+  const uiLocales: UiLocale[] = useMemo(
+    () => normalizeTargetLanguages(localesQ.data as any),
+    [localesQ.data]
+  );
 
   const filteredLocales: UiLocale[] = useMemo(() => {
     const list = uiLocales.filter((l) => cleanParam(l.code));
@@ -1759,15 +1881,22 @@ export default function AudioStudioScreen() {
     return withIndex.map((item) => item.locale);
   }, [uiLocales]);
 
-
   useEffect(() => {
-    if (!filteredLocales.length) return;
-    const ok = filteredLocales.some((l) => l.code === targetLocale);
-    if (!ok) {
-      setTargetLocale(filteredLocales[0].code);
-      setVoice(null);
+    if (!filteredLocales.length) {
+      if (targetLocale) setTargetLocale("");
+      if (voice) setVoice(null);
+      return;
     }
-  }, [filteredLocales, targetLocale]);
+
+    const currentIsValid = filteredLocales.some((locale) => locale.code === targetLocale);
+    if (currentIsValid) return;
+
+    const englishTarget = filteredLocales.find(
+      (locale) => cleanParam(locale.languageCode).toLowerCase() === "en"
+    );
+    setTargetLocale(englishTarget?.code ?? filteredLocales[0].code);
+    setVoice(null);
+  }, [filteredLocales, targetLocale, voice]);
 
   const voicesQ = useQuery({
     queryKey: ["audio-voices", authSessionKey, targetLocale],
@@ -1798,16 +1927,12 @@ export default function AudioStudioScreen() {
     setVoice(def.key);
   }, [uiVoices, voice, effectiveFaceGender]);
 
-  useEffect(() => {
-    if (!sourceLanguage) return;
-    if (sourceLanguage === targetLocale) setTranslate(false);
-  }, [sourceLanguage, targetLocale]);
-
-  const localeLabel = filteredLocales.find((x) => x.code === targetLocale)?.label ?? targetLocale;
-  const sourceLabel =
-    sourceLanguage
-      ? filteredLocales.find((x) => x.code === sourceLanguage)?.label ?? sourceLanguage
-      : "Auto";
+  const selectedTargetLocale = filteredLocales.find((x) => x.code === targetLocale) ?? null;
+  const localeLabel = selectedTargetLocale?.label ?? targetLocale;
+  const countryLabel = countryOptions.find((x) => x.code === countryCode)?.label ?? "Select";
+  const sourceLabel = "English";
+  const targetLanguageCode = cleanParam(selectedTargetLocale?.languageCode).toLowerCase();
+  const translate = !!targetLocale && targetLanguageCode !== "en";
   const selectedVoice = uiVoices.find((x) => x.key === voice) ?? null;
   const voiceLabel = selectedVoice?.label ?? (voice ?? "Select");
   const faceSpeakerGender = normalizeAudioGender(effectiveFaceGender);
@@ -2240,7 +2365,7 @@ export default function AudioStudioScreen() {
             insufficient_balance: pricing?.insufficientBalance ?? false,
             has_face_preview: hasFacePreview,
           },
-          locale: targetLocale || "en",
+          locale: sourceLanguage || "en",
           max_alternatives: 3,
         },
         audioAiAuth
@@ -2269,6 +2394,7 @@ export default function AudioStudioScreen() {
     pricing?.estimateLabel,
     pricing?.insufficientBalance,
     targetLocale,
+    sourceLanguage,
     tokenReady,
     audioAiAuth,
   ]);
@@ -2285,10 +2411,11 @@ useEffect(() => {
   if (!isFocused) return;
   if (!tokenReady) return;
   if (faceJobId && !flowFaceUrl && !faceImageUrlParam) faceStatusQ.refetch?.();
-  localesQ.refetch?.();
+  countriesQ.refetch?.();
+  if (countryCode) localesQ.refetch?.();
   if (targetLocale) voicesQ.refetch?.();
   if (pricingPreviewEnabled) pricingQ.refetch?.();
-}, [isFocused, tokenReady, faceJobId, flowFaceUrl, faceImageUrlParam, targetLocale, pricingPreviewEnabled]);
+}, [isFocused, tokenReady, faceJobId, flowFaceUrl, faceImageUrlParam, countryCode, targetLocale, pricingPreviewEnabled]);
 
   const previewPendingMessage =
     voiceGenderMismatch
@@ -2435,12 +2562,8 @@ useEffect(() => {
     if (!url) return;
 
     try {
-      await shareUrl(url, { title: "desifaces audio", message: "Audio shared from desifaces" });
-    } catch {
-      try {
-        await RNShare.share({ message: url });
-      } catch {}
-    }
+      await shareUrl(url, { title: "desifaces • Audio", type: "audio" });
+    } catch {}
   }, [selectedIdx, variants]);
 
   const updateJob = useCallback(
@@ -3511,11 +3634,27 @@ const proceedToFusion = useCallback(
 
         <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
           <CompactChip
+            label="Country"
+            value={countryLabel}
+            onPress={() => setOpenCountry(true)}
+            disabled={locked || !countryOptions.length || !tokenReady}
+            active={!!countryCode}
+          />
+          <CompactChip
             label="Target"
-            value={localeLabel}
+            value={localeLabel || "Select"}
             onPress={() => setOpenLocale(true)}
-            disabled={locked || !filteredLocales.length || !tokenReady}
+            disabled={locked || !countryCode || !filteredLocales.length || !tokenReady}
             active={!!targetLocale}
+          />
+        </View>
+
+        <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+          <CompactChip
+            label="Source"
+            value={sourceLabel}
+            disabled
+            active
           />
           <CompactChip
             label="Voice"
@@ -3526,42 +3665,9 @@ const proceedToFusion = useCallback(
           />
         </View>
 
-        <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
-          <CompactChip
-            label="Source"
-            value={sourceLanguage ? sourceLabel : "Auto"}
-            onPress={() => setOpenSource(true)}
-            disabled={locked || !translate || !filteredLocales.length || !tokenReady}
-            active={translate}
-          />
-          <Pressable
-            onPress={() => {
-              if (locked) return;
-              setTranslate((v) => {
-                const next = !v;
-                if (!next) setSourceLanguage(null);
-                return next;
-              });
-            }}
-            disabled={locked || !tokenReady}
-            style={{
-              flex: 1,
-              borderRadius: 14,
-              borderWidth: 1,
-              borderColor: translate ? "rgba(248,184,72,0.42)" : "rgba(255,255,255,0.10)",
-              backgroundColor: translate ? "rgba(232,152,56,0.16)" : "rgba(255,255,255,0.06)",
-              paddingVertical: 10,
-              paddingHorizontal: 12,
-              justifyContent: "center",
-              opacity: locked ? 0.7 : 1,
-            }}
-          >
-            <Text style={{ color: "rgba(255,255,255,0.55)", fontWeight: "800", fontSize: 10 }}>Translate</Text>
-            <Text style={{ color: DF.text, fontWeight: "900", fontSize: 12, marginTop: 6 }}>
-              {translate ? "On" : "Off"}
-            </Text>
-          </Pressable>
-        </View>
+        <Text style={{ color: DF.muted, fontWeight: "700", fontSize: 11, marginTop: 8 }}>
+          English is the fixed source language. Translation turns on automatically when the selected target language is not English.
+        </Text>
 
         <Text style={{ color: DF.muted, fontWeight: "800", fontSize: 12, marginTop: 12, marginBottom: 6 }}>
           Context (optional)
@@ -3584,7 +3690,7 @@ const proceedToFusion = useCallback(
         />
       </GlassCard>
 
-      {(!!localesErr || !!voicesErr) && (
+      {(!!countriesErr || !!localesErr || !!voicesErr) && (
         <GlassCard
           style={{
             marginTop: 12,
@@ -3593,9 +3699,14 @@ const proceedToFusion = useCallback(
           }}
         >
           <Text style={{ color: "rgba(255,210,210,0.95)", fontWeight: "900" }}>Audio masterdata failed</Text>
+          {!!countriesErr && (
+            <Text style={{ color: "rgba(255,210,210,0.85)", fontWeight: "700", marginTop: 6 }}>
+              Countries: {countriesErr}
+            </Text>
+          )}
           {!!localesErr && (
             <Text style={{ color: "rgba(255,210,210,0.85)", fontWeight: "700", marginTop: 6 }}>
-              Locales: {localesErr}
+              Target languages: {localesErr}
             </Text>
           )}
           {!!voicesErr && (
@@ -3606,7 +3717,10 @@ const proceedToFusion = useCallback(
 
           <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
             <Pressable
-              onPress={() => localesQ.refetch()}
+              onPress={() => {
+                countriesQ.refetch();
+                if (countryCode) localesQ.refetch();
+              }}
               disabled={locked}
               style={{
                 flex: 1,
@@ -3619,7 +3733,7 @@ const proceedToFusion = useCallback(
                 opacity: locked ? 0.7 : 1,
               }}
             >
-              <Text style={{ color: DF.text, fontWeight: "900" }}>Retry Locales</Text>
+              <Text style={{ color: DF.text, fontWeight: "900" }}>Retry Catalog</Text>
             </Pressable>
 
             <Pressable
@@ -3880,6 +3994,19 @@ const proceedToFusion = useCallback(
       />
 
       <SelectModal
+        open={openCountry}
+        title="Country"
+        items={countryOptions}
+        selectedCode={countryCode}
+        onClose={() => setOpenCountry(false)}
+        onSelect={(x) => {
+          setCountryCode(x.code);
+          setTargetLocale("");
+          setVoice(null);
+        }}
+      />
+
+      <SelectModal
         open={openLocale}
         title="Target Language"
         items={localeOptions}
@@ -3889,15 +4016,6 @@ const proceedToFusion = useCallback(
           setTargetLocale(x.code);
           setVoice(null);
         }}
-      />
-
-      <SelectModal
-        open={openSource}
-        title="Source Language"
-        items={[{ code: "", label: "Auto detect" }, ...localeOptions]}
-        selectedCode={sourceLanguage ?? ""}
-        onClose={() => setOpenSource(false)}
-        onSelect={(x) => setSourceLanguage(x.code || null)}
       />
 
       <SelectModal
@@ -4117,6 +4235,12 @@ const proceedToFusion = useCallback(
         loading={enhancerLoading}
         error={enhancerError}
         result={enhancerResult}
+        title="Script enhancement"
+        subtitle="Review the enhanced spoken script before you apply it."
+        loadingLabel="Making your audio script richer and more natural…"
+        primaryActionLabel="Use enhanced script"
+        alternativesTitle="Alternate scripts"
+        tipsTitle="Why this script should sound better"
         onClose={() => setEnhancerOpen(false)}
         onRefresh={() => {
           void requestPromptEnhancement();

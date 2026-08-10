@@ -31,6 +31,12 @@ type Props = {
   loading?: boolean;
   error?: string | null;
   result?: PromptEnhancerResult | null;
+  title?: string;
+  subtitle?: string;
+  loadingLabel?: string;
+  primaryActionLabel?: string;
+  alternativesTitle?: string;
+  tipsTitle?: string;
   onClose: () => void;
   onRefresh?: () => void;
   onApply: (text: string, label?: string) => void;
@@ -73,6 +79,12 @@ export default function PromptEnhancerSheet({
   loading = false,
   error,
   result,
+  title = "Prompt enhancement",
+  subtitle = "Review the rewrite before you apply it.",
+  loadingLabel = "Building a stronger Face prompt…",
+  primaryActionLabel = "Use enhanced prompt",
+  alternativesTitle = "Alternate directions",
+  tipsTitle = "Why this should perform better",
   onClose,
   onRefresh,
   onApply,
@@ -117,10 +129,10 @@ export default function PromptEnhancerSheet({
         >
           <View style={{ flex: 1 }}>
             <Text style={{ color: DF.text, fontWeight: "900", fontSize: 16 }}>
-              Prompt enhancement
+              {title}
             </Text>
             <Text style={{ color: DF.muted, fontWeight: "700", marginTop: 4, fontSize: 12 }}>
-              Review the rewrite before you apply it.
+              {subtitle}
             </Text>
           </View>
 
@@ -177,7 +189,7 @@ export default function PromptEnhancerSheet({
             >
               <ActivityIndicator />
               <Text style={{ color: DF.text, fontWeight: "800", fontSize: 12 }}>
-                Building a stronger Face prompt…
+                {loadingLabel}
               </Text>
             </View>
           )}
@@ -239,7 +251,7 @@ export default function PromptEnhancerSheet({
 
               <View style={{ marginTop: 12 }}>
                 <ActionButton
-                  label="Use enhanced prompt"
+                  label={primaryActionLabel}
                   variant="primary"
                   onPress={() => onApply(result.enhanced_input, "Enhanced")}
                 />
@@ -259,7 +271,7 @@ export default function PromptEnhancerSheet({
               }}
             >
               <Text style={{ color: DF.text, fontWeight: "900", fontSize: 12 }}>
-                Alternate directions
+                {alternativesTitle}
               </Text>
 
               {alternatives.map((alt, index) => (
@@ -301,7 +313,7 @@ export default function PromptEnhancerSheet({
               }}
             >
               <Text style={{ color: DF.text, fontWeight: "900", fontSize: 12 }}>
-                Why this should perform better
+                {tipsTitle}
               </Text>
               {tips.map((tip, index) => (
                 <Text

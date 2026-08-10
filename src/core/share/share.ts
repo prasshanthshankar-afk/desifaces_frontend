@@ -1,12 +1,34 @@
-import { Platform, Share } from "react-native";
 import * as ExpoFileSystem from "expo-file-system";
 
-export type ShareUrlOpts = { title?: string; message?: string };
+export type ShareMediaType = "image" | "audio" | "video";
+
+export type ShareUrlOpts = {
+  title?: string;
+  message?: string;
+  type?: ShareMediaType;
+};
+
+const MEDIA_FORMATS = {
+  jpg: { type: "image", mimeType: "image/jpeg", uti: "public.jpeg" },
+  jpeg: { type: "image", mimeType: "image/jpeg", uti: "public.jpeg" },
+  png: { type: "image", mimeType: "image/png", uti: "public.png" },
+  webp: { type: "image", mimeType: "image/webp", uti: "public.image" },
+  gif: { type: "image", mimeType: "image/gif", uti: "com.compuserve.gif" },
+  heic: { type: "image", mimeType: "image/heic", uti: "public.heic" },
+  mp3: { type: "audio", mimeType: "audio/mpeg", uti: "public.mp3" },
+  m4a: { type: "audio", mimeType: "audio/mp4", uti: "public.audio" },
+  wav: { type: "audio", mimeType: "audio/wav", uti: "com.microsoft.waveform-audio" },
+  aac: { type: "audio", mimeType: "audio/aac", uti: "public.audio" },
+  mp4: { type: "video", mimeType: "video/mp4", uti: "public.mpeg-4" },
+  mov: { type: "video", mimeType: "video/quicktime", uti: "com.apple.quicktime-movie" },
+  m4v: { type: "video", mimeType: "video/x-m4v", uti: "com.apple.m4v-video" },
+  webm: { type: "video", mimeType: "video/webm", uti: "public.movie" },
+} as const;
 
 function sanitizeUrl(input: string) {
   const url = String(input ?? "").trim().replace(/^"+|"+$/g, "");
   if (!url) throw new Error("shareUrl: missing url");
-  if (!/^https?:\/\//i.test(url) && !/^file:\/\//i.test(url)) {
+  if (!/^https?:\/\//i.test(url) && !/^file:\/\//i.test(url) && !/^content:\/\//i.test(url)) {
     throw new Error(`shareUrl: unsupported url scheme: ${url.slice(0, 20)}…`);
   }
   return url;
@@ -14,7 +36,6 @@ function sanitizeUrl(input: string) {
 
 async function getExpoSharing() {
   try {
-    // Lazy import prevents "Cannot find native module 'ExpoSharing'" crashes at app startup.
     return await import("expo-sharing");
   } catch {
     return null;
@@ -36,6 +57,47 @@ function getWritableDirectory(): string | null {
   return String(candidate).endsWith("/") ? String(candidate) : `${String(candidate)}/`;
 }
 
+function extensionFromUrl(url: string): string {
+  const clean = url.split("?")[0].split("#")[0];
+  const candidate = (clean.split(".").pop() || "").toLowerCase();
+  return candidate in MEDIA_FORMATS ? candidate : "";
+}
+
+function defaultExtension(type: ShareMediaType): keyof typeof MEDIA_FORMATS {
+  if (type === "audio") return "m4a";
+  if (type === "video") return "mp4";
+  return "jpg";
+}
+
+function resolveMediaFormat(url: string, requestedType?: ShareMediaType) {
+  const detectedExtension = extensionFromUrl(url) as keyof typeof MEDIA_FORMATS | "";
+  const detected = detectedExtension ? MEDIA_FORMATS[detectedExtension] : null;
+  const type = requestedType ?? detected?.type ?? "image";
+  const extension =
+    detected && (!requestedType || detected.type === requestedType)
+      ? detectedExtension
+      : defaultExtension(type);
+  const format = MEDIA_FORMATS[extension as keyof typeof MEDIA_FORMATS];
+
+  return { extension, mimeType: format.mimeType, uti: format.uti };
+}
+
+async function deleteLocalFile(uri: string) {
+  const fsAny = ExpoFileSystem as any;
+  try {
+    if (typeof fsAny.deleteAsync === "function") {
+      await fsAny.deleteAsync(uri, { idempotent: true });
+      return;
+    }
+    if (typeof fsAny.File === "function") {
+      const file = new fsAny.File(uri);
+      if (typeof file.delete === "function") await Promise.resolve(file.delete());
+    }
+  } catch {
+    // Best-effort cache cleanup must not turn a successful share into an error.
+  }
+}
+
 async function downloadToLocalFile(url: string, localPath: string): Promise<{ uri: string }> {
   const fsAny = ExpoFileSystem as any;
 
@@ -46,8 +108,7 @@ async function downloadToLocalFile(url: string, localPath: string): Promise<{ ur
   if (typeof fsAny.File === "function" && typeof fsAny.downloadFileAsync === "function") {
     const file = new fsAny.File(localPath);
     const result = await fsAny.downloadFileAsync(url, file);
-    const uri = result?.uri || result?.file?.uri || file?.uri || localPath;
-    return { uri };
+    return { uri: result?.uri || result?.file?.uri || file?.uri || localPath };
   }
 
   throw new Error("expo-file-system download API unavailable");
@@ -55,50 +116,38 @@ async function downloadToLocalFile(url: string, localPath: string): Promise<{ ur
 
 export async function shareUrl(inputUrl: string, opts: ShareUrlOpts = {}) {
   const url = sanitizeUrl(inputUrl);
+  const title = opts.title ?? "desifaces";
+  const Sharing = await getExpoSharing();
 
-  const title = opts.title ?? "DesiFaces";
-  const message = opts.message ?? "Shared from DesiFaces";
+  if (!Sharing?.isAvailableAsync || !Sharing?.shareAsync) {
+    throw new Error("Media sharing is unavailable in this app build.");
+  }
+  if (!(await Sharing.isAvailableAsync())) {
+    throw new Error("Media sharing is unavailable on this device.");
+  }
 
-  // 1) Fast path: native text/url share.
-  try {
-    if (Platform.OS === "ios") {
-      await Share.share({ title, message, url } as any);
-    } else {
-      await Share.share({ title, message: `${message}\n${url}` });
-    }
+  const format = resolveMediaFormat(url, opts.type);
+  const sharingOptions = {
+    dialogTitle: title,
+    mimeType: format.mimeType,
+    UTI: format.uti,
+  };
+
+  if (/^(file|content):\/\//i.test(url)) {
+    await Sharing.shareAsync(url, sharingOptions);
     return;
-  } catch {
-    // Continue to file fallback.
   }
 
-  // 2) File fallback: better UX for media, especially Android share targets.
+  const baseDir = getWritableDirectory();
+  if (!baseDir) throw new Error("No writable cache directory is available for media sharing.");
+
+  const localPath = `${baseDir}desifaces_${Date.now()}.${format.extension}`;
+  const result = await downloadToLocalFile(url, localPath);
   try {
-    const Sharing = await getExpoSharing();
-    if (!Sharing?.isAvailableAsync || !Sharing?.shareAsync) throw new Error("expo-sharing unavailable");
-
-    const clean = url.split("?")[0];
-    const extGuess = (clean.split(".").pop() || "jpg").toLowerCase();
-    const safeExt = ["jpg", "jpeg", "png", "webp", "gif", "heic", "mp4", "mov"].includes(extGuess)
-      ? extGuess
-      : "jpg";
-
-    const baseDir = getWritableDirectory();
-    if (!baseDir) throw new Error("No writable cache/document directory available");
-
-    const localPath = `${baseDir}desifaces_${Date.now()}.${safeExt}`;
-    const res = await downloadToLocalFile(url, localPath);
-
-    const can = await Sharing.isAvailableAsync();
-    if (can) {
-      await Sharing.shareAsync(res.uri, { dialogTitle: title });
-      return;
-    }
-  } catch {
-    // Continue to final fallback.
+    await Sharing.shareAsync(result.uri, sharingOptions);
+  } finally {
+    await deleteLocalFile(result.uri);
   }
-
-  // 3) Final fallback.
-  await Share.share({ title, message: `${message}\n${url}` });
 }
 
 const ShareService = { shareUrl };
