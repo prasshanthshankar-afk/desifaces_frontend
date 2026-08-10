@@ -109,6 +109,25 @@ export type RegionConfigView = {
   is_active: boolean;
 };
 
+export type FaceCountryConfigView = {
+  code: string;
+  country_code: string;
+  region_code?: string | null;
+  internal_region_code?: string | null;
+  display_name: string;
+  is_active: boolean;
+};
+
+export type FaceSubdivisionConfigView = {
+  code: string;
+  region_code: string;
+  country_code: string;
+  subdivision_code: string;
+  display_name: string;
+  internal_region_code?: string | null;
+  is_active: boolean;
+};
+
 export type ContextConfigView = {
   code: string;
   display_name: string;
@@ -341,6 +360,37 @@ export async function listFaceRegions(params?: {
     `/api/face/config/regions?language=${encodeURIComponent(language)}`,
     {
       token: params?.token,
+      method: "GET",
+    }
+  );
+}
+
+export async function listFaceCountries(params?: {
+  token?: string | null;
+  language?: string;
+}): Promise<FaceCountryConfigView[]> {
+  const language = params?.language ?? "en";
+
+  return faceRequest<FaceCountryConfigView[]>(
+    `/api/face/config/countries?language=${encodeURIComponent(language)}`,
+    {
+      token: params?.token,
+      method: "GET",
+    }
+  );
+}
+
+export async function listFaceSubdivisions(params: {
+  countryCode: string;
+  token?: string | null;
+  language?: string;
+}): Promise<FaceSubdivisionConfigView[]> {
+  const language = params.language ?? "en";
+
+  return faceRequest<FaceSubdivisionConfigView[]>(
+    `/api/face/config/subdivisions?country_code=${encodeURIComponent(params.countryCode)}&language=${encodeURIComponent(language)}`,
+    {
+      token: params.token,
       method: "GET",
     }
   );

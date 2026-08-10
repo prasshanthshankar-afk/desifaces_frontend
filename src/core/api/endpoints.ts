@@ -64,6 +64,10 @@ export const endpoints = {
     config: {
       regions: (language = "en") =>
         `/api/face/config/regions?language=${encodeURIComponent(language)}`,
+      countries: (language = "en") =>
+        `/api/face/config/countries?language=${encodeURIComponent(language)}`,
+      subdivisions: (countryCode: string, language = "en") =>
+        `/api/face/config/subdivisions?country_code=${encodeURIComponent(countryCode)}&language=${encodeURIComponent(language)}`,
       contexts: "/api/face/config/contexts",
     },
   },
@@ -88,6 +92,9 @@ export const endpoints = {
     catalog: {
       locales: (endToEndOnly = true, enabledOnly = true) =>
         `/api/audio/catalog/locales?end_to_end_only=${endToEndOnly}&enabled_only=${enabledOnly}`,
+      countries: "/api/audio/catalog/countries",
+      targetLanguages: (countryCode: string) =>
+        `/api/audio/catalog/target-languages?country_code=${encodeURIComponent(countryCode)}`,
       voices: (locale: string) =>
         `/api/audio/catalog/voices?locale=${encodeURIComponent(locale)}`,
       sync: "/api/audio/catalog/sync",

@@ -1,32 +1,38 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  Pressable,
-  Modal,
-  FlatList,
-  Dimensions,
-  ScrollView,
-  Platform,
-  Share as RNShare,
-  ActivityIndicator,
-  TextInput,
-} from "react-native";
+import Slider from "@react-native-community/slider";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import Slider from "@react-native-community/slider";
+import { getLocales } from "expo-localization";
 import { router } from "expo-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Dimensions,
+  FlatList,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
-import { DF } from "../../core/theme/colors";
-import { FACE_BASE } from "../../core/config/env";
-import DFHeader from "../../core/ui/DFHeader";
+import {
+  listFaceCountries,
+  listFaceSubdivisions,
+  type FaceCountryConfigView,
+  type FaceSubdivisionConfigView,
+} from "../../core/api/faceClient";
 import { useAuth } from "../../core/auth/AuthContext";
-import { shareUrl } from "../../core/share/share";
+import { FACE_BASE } from "../../core/config/env";
 import { useCreatorFlow } from "../../core/flow/creatorFlowStore";
-import DFBlockingOverlay from "../../core/ui/DFBlockingOverlay";
 import { saveCreateFlowContext } from "../../core/media/createFlow";
 import { useResolvedPricingDisplay } from "../../core/pricing/resolvePricingDisplay";
+import { shareUrl } from "../../core/share/share";
+import { DF } from "../../core/theme/colors";
+import DFBlockingOverlay from "../../core/ui/DFBlockingOverlay";
+import DFHeader from "../../core/ui/DFHeader";
 
 import {
   apiCheckFaceSourceImageSafety,
@@ -43,15 +49,15 @@ import GlobalJobsTray, {
 
 type StudioJobStage = StudioJobItem["stage"];
 
-import { RunReceiptCard } from "../../components/pricing/RunReceiptCard";
-import { JobPricingTimeline } from "../../components/pricing/JobPricingTimeline";
-import { PricingTopBar } from "../../components/pricing/PricingTopBar";
 import PromptEnhancerSheet, {
   type PromptEnhancerResult,
 } from "../../components/ai/PromptEnhancerSheet";
 import StudioTipsRail, {
   type StudioCoachTip,
 } from "../../components/ai/StudioTipsRail";
+import { JobPricingTimeline } from "../../components/pricing/JobPricingTimeline";
+import { PricingTopBar } from "../../components/pricing/PricingTopBar";
+import { RunReceiptCard } from "../../components/pricing/RunReceiptCard";
 
 type Mode = "text-to-image" | "image-to-image";
 type Opt = { code: string; label: string };
@@ -65,9 +71,6 @@ type FaceVariant = {
 };
 
 type ImageSafetyState = "idle" | "checking" | "passed" | "blocked" | "error";
-
-const COUNTRY_LABEL = "India";
-
 
 
 const SHOT_TYPE_OPTIONS: Opt[] = [
@@ -86,6 +89,50 @@ const SHOT_TYPE_OPTIONS: Opt[] = [
 function cleanParam(v: any): string {
   if (Array.isArray(v)) v = v[0];
   return String(v ?? "").trim().replace(/^"+|"+$/g, "");
+}
+
+function faceVariantStableKey(v?: FaceVariant | null): string {
+  return cleanParam(
+    (v as any)?.variant_number ??
+      (v as any)?.face_profile_id ??
+      (v as any)?.media_asset_id ??
+      (v as any)?.artifact_id ??
+      (v as any)?.image_url ??
+      ""
+  );
+}
+
+function mergeFaceVariants(
+  existing: FaceVariant[],
+  incoming: FaceVariant[]
+): FaceVariant[] {
+  if (!incoming.length) return existing;
+
+  const merged = [...existing];
+  const indexByKey = new Map<string, number>();
+
+  merged.forEach((item, index) => {
+    const key = faceVariantStableKey(item);
+    if (key) indexByKey.set(key, index);
+  });
+
+  for (const item of incoming) {
+    const key = faceVariantStableKey(item);
+    if (!key) continue;
+
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex == null) {
+      indexByKey.set(key, merged.length);
+      merged.push(item);
+    } else {
+      merged[existingIndex] = {
+        ...merged[existingIndex],
+        ...item,
+      };
+    }
+  }
+
+  return merged;
 }
 
 
@@ -1195,16 +1242,7 @@ function ImageViewerModal({
     if (!cleanUri) return;
 
     try {
-      await shareUrl(cleanUri, { title: "desifaces • Face", message: "Generated face" });
-      return;
-    } catch {}
-
-    try {
-      if (Platform.OS === "ios") {
-        await RNShare.share({ url: cleanUri, message: cleanUri });
-      } else {
-        await RNShare.share({ message: cleanUri });
-      }
+      await shareUrl(cleanUri, { title: "desifaces • Face", type: "image" });
     } catch {}
   }, [cleanUri]);
 
@@ -1439,14 +1477,14 @@ export default function FaceStudioScreen() {
   const [imageSafetyReason, setImageSafetyReason] = useState<string | null>(null);
 
   const [gender, setGender] = useState<"male" | "female">("female");
-  const [zoneCode, setZoneCode] = useState<string | null>(null);
+  const [countryCode, setCountryCode] = useState<string | null>(null);
   const [regionCode, setRegionCode] = useState<string | null>(null);
   const [contextCode, setContextCode] = useState<string | null>(null);
   const [useCaseCode, setUseCaseCode] = useState<string | null>(null);
   const [shotTypeCode, setShotTypeCode] = useState<string | null>("portrait_headshot");
   const [aspectRatio, setAspectRatio] = useState<"9:16" | "16:9" | "1:1">(normalizeAspectRatio(flow?.fusionAspectRatio || "9:16"));
 
-  const [openZone, setOpenZone] = useState(false);
+  const [openCountry, setOpenCountry] = useState(false);
   const [openRegion, setOpenRegion] = useState(false);
   const [openContext, setOpenContext] = useState(false);
   const [openUseCase, setOpenUseCase] = useState(false);
@@ -1516,7 +1554,17 @@ export default function FaceStudioScreen() {
     });
   }, [authSessionKey, authUserId, isReady, queryClient, resetCreatorFlow, setCreatorFlowOwner]);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const selectedIdxRef = useRef<number | null>(null);
+  const variantsRef = useRef<FaceVariant[]>([]);
   const [resultsJobId, setResultsJobId] = useState<string | null>(null);
+
+  useEffect(() => {
+    selectedIdxRef.current = selectedIdx;
+  }, [selectedIdx]);
+
+  useEffect(() => {
+    variantsRef.current = variants;
+  }, [variants]);
 
   const [jobs, setJobs] = useState<StudioJobItem[]>([]);
   const [backgroundNotice, setBackgroundNotice] = useState<string | null>(null);
@@ -1577,32 +1625,107 @@ export default function FaceStudioScreen() {
   const mdLoading = mdQ.isFetching || mdQ.isLoading;
   const mdErr = (mdQ.error as any)?.message ? String((mdQ.error as any).message) : null;
 
-  const zoneOptions: Opt[] = useMemo(() => {
-    if (!md?.regions?.length) return [];
+  const countriesQ = useQuery({
+    queryKey: ["face-countries", authSessionKey, "en"],
+    queryFn: () =>
+      listFaceCountries({
+        token: faceAiAuth.token || undefined,
+        language: "en",
+      }),
+    enabled: isReady && isAuthed,
+    staleTime: 10 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 0,
+  });
 
-    const active = md.regions.filter((r: any) => r.is_active);
-    const unique: string[] = Array.from(
-      new Set(
-        active
-          .map((r: any) => r.sub_region)
-          .filter((z: any): z is string => typeof z === "string" && z.trim().length > 0)
-      )
-    );
+  const countries = (countriesQ.data ?? []) as FaceCountryConfigView[];
+  const countryOptions: Opt[] = useMemo(
+    () =>
+      countries
+        .filter((item) => item.is_active && cleanParam(item.country_code))
+        .map((item) => ({
+          code: cleanParam(item.country_code).toUpperCase(),
+          label: cleanParam(item.display_name) || cleanParam(item.country_code).toUpperCase(),
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [countries]
+  );
 
-    unique.sort((a, b) => a.localeCompare(b));
-    return unique.map((z) => ({ code: z, label: z }));
-  }, [md]);
+  const subdivisionsQ = useQuery({
+    queryKey: ["face-subdivisions", authSessionKey, countryCode, "en"],
+    queryFn: () =>
+      listFaceSubdivisions({
+        countryCode: countryCode || "",
+        token: faceAiAuth.token || undefined,
+        language: "en",
+      }),
+    enabled: isReady && isAuthed && !!countryCode,
+    staleTime: 10 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 0,
+  });
 
-  const regionOptions: Opt[] = useMemo(() => {
-    if (!md?.regions?.length) return [];
-    const active = md.regions.filter((r: any) => r.is_active);
-    const filtered = zoneCode ? active.filter((r: any) => r.sub_region === zoneCode) : active;
-    filtered.sort(
-      (a: any, b: any) =>
-        (a.sort_order ?? 0) - (b.sort_order ?? 0) || String(a.label).localeCompare(String(b.label))
-    );
-    return filtered.map((r: any) => ({ code: r.code, label: r.label }));
-  }, [md, zoneCode]);
+  const subdivisions = (subdivisionsQ.data ?? []) as FaceSubdivisionConfigView[];
+  const regionOptions: Opt[] = useMemo(
+    () =>
+      subdivisions
+        .filter((item) => item.is_active && cleanParam(item.code))
+        .map((item) => ({
+          code: cleanParam(item.code),
+          label: cleanParam(item.display_name) || cleanParam(item.subdivision_code) || cleanParam(item.code),
+        })),
+    [subdivisions]
+  );
+
+  const geographyLoading =
+    countriesQ.isFetching ||
+    countriesQ.isLoading ||
+    (!!countryCode && (subdivisionsQ.isFetching || subdivisionsQ.isLoading));
+
+  const geographyErr =
+    ((countriesQ.error as any)?.message ? String((countriesQ.error as any).message) : null) ||
+    ((subdivisionsQ.error as any)?.message ? String((subdivisionsQ.error as any).message) : null);
+
+  const selectedCountry = useMemo(
+    () =>
+      countries.find(
+        (item) =>
+          cleanParam(item.country_code).toUpperCase() ===
+          cleanParam(countryCode).toUpperCase()
+      ) ?? null,
+    [countries, countryCode]
+  );
+
+  const subdivisionCatalogResolved =
+    !!countryCode &&
+    subdivisionsQ.isSuccess &&
+    !subdivisionsQ.isFetching &&
+    !subdivisionsQ.isLoading &&
+    !subdivisionsQ.error;
+
+  const hasSubdivisions =
+    subdivisionCatalogResolved && regionOptions.length > 0;
+
+  const countryRegionCode = cleanParam(
+    selectedCountry?.region_code ??
+      selectedCountry?.internal_region_code ??
+      ""
+  );
+
+  const effectiveRegionCode = subdivisionCatalogResolved
+    ? hasSubdivisions
+      ? cleanParam(regionCode)
+      : countryRegionCode
+    : "";
+
+  const geographyReady =
+    !!countryCode &&
+    subdivisionCatalogResolved &&
+    !!effectiveRegionCode;
 
   const contextOptions: Opt[] = useMemo(() => {
     if (!md?.contexts?.length) return [];
@@ -1625,17 +1748,18 @@ export default function FaceStudioScreen() {
   }, [md]);
 
   useEffect(() => {
+    if (!countryOptions.length) return;
+
+    if (!countryCode || !countryOptions.some((item) => item.code === countryCode)) {
+      const deviceCountry = cleanParam(getLocales()?.[0]?.regionCode).toUpperCase();
+      const preferred = countryOptions.find((item) => item.code === deviceCountry);
+      setCountryCode(preferred?.code ?? countryOptions[0]?.code ?? null);
+      setRegionCode(null);
+    }
+  }, [countryCode, countryOptions]);
+
+  useEffect(() => {
     if (!md) return;
-
-    if (!zoneCode) {
-      const north = zoneOptions.find((x) => x.code.toLowerCase() === "north");
-      setZoneCode(north?.code ?? zoneOptions[0]?.code ?? null);
-    }
-
-    if (!regionCode) {
-      const delhi = md.regions?.find((r: any) => r.is_active && r.code === "delhi_ncr");
-      setRegionCode(delhi?.code ?? regionOptions[0]?.code ?? null);
-    }
 
     if (!contextCode) {
       const genericContext = findPreferredOption(contextOptions, [
@@ -1662,13 +1786,13 @@ export default function FaceStudioScreen() {
       ]);
       setUseCaseCode(genericUseCase?.code ?? null);
     }
-  }, [md, zoneCode, zoneOptions, regionCode, regionOptions, contextCode, contextOptions, useCaseCode, useCaseOptions]);
+  }, [md, contextCode, contextOptions, useCaseCode, useCaseOptions]);
 
   useEffect(() => {
-    if (!zoneCode || !regionCode) return;
+    if (!regionCode) return;
     const ok = regionOptions.some((r) => r.code === regionCode);
-    if (!ok) setRegionCode(regionOptions[0]?.code ?? null);
-  }, [zoneCode, regionOptions, regionCode]);
+    if (!ok) setRegionCode(null);
+  }, [regionOptions, regionCode]);
 
   const resetI2ISourceState = useCallback((clearPickedUri: boolean = true) => {
     if (clearPickedUri) setPickedUri(null);
@@ -1684,8 +1808,21 @@ export default function FaceStudioScreen() {
     }
   }, [mode, resetI2ISourceState]);
 
-  const regionLabel = zoneOptions.find((x) => x.code === zoneCode)?.label ?? "Select";
-  const stateLabel = regionOptions.find((x) => x.code === regionCode)?.label ?? "Select";
+  const countryLabel = countryOptions.find((x) => x.code === countryCode)?.label ?? "Select";
+  const selectedSubdivisionLabel =
+    regionOptions.find((x) => x.code === regionCode)?.label ?? "Select";
+  const regionLabel =
+    !countryCode
+      ? "Select country first"
+      : subdivisionsQ.isLoading || subdivisionsQ.isFetching
+        ? "Loading…"
+        : subdivisionCatalogResolved && !hasSubdivisions
+          ? "Not required"
+          : selectedSubdivisionLabel;
+  const effectiveRegionLabel =
+    subdivisionCatalogResolved && !hasSubdivisions
+      ? countryLabel
+      : selectedSubdivisionLabel;
   const contextLabel = contextOptions.find((x) => x.code === contextCode)?.label ?? "Optional";
   const useCaseLabel = useCaseOptions.find((x) => x.code === useCaseCode)?.label ?? "Optional";
   const shotTypeLabel = SHOT_TYPE_OPTIONS.find((x) => x.code === shotTypeCode)?.label ?? "Select";
@@ -1694,11 +1831,10 @@ export default function FaceStudioScreen() {
     () => ({
       mode,
       gender,
-      country: COUNTRY_LABEL,
-      zone_code: zoneCode,
-      zone_label: regionLabel,
-      region_code: regionCode,
-      region_label: stateLabel,
+      country: countryLabel,
+      country_code: countryCode,
+      region_code: effectiveRegionCode || undefined,
+      region_label: effectiveRegionLabel,
       context_code: contextCode,
       context_label: contextLabel,
       use_case_code: useCaseCode,
@@ -1712,10 +1848,10 @@ export default function FaceStudioScreen() {
     [
       mode,
       gender,
-      zoneCode,
-      regionLabel,
-      regionCode,
-      stateLabel,
+      countryCode,
+      countryLabel,
+      effectiveRegionCode,
+      effectiveRegionLabel,
       contextCode,
       contextLabel,
       useCaseCode,
@@ -1735,18 +1871,19 @@ export default function FaceStudioScreen() {
   const canGenerate = useMemo(() => {
     const hasPrompt = prompt.trim().length > 0;
     if (!hasPrompt) return false;
-    if (!gender || !zoneCode || !regionCode) return false;
+    if (!gender || !geographyReady) return false;
     if (mode === "image-to-image") return hasValidI2ISource;
     return true;
-  }, [prompt, gender, zoneCode, regionCode, mode, hasValidI2ISource]);
+  }, [prompt, gender, geographyReady, mode, hasValidI2ISource]);
 
   const pricingPreviewEligible =
     prompt.trim().length > 0 &&
     !mdLoading &&
     !mdErr &&
+    !geographyLoading &&
+    !geographyErr &&
     !!gender &&
-    !!zoneCode &&
-    !!regionCode &&
+    geographyReady &&
     hasValidI2ISource;
 
   const pricingPreviewEnabled = hasFacePricingAuth && pricingPreviewEligible;
@@ -1765,7 +1902,7 @@ export default function FaceStudioScreen() {
       req.preservation_strength = preservationStrength;
     } else {
       req.gender = gender;
-      req.region_code = regionCode || undefined;
+      req.region_code = effectiveRegionCode || undefined;
       req.context_code = contextCode || undefined;
       req.use_case = useCaseCode || undefined;
       req.shot_type_code = shotTypeCode || undefined;
@@ -1781,7 +1918,7 @@ export default function FaceStudioScreen() {
     sourceImageAssetId,
     preservationStrength,
     gender,
-    regionCode,
+    effectiveRegionCode,
     contextCode,
     useCaseCode,
     shotTypeCode,
@@ -2171,23 +2308,52 @@ export default function FaceStudioScreen() {
 
           const last = await apiGetFaceJobStatus(jobId);
           const stage = stageFromStatus(last?.status);
-          const nextVars = stage === "succeeded" ? normalizeVariants(last) : [];
+          const nextVars = normalizeVariants(last);
           const pricingLabel = pickPricingLabel(last);
+
+          if (nextVars.length > 0) {
+            setVariants((prev) => {
+              const merged = mergeFaceVariants(prev, nextVars);
+              variantsRef.current = merged;
+              return merged;
+            });
+            setResultsJobId(jobId);
+
+            if (selectedIdxRef.current == null) {
+              selectedIdxRef.current = 0;
+              setSelectedIdx(0);
+
+              const firstVisibleVariant = nextVars[0];
+              setFaceSelection?.({
+                sasUrl: cleanParam(firstVisibleVariant?.image_url),
+                artifactId: firstVisibleVariant?.artifact_id ?? undefined,
+                mediaAssetId: firstVisibleVariant?.media_asset_id ?? undefined,
+                variantIndex: 0,
+                gender,
+                ownerUserId: authUserId || undefined,
+                owner_user_id: authUserId || undefined,
+                userId: authUserId || undefined,
+                user_id: authUserId || undefined,
+              } as any);
+            }
+          }
 
           updateJob(jobId, (prev) => ({
             ...prev,
             stage,
             progress: nextProgress(prev.progress, stage),
-            resultReady: stage === "succeeded",
-            resultCount: nextVars.length || prev.resultCount,
+            resultReady: nextVars.length > 0 || stage === "succeeded",
+            resultCount: Math.max(prev.resultCount || 0, nextVars.length),
             pricingLabel: pricingLabel ?? prev.pricingLabel,
             message:
               stage === "queued"
                 ? "Queued…"
                 : stage === "running"
-                  ? prev.backgrounded
-                    ? "Generating in background…"
-                    : "Generating…"
+                  ? nextVars.length > 0
+                    ? `${nextVars.length} variant${nextVars.length === 1 ? "" : "s"} ready • generating the rest…`
+                    : prev.backgrounded
+                      ? "Generating in background…"
+                      : "Generating…"
                   : stage === "finalizing"
                     ? "Finalizing…"
                     : stage === "succeeded"
@@ -2204,9 +2370,32 @@ export default function FaceStudioScreen() {
               return;
             }
 
-            setVariants(finalVars);
-            setSelectedIdx(0);
+            const mergedFinalVars = mergeFaceVariants(
+              variantsRef.current,
+              finalVars
+            );
+            variantsRef.current = mergedFinalVars;
+            setVariants(mergedFinalVars);
             setResultsJobId(jobId);
+
+            if (selectedIdxRef.current == null && mergedFinalVars.length > 0) {
+              selectedIdxRef.current = 0;
+              setSelectedIdx(0);
+
+              const firstVisibleVariant = mergedFinalVars[0];
+              setFaceSelection?.({
+                sasUrl: cleanParam(firstVisibleVariant?.image_url),
+                artifactId: firstVisibleVariant?.artifact_id ?? undefined,
+                mediaAssetId: firstVisibleVariant?.media_asset_id ?? undefined,
+                variantIndex: 0,
+                gender,
+                ownerUserId: authUserId || undefined,
+                owner_user_id: authUserId || undefined,
+                userId: authUserId || undefined,
+                user_id: authUserId || undefined,
+              } as any);
+            }
+
             setFinalPricingLabel(pricingLabel ?? null);
             setFinalPricingState(
               (
@@ -2220,17 +2409,6 @@ export default function FaceStudioScreen() {
             setFinalPricingMessage(pickFinalPricingMessage(last));
             refreshPricingCaches();
             setInlineStatus("Done. Open the result or choose a variant below.");
-            setFaceSelection?.({
-              sasUrl: cleanParam(finalVars[0]?.image_url),
-              artifactId: finalVars[0]?.artifact_id ?? undefined,
-              mediaAssetId: finalVars[0]?.media_asset_id ?? undefined,
-              variantIndex: 0,
-              gender,
-              ownerUserId: authUserId || undefined,
-              owner_user_id: authUserId || undefined,
-              userId: authUserId || undefined,
-              user_id: authUserId || undefined,
-            } as any);
             return;
           }
 
@@ -2605,7 +2783,9 @@ export default function FaceStudioScreen() {
     creatingJob ||
     uploadingSource ||
     mdLoading ||
+    geographyLoading ||
     !!mdErr ||
+    !!geographyErr ||
     (!!pricing?.insufficientBalance && !pricing?.topUpVisible && !pricing?.upgradeVisible) ||
     (mode === "image-to-image" && imageSafetyState === "checking") ||
     (mode === "image-to-image" && imageSafetyState !== "passed");
@@ -2642,7 +2822,7 @@ export default function FaceStudioScreen() {
     mode,
     prompt,
     gender,
-    zoneCode,
+    countryCode,
     regionCode,
     hasValidI2ISource,
     sourceImageUrl,
@@ -2817,47 +2997,36 @@ const liveBillingValueLabel =
               >
                 <SelectorChip
                   label="Country"
-                  value={COUNTRY_LABEL}
-                  disabled
-                  flex={creativeSingleColumn ? undefined : 0.78}
+                  value={countriesQ.isLoading ? "Loading…" : countryLabel}
+                  onPress={() => setOpenCountry(true)}
+                  disabled={uiLocked || countriesQ.isLoading || countryOptions.length === 0}
+                  flex={creativeSingleColumn ? undefined : 0.9}
                   width={creativeSingleColumn ? "100%" : undefined}
-                  emphasis="fixed"
+                  emphasis="wide"
                 />
                 <SelectorChip
-                  label="Region"
-                  value={mdLoading ? "Loading…" : regionLabel}
-                  onPress={() => setOpenZone(true)}
-                  disabled={uiLocked || mdLoading || zoneOptions.length === 0}
-                  flex={creativeSingleColumn ? undefined : 1.22}
+                  label="State / Province / Region"
+                  value={regionLabel}
+                  onPress={hasSubdivisions ? () => setOpenRegion(true) : undefined}
+                  disabled={
+                    uiLocked ||
+                    !countryCode ||
+                    !subdivisionCatalogResolved ||
+                    !hasSubdivisions
+                  }
+                  flex={creativeSingleColumn ? undefined : 1.1}
                   width={creativeSingleColumn ? "100%" : undefined}
                   emphasis="wide"
                 />
               </View>
 
-              <View
-                style={{
-                  flexDirection: creativeSingleColumn ? "column" : "row",
-                  gap: creativeGridGap,
-                }}
-              >
-                <SelectorChip
-                  label="State"
-                  value={mdLoading ? "Loading…" : stateLabel}
-                  onPress={() => setOpenRegion(true)}
-                  disabled={uiLocked || mdLoading || regionOptions.length === 0}
-                  flex={creativeSingleColumn ? undefined : 1.18}
-                  width={creativeSingleColumn ? "100%" : undefined}
-                  emphasis="wide"
-                />
-                <SelectorChip
-                  label="Image Type"
-                  value={shotTypeLabel}
-                  onPress={() => setOpenShotType(true)}
-                  disabled={uiLocked}
-                  flex={creativeSingleColumn ? undefined : 0.82}
-                  width={creativeSingleColumn ? "100%" : undefined}
-                />
-              </View>
+              <SelectorChip
+                label="Image Type"
+                value={shotTypeLabel}
+                onPress={() => setOpenShotType(true)}
+                disabled={uiLocked}
+                width="100%"
+              />
 
               <View
                 style={{
@@ -2945,7 +3114,7 @@ const liveBillingValueLabel =
               </View>
             </View>
 
-            {!!mdErr && (
+            {!!(mdErr || geographyErr) && (
               <View
                 style={{
                   marginTop: 12,
@@ -2960,11 +3129,11 @@ const liveBillingValueLabel =
                   Masterdata failed
                 </Text>
                 <Text style={{ color: "rgba(255,200,200,0.86)", fontWeight: "700", marginTop: 6, fontSize: 12 }}>
-                  {mdErr}
+                  {mdErr || geographyErr}
                 </Text>
 
                 <Pressable
-                  onPress={() => mdQ.refetch()}
+                  onPress={() => { mdQ.refetch(); countriesQ.refetch(); if (countryCode) subdivisionsQ.refetch(); }}
                   disabled={uiLocked}
                   style={{
                     marginTop: 10,
@@ -3271,7 +3440,7 @@ const liveBillingValueLabel =
 
           <Pressable
             onPress={checkFacePrice}
-            disabled={!canGenerate || checkingPrice || creatingJob || uploadingSource || mdLoading || !!mdErr}
+            disabled={!canGenerate || checkingPrice || creatingJob || uploadingSource || mdLoading || geographyLoading || !!mdErr || !!geographyErr}
             style={{
               borderRadius: 18,
               paddingVertical: 14,
@@ -3280,7 +3449,7 @@ const liveBillingValueLabel =
               borderWidth: 1,
               borderColor: "rgba(248,184,72,0.35)",
               backgroundColor: pricingReady ? "rgba(120,255,180,0.12)" : "rgba(232,152,56,0.16)",
-              opacity: !canGenerate || checkingPrice || creatingJob || uploadingSource || mdLoading || !!mdErr ? 0.58 : 1,
+              opacity: !canGenerate || checkingPrice || creatingJob || uploadingSource || mdLoading || geographyLoading || !!mdErr || !!geographyErr ? 0.58 : 1,
             }}
           >
             <Text style={{ color: DF.text, fontWeight: "900", fontSize: 15 }}>
@@ -3541,16 +3710,19 @@ const liveBillingValueLabel =
       </ScrollView>
 
       <SelectModal
-        open={openZone}
-        title="Select Region"
-        items={zoneOptions}
-        selectedCode={zoneCode}
-        onClose={() => setOpenZone(false)}
-        onSelect={(x) => setZoneCode(x.code)}
+        open={openCountry}
+        title="Select Country"
+        items={countryOptions}
+        selectedCode={countryCode}
+        onClose={() => setOpenCountry(false)}
+        onSelect={(x) => {
+          setCountryCode(x.code);
+          setRegionCode(null);
+        }}
       />
       <SelectModal
         open={openRegion}
-        title="Select State"
+        title="Select State / Province / Region"
         items={regionOptions}
         selectedCode={regionCode}
         onClose={() => setOpenRegion(false)}
