@@ -6,7 +6,8 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "environment": "development"
     },
     "ios-simulator": {
       "extends": "development",
@@ -23,9 +24,18 @@
       "ios": {
         "distribution": "store"
       }
+    },
+    "development-testflight": {
+      "autoIncrement": true,
+      "environment": "development",
+      "distribution": "store",
+      "ios": {
+        "distribution": "store"
+      }
     }
   },
   "submit": {
-    "production": {}
+    "production": {},
+    "development-testflight": {}
   }
 }

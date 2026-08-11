@@ -15,9 +15,9 @@ const BRAND_LOGO = "./assets/brand/desifaces-logo-softblend.png";
 const SPLASH_IMAGE = "./assets/brand/desifaces-logo-softblend.png";
 
 const config: ExpoConfig = {
-  name: "desifaces.ai",
+  name: "desifaces.ai Dev",
   slug: "desifaces-mobile",
-  scheme: "desifaces",
+  scheme: "desifaces-dev",
   version: "2.1.0",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
@@ -68,7 +68,7 @@ const config: ExpoConfig = {
   ],
 
   ios: {
-    bundleIdentifier: "ai.desifaces.app",
+    bundleIdentifier: "ai.desifaces.app.dev",
 
     // desifaces.ai v1.0 is iPhone-only.
     // This prevents App Store Connect from requiring iPad screenshots.
@@ -89,7 +89,7 @@ const config: ExpoConfig = {
   },
 
   android: {
-    package: "ai.desifaces.app",
+    package: "ai.desifaces.app.dev",
 
     // Android versionCode is intentionally omitted.
     // EAS remote versioning and auto-increment must remain the source of truth.
