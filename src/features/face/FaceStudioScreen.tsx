@@ -2287,6 +2287,7 @@ export default function FaceStudioScreen() {
   const launchPolling = useCallback(
     async (jobId: string, cycle: number = 0) => {
       let longRunningTimer: ReturnType<typeof setTimeout> | null = null;
+      let consecutivePollingErrors = 0;
 
       try {
         longRunningTimer = setTimeout(() => {
@@ -2306,7 +2307,31 @@ export default function FaceStudioScreen() {
         for (let i = 0; i < 120; i++) {
           if (pollingCancelledRef.current) return;
 
-          const last = await apiGetFaceJobStatus(jobId);
+          let last: any;
+          try {
+            last = await apiGetFaceJobStatus(jobId);
+            consecutivePollingErrors = 0;
+          } catch {
+            consecutivePollingErrors += 1;
+
+            updateJob(jobId, (prev) => ({
+              ...prev,
+              stage: "running",
+              backgrounded: true,
+              message:
+                consecutivePollingErrors >= 3
+                  ? "Still processing. Reconnecting to the job…"
+                  : "Still processing. Checking again…",
+            }));
+
+            // A status timeout or temporary network failure does not mean the
+            // durable backend job failed. Retry and let an explicit backend
+            // terminal status remain the source of truth.
+            await new Promise((resolve) =>
+              setTimeout(resolve, Math.min(10_000, 1_500 * consecutivePollingErrors))
+            );
+            continue;
+          }
           const stage = stageFromStatus(last?.status);
           const nextVars = normalizeVariants(last);
           const pricingLabel = pickPricingLabel(last);
@@ -2434,16 +2459,22 @@ export default function FaceStudioScreen() {
         }
 
         updateJob(jobId, {
-          stage: "failed",
-          message: "This run took longer than expected. Please reopen it from Jobs in a moment.",
+          stage: "running",
+          backgrounded: true,
+          message: "Still processing. Open Jobs to check the result.",
         });
-        setInlineStatus("This face is taking longer than usual. Please reopen it from Jobs in a moment.");
-      } catch (e: any) {
+        setInlineStatus(
+          "Your face is still processing. Open Jobs to check the result; you do not need to create it again."
+        );
+      } catch {
         updateJob(jobId, {
-          stage: "failed",
-          message: e?.message ?? "Polling failed.",
+          stage: "running",
+          backgrounded: true,
+          message: "Still processing. Open Jobs to check the result.",
         });
-        setInlineStatus(e?.message ?? "Generate failed.");
+        setInlineStatus(
+          "We could not refresh the status, but your job is still processing. Open Jobs to check the result."
+        );
       } finally {
         if (longRunningTimer) clearTimeout(longRunningTimer);
       }
