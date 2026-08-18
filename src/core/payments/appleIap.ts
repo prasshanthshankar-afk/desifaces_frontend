@@ -15,6 +15,15 @@ export type AppleCreditsProductId =
 export type AppleProductKind = "subs" | "inapp";
 type ApplePurchaseKind = "subscription" | "credits";
 
+export type AppleIapHookRuntime = {
+  connected?: boolean;
+  waitUntilConnected?: () => Promise<void>;
+  fetchProducts?: (params: { skus: string[]; type?: string }) => Promise<any>;
+  waitForProducts?: (productIds: string[]) => Promise<any[]>;
+  requestPurchase?: (params: any) => Promise<any>;
+  finishTransaction?: (params: { purchase: any; isConsumable?: boolean }) => Promise<void>;
+};
+
 type NativeSubscription = {
   remove?: () => void;
   unsubscribe?: () => void;
@@ -252,6 +261,10 @@ export function getReadableAppleIapError(error: unknown): string {
 }
 
 async function ensureAppleIapConnection(iap: any): Promise<void> {
+  if (typeof iap?.waitUntilConnected === "function") {
+    await iap.waitUntilConnected();
+    return;
+  }
   if (iapConnectionPromise) return iapConnectionPromise;
 
   iapConnectionPromise = (async () => {
@@ -321,6 +334,13 @@ async function fetchProductsWithType(iap: any, productIds: string[], kind: Apple
     try {
       const products = normalizeProductArray(await attempt());
       if (products.length) return products;
+
+      // useIAP().fetchProducts updates hook state instead of returning the
+      // products. The screen-supplied runtime waits for that state update.
+      if (typeof iap.waitForProducts === "function") {
+        const hookProducts = normalizeProductArray(await iap.waitForProducts(skus));
+        if (hookProducts.length) return hookProducts;
+      }
     } catch (error) {
       lastError = error;
     }
@@ -509,8 +529,9 @@ async function purchaseProduct(params: {
   appAccountToken: string;
   kind: AppleProductKind;
   timeoutMs?: number;
+  runtime?: AppleIapHookRuntime;
 }) {
-  const iap = requireAppleIapRuntime();
+  const iap = params.runtime || requireAppleIapRuntime();
   await ensureAppleIapConnection(iap);
   await fetchRequiredProduct(iap, params.productId, params.kind);
 
@@ -611,8 +632,10 @@ function normalizePurchasedPayload(raw: any): AppleIapBackendPayload {
     raw?.signed_renewal_info,
     raw?.signedRenewalInfoIOS,
     raw?.signedRenewalInfoIos,
-    raw?.renewalInfoIOS,
-    raw?.renewalInfoIos
+    raw?.renewalInfoIOS?.jwsRepresentation,
+    raw?.renewalInfoIOS?.jsonRepresentation,
+    raw?.renewalInfoIos?.jwsRepresentation,
+    raw?.renewalInfoIos?.jsonRepresentation
   );
 
   return {
@@ -633,17 +656,33 @@ function normalizePurchasedPayload(raw: any): AppleIapBackendPayload {
       "Sandbox",
     appAccountToken:
       firstNonEmptyString(raw?.appAccountToken, raw?.app_account_token) || null,
-    currency: firstNonEmptyString(raw?.currency, raw?.currencyCode).toUpperCase() || null,
+    currency:
+      firstNonEmptyString(raw?.currency, raw?.currencyCode, raw?.currencyCodeIOS).toUpperCase() ||
+      null,
     countryCode:
-      firstNonEmptyString(raw?.countryCode, raw?.country_code, raw?.country).toUpperCase() || null,
+      firstNonEmptyString(
+        raw?.countryCode,
+        raw?.country_code,
+        raw?.country,
+        raw?.countryCodeIOS
+      ).toUpperCase() || null,
     storefront:
-      firstNonEmptyString(raw?.storefront, raw?.storefrontCountryCode, raw?.storefront_country_code) ||
+      firstNonEmptyString(
+        raw?.storefront,
+        raw?.storefrontCountryCode,
+        raw?.storefront_country_code,
+        raw?.storefrontCountryCodeIOS
+      ) ||
       null,
   };
 }
 
-async function finishAppleTransactionBestEffort(rawPurchase: any, options: { isConsumable: boolean }) {
-  const iap = requireAppleIapRuntime();
+async function finishAppleTransactionBestEffort(
+  rawPurchase: any,
+  options: { isConsumable: boolean },
+  runtime?: AppleIapHookRuntime
+) {
+  const iap = runtime || requireAppleIapRuntime();
   if (typeof iap.finishTransaction !== "function") return;
 
   try {
@@ -696,6 +735,7 @@ async function purchaseAndNormalize(params: {
   userId: string;
   kind: AppleProductKind;
   purchaseKind: ApplePurchaseKind;
+  runtime?: AppleIapHookRuntime;
 }) {
   if (!isAppleBillingPlatform()) {
     throw new Error(
@@ -709,6 +749,7 @@ async function purchaseAndNormalize(params: {
     productId: params.productId,
     appAccountToken: params.userId,
     kind: params.kind,
+    runtime: params.runtime,
   });
   const normalized = normalizePurchasedPayload(rawPurchase);
   const purchaseProductId = normalizedProductId(rawPurchase);
@@ -776,6 +817,7 @@ export async function purchaseAppleSubscriptionAndConfirm(params: {
   userId: string;
   countryCode?: string;
   currency?: string;
+  runtime?: AppleIapHookRuntime;
 }) {
   const productId = asString(params.productId) as AppleSubscriptionProductId;
   if (!productId) throw new Error("Missing Apple subscription product id.");
@@ -785,6 +827,7 @@ export async function purchaseAppleSubscriptionAndConfirm(params: {
     userId: params.userId,
     kind: "subs",
     purchaseKind: "subscription",
+    runtime: params.runtime,
   });
 
   const confirmed = await PaymentsApi.apiConfirmAppleSubscriptionPurchase({
@@ -800,7 +843,11 @@ export async function purchaseAppleSubscriptionAndConfirm(params: {
     storefront: normalized.storefront || undefined,
   });
 
-  await finishAppleTransactionBestEffort(rawPurchase, { isConsumable: false });
+  await finishAppleTransactionBestEffort(
+    rawPurchase,
+    { isConsumable: false },
+    params.runtime
+  );
   return confirmed;
 }
 

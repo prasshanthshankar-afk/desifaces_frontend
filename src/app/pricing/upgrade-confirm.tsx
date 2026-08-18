@@ -1,27 +1,27 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIAP } from "expo-iap";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  Pressable,
   ActivityIndicator,
   Linking,
   Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ionicons } from "@expo/vector-icons";
 
-import { Colors, Radii, Spacing, Shadows } from "../../../constants/theme";
-import { DF } from "../../core/theme/colors";
-import DFHeader from "../../core/ui/DFHeader";
+import { Colors, Radii, Shadows, Spacing } from "../../../constants/theme";
 import { useAuth } from "../../core/auth/AuthContext";
 import * as PaymentsApi from "../../core/payments/apiPayments";
 import {
   appleSubscriptionProductIdForPlan,
   isAppleBillingPlatform,
   purchaseAppleSubscriptionAndConfirm,
+  type AppleIapHookRuntime,
 } from "../../core/payments/appleIap";
 import {
   googleSubscriptionBasePlanIdForPlan,
@@ -30,6 +30,8 @@ import {
   purchaseGoogleSubscriptionAndConfirm,
   restoreGoogleSubscriptionAndConfirm,
 } from "../../core/payments/googlePlayIap";
+import { DF } from "../../core/theme/colors";
+import DFHeader from "../../core/ui/DFHeader";
 
 type PlanUiMeta = {
   planCode: string;
@@ -500,6 +502,98 @@ function BillingFooterNav() {
 }
 
 export default function UpgradeConfirmScreen() {
+  const appleProductsRef = useRef<any[]>([]);
+  const applePurchaseWaiterRef = useRef<{
+    resolve: (purchase: any) => void;
+    reject: (error: unknown) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+
+  const appleIap = useIAP({
+    onPurchaseSuccess: (purchase) => {
+      const waiter = applePurchaseWaiterRef.current;
+      if (!waiter) return;
+      clearTimeout(waiter.timer);
+      applePurchaseWaiterRef.current = null;
+      waiter.resolve(purchase);
+    },
+    onPurchaseError: (error) => {
+      const waiter = applePurchaseWaiterRef.current;
+      if (!waiter) return;
+      clearTimeout(waiter.timer);
+      applePurchaseWaiterRef.current = null;
+      waiter.reject(error);
+    },
+  });
+
+  useEffect(() => {
+    appleProductsRef.current = [
+      ...(Array.isArray(appleIap.products) ? appleIap.products : []),
+      ...(Array.isArray(appleIap.subscriptions) ? appleIap.subscriptions : []),
+    ];
+  }, [appleIap.products, appleIap.subscriptions]);
+
+  useEffect(
+    () => () => {
+      const waiter = applePurchaseWaiterRef.current;
+      if (!waiter) return;
+      clearTimeout(waiter.timer);
+      applePurchaseWaiterRef.current = null;
+      waiter.reject(new Error("Apple purchase screen closed before StoreKit completed."));
+    },
+    []
+  );
+
+  const appleIapRuntime = useMemo<AppleIapHookRuntime>(() => ({
+    connected: appleIap.connected,
+    waitUntilConnected: async () => {
+      const deadline = Date.now() + 10_000;
+      while (!appleIap.connected && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      if (!appleIap.connected) {
+        const reconnected = await appleIap.reconnect();
+        if (!reconnected) throw new Error("Apple App Store is not connected. Please retry.");
+      }
+    },
+    fetchProducts: appleIap.fetchProducts as AppleIapHookRuntime["fetchProducts"],
+    waitForProducts: async (productIds: string[]) => {
+      const wanted = new Set(productIds);
+      const deadline = Date.now() + 8_000;
+      while (Date.now() < deadline) {
+        const matches = appleProductsRef.current.filter((product) =>
+          wanted.has(String(product?.id || product?.productId || product?.sku || ""))
+        );
+        if (matches.length) return matches;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      return [];
+    },
+    requestPurchase: async (request: any) => {
+      if (applePurchaseWaiterRef.current) {
+        throw new Error("An Apple purchase is already in progress.");
+      }
+
+      return await new Promise<any>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          if (!applePurchaseWaiterRef.current) return;
+          applePurchaseWaiterRef.current = null;
+          reject(new Error("Timed out waiting for Apple purchase confirmation from StoreKit."));
+        }, 120_000);
+
+        applePurchaseWaiterRef.current = { resolve, reject, timer };
+        Promise.resolve(appleIap.requestPurchase(request as any)).catch((error) => {
+          const waiter = applePurchaseWaiterRef.current;
+          if (!waiter) return;
+          clearTimeout(waiter.timer);
+          applePurchaseWaiterRef.current = null;
+          reject(error);
+        });
+      });
+    },
+    finishTransaction: appleIap.finishTransaction,
+  }), [appleIap]);
+
   const params = useLocalSearchParams<{
     planCode?: string;
     source?: string;
@@ -953,6 +1047,7 @@ export default function UpgradeConfirmScreen() {
           userId: currentUserId,
           countryCode,
           currency: billingCurrency,
+          runtime: appleIapRuntime,
         });
 
         await refreshBillingQueries(queryClient, countryCode);
