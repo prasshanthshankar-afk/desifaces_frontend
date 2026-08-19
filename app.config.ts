@@ -60,6 +60,7 @@ const config: ExpoConfig = {
       },
     ],
     "expo-audio",
+    "expo-iap",
     "expo-sharing",
     "expo-localization",
     "expo-secure-store",
