@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -12,13 +12,15 @@ import {
   View,
 } from "react-native";
 
+import { DF } from "../../core/theme/colors";
+
 import {
   dispatchParticipantFace,
   displayPrice,
   ensureStoryStudioWorkflow,
   faceCohort,
-  faceStages,
   FacePricingPreview,
+  faceStages,
   FaceSyncResult,
   getFaceMediaReadUrl,
   getStoryWorkspace,
@@ -28,14 +30,28 @@ import {
   previewParticipantFace,
   pricingQuote,
   reviewStudioOutput,
+  StoryWorkspaceView,
   StudioStageView,
   StudioWorkflowView,
-  StoryWorkspaceView,
   syncParticipantFace,
 } from "./api/multiPersonFace";
 
 type Props = { storyId: string };
 type StageMap<T> = Record<string, T>;
+
+const BRAND = {
+  background: (DF as any)?.night ?? "#0E0F14",
+  surface: (DF as any)?.night2 ?? "#141824",
+  surfaceSoft: "rgba(255,255,255,0.045)",
+  text: (DF as any)?.text ?? "#FFFFFF",
+  muted: (DF as any)?.muted ?? "rgba(255,255,255,0.62)",
+  border: (DF as any)?.border ?? "rgba(255,255,255,0.10)",
+  accent: "#F8B848",
+  accentText: "rgba(248,232,136,1)",
+  accentFill: "rgba(232,152,56,0.14)",
+  accentBorder: "rgba(248,184,72,0.32)",
+  danger: "#7A2E35",
+};
 
 function errorMessage(error: any) {
   const detail = error?.body?.detail;
@@ -96,7 +112,10 @@ function Button({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: Boolean(disabled) }}
       disabled={disabled}
+      hitSlop={4}
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
@@ -309,17 +328,35 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
 
   const review = useCallback(
     async (stage: StudioStageView, decision: "approved" | "rejected" | "revise") => {
-      const pending = latestPendingReview(stage);
-      if (!pending) {
-        Alert.alert("Face Studio", "No pending Face review was found for this character.");
-        return;
-      }
+      if (!workflow) return;
+
       setBusy((current) => ({ ...current, [stage.stage_run_id]: true }));
       try {
+        // Re-read the workflow immediately before the review mutation. This avoids
+        // submitting a stale review_item_id when background sync/polling has updated
+        // the stage between render and tap.
+        const authoritative = await getStudioWorkflow(workflow.workflow_id);
+        if (!mounted.current) return;
+
+        const currentStage =
+          faceStages(authoritative).find((item) => item.stage_run_id === stage.stage_run_id) ?? null;
+        const pending = latestPendingReview(currentStage);
+
+        if (!pending) {
+          setWorkflow(authoritative);
+          await hydrateMediaUrls(authoritative);
+          Alert.alert(
+            "Face Studio",
+            "This Face review is no longer pending. The latest workflow state has been refreshed."
+          );
+          return;
+        }
+
         const next = await reviewStudioOutput(pending.review_item_id, decision);
         if (!mounted.current) return;
         setWorkflow(next);
         await hydrateMediaUrls(next);
+
         if (decision !== "approved") {
           setPreviews((current) => {
             const copy = { ...current };
@@ -335,14 +372,14 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
         }
       }
     },
-    [hydrateMediaUrls]
+    [workflow, hydrateMediaUrls]
   );
 
   if (loading && !workflow) {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.center}>
-          <ActivityIndicator size="large" />
+          <ActivityIndicator size="large" color={BRAND.accent} />
           <Text style={styles.loadingText}>Preparing Face cast…</Text>
         </View>
       </SafeAreaView>
@@ -362,6 +399,8 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
+            tintColor={BRAND.accent}
+            colors={[BRAND.accent]}
             onRefresh={() => {
               setRefreshing(true);
               void load(true);
@@ -369,11 +408,15 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
           />
         }
       >
-        <Text style={styles.eyebrow}>STORY FACE STUDIO</Text>
-        <Text style={styles.title}>{workspace?.title || "Character cast"}</Text>
-        <Text style={styles.subtitle}>
-          Generate and approve every required character identity before Audio Studio can begin.
-        </Text>
+        <View style={styles.hero}>
+          <View style={styles.eyebrowPill}>
+            <Text style={styles.eyebrow}>STORY FACE STUDIO</Text>
+          </View>
+          <Text style={styles.title}>{workspace?.title || "Character cast"}</Text>
+          <Text style={styles.subtitle}>
+            Create, review and lock every character identity before the story advances to Audio Studio.
+          </Text>
+        </View>
 
         <View style={[styles.cohortCard, castReady && styles.cohortReady]}>
           <View style={styles.cohortHeader}>
@@ -417,7 +460,16 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
               <View style={styles.characterHeader}>
                 <View style={styles.characterHeaderText}>
                   <Text style={styles.characterName}>{name}</Text>
-                  <Text style={styles.characterState}>{humanState(stage.state)}</Text>
+                  <View
+                    style={[
+                      styles.statePill,
+                      locked && styles.statePillApproved,
+                      stage.state === "awaiting_review" && styles.statePillReview,
+                      stage.state === "generating" && styles.statePillGenerating,
+                    ]}
+                  >
+                    <Text style={styles.characterState}>{humanState(stage.state)}</Text>
+                  </View>
                 </View>
                 {locked ? <Text style={styles.lockBadge}>LOCKED</Text> : null}
               </View>
@@ -426,7 +478,7 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
                 <Image source={{ uri: imageUrl }} style={styles.faceImage} resizeMode="cover" />
               ) : (
                 <View style={styles.imagePlaceholder}>
-                  {stage.state === "generating" ? <ActivityIndicator size="large" /> : null}
+                  {stage.state === "generating" ? <ActivityIndicator size="large" color={BRAND.accent} /> : null}
                   <Text style={styles.placeholderText}>
                     {stage.state === "generating"
                       ? "Creating identity…"
@@ -436,6 +488,22 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
               )}
 
               <Text style={styles.statusText}>{statusCopy(stage)}</Text>
+
+              {preview ? (
+                <View style={styles.priceStrip}>
+                  <View style={styles.priceStripText}>
+                    <Text style={styles.priceStripLabel}>PRICE READY</Text>
+                    <Text style={styles.priceStripValue}>{displayPrice(preview)}</Text>
+                  </View>
+                  {(preview.studio_input as any)?.gender ? (
+                    <View style={styles.inputChip}>
+                      <Text style={styles.inputChipText}>
+                        {humanState(String((preview.studio_input as any).gender))}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
 
               {preview?.studio_input?.user_prompt ? (
                 <View style={styles.promptBox}>
@@ -502,31 +570,46 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
                       onPress={() => void review(stage, "approved")}
                       disabled={isBusy}
                     />
-                    <Button
-                      label="Revise"
-                      onPress={() => void review(stage, "revise")}
-                      disabled={isBusy}
-                      secondary
-                    />
-                    <Button
-                      label="Reject"
-                      onPress={() =>
-                        Alert.alert(
-                          "Reject this Face?",
-                          "The successful generation remains charged and auditable. Only this character will need a new generation.",
-                          [
-                            { text: "Cancel", style: "cancel" },
-                            {
-                              text: "Reject",
-                              style: "destructive",
-                              onPress: () => void review(stage, "rejected"),
-                            },
-                          ]
-                        )
-                      }
-                      disabled={isBusy}
-                      danger
-                    />
+                    <View style={styles.reviewSecondaryRow}>
+                      <View style={styles.reviewSecondaryAction}>
+                        <Button
+                          label="Revise"
+                          onPress={() =>
+                            Alert.alert(
+                              "Revise this Face?",
+                              "This keeps the rest of the cast untouched and prepares only this character for a new priced generation.",
+                              [
+                                { text: "Cancel", style: "cancel" },
+                                { text: "Revise", onPress: () => void review(stage, "revise") },
+                              ]
+                            )
+                          }
+                          disabled={isBusy}
+                          secondary
+                        />
+                      </View>
+                      <View style={styles.reviewSecondaryAction}>
+                        <Button
+                          label="Reject"
+                          onPress={() =>
+                            Alert.alert(
+                              "Reject this Face?",
+                              "The successful generation remains charged and auditable. Only this character will need a new generation.",
+                              [
+                                { text: "Cancel", style: "cancel" },
+                                {
+                                  text: "Reject",
+                                  style: "destructive",
+                                  onPress: () => void review(stage, "rejected"),
+                                },
+                              ]
+                            )
+                          }
+                          disabled={isBusy}
+                          danger
+                        />
+                      </View>
+                    </View>
                   </View>
                 </View>
               ) : null}
@@ -561,160 +644,217 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#07080B" },
-  content: { padding: 20, paddingBottom: 48, gap: 16 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 14 },
-  loadingText: { color: "rgba(255,255,255,0.76)", fontSize: 15, fontWeight: "700" },
-  eyebrow: { color: "#D2B07A", fontSize: 12, fontWeight: "900", letterSpacing: 1.8 },
-  title: { color: "#FFFFFF", fontSize: 30, fontWeight: "900", letterSpacing: -0.6 },
-  subtitle: {
-    color: "rgba(255,255,255,0.68)",
-    fontSize: 15,
-    lineHeight: 22,
-    maxWidth: 620,
+  safe: { flex: 1, backgroundColor: BRAND.background },
+  content: {
+    width: "100%",
+    maxWidth: 760,
+    alignSelf: "center",
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 48,
+    gap: 14,
   },
-  cohortCard: {
-    backgroundColor: "#14161C",
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
+  loadingText: { color: BRAND.muted, fontSize: 13, fontWeight: "700" },
+
+  hero: { gap: 8, paddingHorizontal: 2, marginBottom: 2 },
+  eyebrowPill: {
+    alignSelf: "flex-start",
     borderWidth: 1,
-    borderColor: "rgba(210,176,122,0.28)",
-    borderRadius: 20,
-    padding: 18,
-    gap: 12,
+    borderColor: BRAND.accentBorder,
+    backgroundColor: BRAND.accentFill,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
   },
-  cohortReady: { borderColor: "rgba(255,255,255,0.34)" },
+  eyebrow: {
+    color: BRAND.accentText,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.25,
+  },
+  title: { color: BRAND.text, fontSize: 24, fontWeight: "900", letterSpacing: -0.35 },
+  subtitle: { color: BRAND.muted, fontSize: 13, lineHeight: 19, maxWidth: 620, fontWeight: "600" },
+
+  cohortCard: {
+    backgroundColor: BRAND.surface,
+    borderWidth: 1,
+    borderColor: BRAND.accentBorder,
+    borderRadius: 18,
+    padding: 15,
+    gap: 10,
+  },
+  cohortReady: { borderColor: "rgba(248,184,72,0.55)", backgroundColor: "rgba(232,152,56,0.08)" },
   cohortHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     gap: 12,
   },
-  cohortTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "900" },
-  cohortCount: { color: "#D2B07A", fontSize: 14, fontWeight: "900" },
+  cohortTitle: { color: BRAND.text, fontSize: 15, fontWeight: "900" },
+  cohortCount: {
+    color: BRAND.accentText,
+    fontSize: 11,
+    fontWeight: "900",
+    borderWidth: 1,
+    borderColor: BRAND.accentBorder,
+    backgroundColor: BRAND.accentFill,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
   progressTrack: {
-    height: 7,
-    backgroundColor: "rgba(255,255,255,0.10)",
+    height: 6,
+    backgroundColor: "rgba(255,255,255,0.08)",
     borderRadius: 99,
     overflow: "hidden",
   },
-  progressFill: { height: "100%", backgroundColor: "#D2B07A", borderRadius: 99 },
-  cohortBody: {
-    color: "rgba(255,255,255,0.82)",
-    fontSize: 14,
-    lineHeight: 21,
-    fontWeight: "600",
-  },
-  cohortMeta: { color: "rgba(255,255,255,0.52)", fontSize: 12, fontWeight: "700" },
+  progressFill: { height: "100%", backgroundColor: BRAND.accent, borderRadius: 99 },
+  cohortBody: { color: "rgba(255,255,255,0.82)", fontSize: 12, lineHeight: 18, fontWeight: "600" },
+  cohortMeta: { color: BRAND.muted, fontSize: 11, lineHeight: 16, fontWeight: "700" },
+
   characterCard: {
-    backgroundColor: "#101218",
-    borderRadius: 22,
-    padding: 16,
+    backgroundColor: BRAND.surface,
+    borderRadius: 20,
+    padding: 14,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
-    gap: 13,
+    borderColor: BRAND.border,
+    gap: 12,
   },
-  characterLocked: { borderColor: "rgba(210,176,122,0.55)" },
+  characterLocked: { borderColor: "rgba(248,184,72,0.46)" },
   characterHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 12,
   },
-  characterHeaderText: { flex: 1 },
-  characterName: { color: "#FFFFFF", fontSize: 21, fontWeight: "900" },
-  characterState: {
-    color: "rgba(255,255,255,0.56)",
-    fontSize: 12,
-    fontWeight: "800",
-    marginTop: 3,
+  characterHeaderText: { flex: 1, gap: 7 },
+  characterName: { color: BRAND.text, fontSize: 18, fontWeight: "900", letterSpacing: -0.2 },
+  statePill: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: BRAND.border,
+    backgroundColor: "rgba(255,255,255,0.04)",
   },
+  statePillApproved: { borderColor: BRAND.accentBorder, backgroundColor: BRAND.accentFill },
+  statePillReview: { borderColor: "rgba(248,184,72,0.26)", backgroundColor: "rgba(232,152,56,0.08)" },
+  statePillGenerating: { borderColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(255,255,255,0.06)" },
+  characterState: { color: "rgba(255,255,255,0.76)", fontSize: 10, fontWeight: "900", letterSpacing: 0.35 },
   lockBadge: {
-    color: "#201708",
-    backgroundColor: "#D2B07A",
-    paddingHorizontal: 10,
+    color: "#211708",
+    backgroundColor: BRAND.accent,
+    paddingHorizontal: 9,
     paddingVertical: 5,
-    borderRadius: 99,
-    fontSize: 10,
+    borderRadius: 999,
+    fontSize: 9,
     fontWeight: "900",
+    overflow: "hidden",
   },
+
   faceImage: {
     width: "100%",
     aspectRatio: 3 / 4,
-    borderRadius: 18,
+    borderRadius: 16,
     backgroundColor: "#1C1F27",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
   },
   imagePlaceholder: {
     width: "100%",
     aspectRatio: 3 / 4,
-    borderRadius: 18,
-    backgroundColor: "#191B22",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-    padding: 24,
-  },
-  placeholderText: {
-    color: "rgba(255,255,255,0.48)",
-    fontSize: 13,
-    textAlign: "center",
-    fontWeight: "700",
-  },
-  statusText: {
-    color: "rgba(255,255,255,0.78)",
-    fontSize: 14,
-    lineHeight: 21,
-    fontWeight: "600",
-  },
-  promptBox: {
-    backgroundColor: "#090A0E",
-    borderRadius: 14,
-    padding: 13,
-    gap: 7,
+    borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.22)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.06)",
-  },
-  promptLabel: {
-    color: "#D2B07A",
-    fontSize: 11,
-    fontWeight: "900",
-    letterSpacing: 0.6,
-  },
-  promptText: { color: "rgba(255,255,255,0.66)", fontSize: 12, lineHeight: 18 },
-  attemptText: { color: "rgba(255,255,255,0.48)", fontSize: 11, fontWeight: "800" },
-  actions: { gap: 9 },
-  button: {
-    minHeight: 48,
-    borderRadius: 14,
-    backgroundColor: "#D2B07A",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 16,
+    gap: 10,
+    padding: 22,
   },
-  buttonSecondary: {
-    backgroundColor: "transparent",
+  placeholderText: { color: BRAND.muted, fontSize: 12, textAlign: "center", fontWeight: "700" },
+  statusText: { color: "rgba(255,255,255,0.78)", fontSize: 12, lineHeight: 18, fontWeight: "600" },
+
+  priceStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.20)",
+    borderColor: BRAND.accentBorder,
+    backgroundColor: BRAND.accentFill,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  buttonDanger: { backgroundColor: "#5D2227" },
-  buttonDisabled: { opacity: 0.45 },
-  buttonPressed: { opacity: 0.82 },
-  buttonText: { color: "#211708", fontSize: 14, fontWeight: "900" },
-  buttonTextSecondary: { color: "#FFFFFF" },
-  buttonTextDanger: { color: "#FFFFFF" },
-  reviewBlock: {
-    backgroundColor: "rgba(210,176,122,0.08)",
-    borderRadius: 16,
-    padding: 14,
-    gap: 9,
+  priceStripText: { flex: 1, gap: 2 },
+  priceStripLabel: { color: BRAND.accentText, fontSize: 9, fontWeight: "900", letterSpacing: 0.8 },
+  priceStripValue: { color: BRAND.text, fontSize: 14, fontWeight: "900" },
+  inputChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(0,0,0,0.16)",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
-  reviewTitle: { color: "#FFFFFF", fontSize: 15, fontWeight: "900" },
-  reviewBody: { color: "rgba(255,255,255,0.66)", fontSize: 13, lineHeight: 19 },
-  footerGate: {
-    marginTop: 4,
-    borderRadius: 18,
-    padding: 18,
-    backgroundColor: "#14161C",
+  inputChipText: { color: "rgba(255,255,255,0.82)", fontSize: 10, fontWeight: "900" },
+
+  promptBox: {
+    backgroundColor: "rgba(8,8,8,0.52)",
+    borderRadius: 14,
+    padding: 12,
     gap: 6,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.07)",
   },
-  footerGateTitle: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" },
-  footerGateBody: { color: "rgba(255,255,255,0.66)", fontSize: 13, lineHeight: 20 },
+  promptLabel: { color: BRAND.accentText, fontSize: 10, fontWeight: "900", letterSpacing: 0.5 },
+  promptText: { color: "rgba(255,255,255,0.64)", fontSize: 11, lineHeight: 17 },
+  attemptText: { color: BRAND.muted, fontSize: 10, fontWeight: "800" },
+
+  actions: { gap: 8 },
+  button: {
+    minHeight: 46,
+    borderRadius: 14,
+    backgroundColor: "rgba(232,152,56,0.22)",
+    borderWidth: 1,
+    borderColor: "rgba(248,184,72,0.40)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  buttonSecondary: { backgroundColor: "rgba(255,255,255,0.045)", borderColor: "rgba(255,255,255,0.12)" },
+  buttonDanger: { backgroundColor: "rgba(122,46,53,0.42)", borderColor: "rgba(255,132,144,0.24)" },
+  buttonDisabled: { opacity: 0.45 },
+  buttonPressed: { opacity: 0.78, transform: [{ scale: 0.995 }] },
+  buttonText: { color: BRAND.text, fontSize: 12, fontWeight: "900" },
+  buttonTextSecondary: { color: "rgba(255,255,255,0.90)" },
+  buttonTextDanger: { color: "rgba(255,235,237,0.96)" },
+
+  reviewBlock: {
+    backgroundColor: "rgba(232,152,56,0.07)",
+    borderRadius: 16,
+    padding: 13,
+    gap: 9,
+    borderWidth: 1,
+    borderColor: "rgba(248,184,72,0.18)",
+  },
+  reviewTitle: { color: BRAND.text, fontSize: 13, fontWeight: "900" },
+  reviewBody: { color: BRAND.muted, fontSize: 11, lineHeight: 17, fontWeight: "600" },
+  reviewSecondaryRow: { flexDirection: "row", gap: 8 },
+  reviewSecondaryAction: { flex: 1 },
+
+  footerGate: {
+    marginTop: 2,
+    borderRadius: 18,
+    padding: 15,
+    backgroundColor: BRAND.surface,
+    borderWidth: 1,
+    borderColor: BRAND.border,
+    gap: 5,
+  },
+  footerGateTitle: { color: BRAND.text, fontSize: 14, fontWeight: "900" },
+  footerGateBody: { color: BRAND.muted, fontSize: 11, lineHeight: 17, fontWeight: "600" },
 });
