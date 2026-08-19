@@ -27,6 +27,10 @@ type Extra = {
   PRICING_ANDROID?: string;
   PRICING?: string;
 
+  DIRECTOR_IOS?: string;
+  DIRECTOR_ANDROID?: string;
+  DIRECTOR?: string;
+
   FUSION_EXTENSION_IOS?: string;
   FUSION_EXTENSION_ANDROID?: string;
   FUSION_EXTENSION?: string;
@@ -51,6 +55,7 @@ const DEFAULTS = {
   VIDEO: "https://api.desifaces.ai/video",
   DASH: "https://api.desifaces.ai/dashboard",
   PRICING: "https://api.desifaces.ai/pricing",
+  DIRECTOR: "https://api.desifaces.ai/director",
 
   // Keep this explicit so longform / fusion-extension can be routed separately
   // when the public gateway exposes it.
@@ -112,6 +117,13 @@ export const PRICING_BASE = pick(
   DEFAULTS.PRICING
 );
 
+export const DIRECTOR_BASE = pick(
+  extra.DIRECTOR_IOS,
+  extra.DIRECTOR_ANDROID,
+  extra.DIRECTOR,
+  DEFAULTS.DIRECTOR
+);
+
 // Longform / fusion-extension base.
 // Keep separate from VIDEO_BASE because direct fusion (/jobs) and
 // longform (/api/longform/*) may be exposed differently.
@@ -144,4 +156,5 @@ console.log("DF BASES", {
   FUSION_EXTENSION_BASE,
   DASH_BASE,
   PRICING_BASE,
+  DIRECTOR_BASE,
 });
