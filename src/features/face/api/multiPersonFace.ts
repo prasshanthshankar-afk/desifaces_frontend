@@ -1,5 +1,5 @@
 import { api } from "../../../core/api/client";
-import { DIRECTOR_BASE } from "../../../core/config/env";
+import { DIRECTOR_BASE, FACE_BASE } from "../../../core/config/env";
 
 export type StudioStageState =
   | "pending"
@@ -145,6 +145,12 @@ export type FaceSyncResult = {
   workflow: StudioWorkflowView;
 };
 
+export type FaceMediaReadUrl = {
+  media_asset_id: string;
+  kind: string;
+  read_url: string;
+};
+
 export function getStoryWorkspace(storyId: string) {
   return api.get<StoryWorkspaceView>(
     DIRECTOR_BASE,
@@ -211,6 +217,13 @@ export function reviewStudioOutput(
   );
 }
 
+export function getFaceMediaReadUrl(mediaAssetId: string) {
+  return api.get<FaceMediaReadUrl>(
+    FACE_BASE,
+    `/api/face/assets/${encodeURIComponent(mediaAssetId)}/read-url`
+  );
+}
+
 export function faceCohort(workflow: StudioWorkflowView | null | undefined) {
   return workflow?.cohorts?.find((item) => item.cohort_key === "face_cast") ?? null;
 }
@@ -224,6 +237,11 @@ export function faceStages(workflow: StudioWorkflowView | null | undefined) {
 export function latestPendingReview(stage: StudioStageView | null | undefined) {
   const reviews = [...(stage?.reviews ?? [])].reverse();
   return reviews.find((item) => item.decision === "pending") ?? null;
+}
+
+export function latestFaceOutput(stage: StudioStageView | null | undefined) {
+  const outputs = stage?.outputs ?? [];
+  return outputs.length ? outputs[outputs.length - 1] : null;
 }
 
 export function displayPrice(preview: FacePricingPreview | null | undefined) {
