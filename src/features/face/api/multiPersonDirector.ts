@@ -68,10 +68,10 @@ export type DirectorRunView = {
     project_id: string;
     story_id: string;
     title: string;
-    participants: Array<{
+    participants: {
       participant_id: string;
       display_name?: string | null;
-    }>;
+    }[];
     scenes: any[];
   } | null;
   interrupt?: DirectorInterrupt | null;
@@ -83,7 +83,7 @@ export type CreativeBriefInput = {
   locale?: string | null;
   desired_duration_seconds?: number | null;
   desired_scene_count?: number | null;
-  participant_hints?: Array<Record<string, any>>;
+  participant_hints?: Record<string, any>[];
   constraints?: Record<string, any>;
 };
 
