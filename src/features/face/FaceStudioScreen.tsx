@@ -33,6 +33,7 @@ import { shareUrl } from "../../core/share/share";
 import { DF } from "../../core/theme/colors";
 import DFBlockingOverlay from "../../core/ui/DFBlockingOverlay";
 import DFHeader from "../../core/ui/DFHeader";
+import FaceCreationModeSwitch from "./FaceCreationModeSwitch";
 
 import {
   apiCheckFaceSourceImageSafety,
@@ -2952,6 +2953,7 @@ const liveBillingValueLabel =
         onMenuPress={openHamburgerMenu}
         onPressMeta={openPlanScreen}
       />
+      <FaceCreationModeSwitch active="individual" />
       <Stepper step={1} />
 
       <ScrollView

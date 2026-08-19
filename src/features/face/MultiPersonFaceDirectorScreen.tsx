@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -155,7 +154,7 @@ export default function MultiPersonFaceDirectorScreen() {
   }, []);
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <View style={styles.safe}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={styles.eyebrow}>MULTI-PERSON FACE</Text>
         <Text style={styles.title}>Create the cast from your intent</Text>
@@ -304,7 +303,7 @@ export default function MultiPersonFaceDirectorScreen() {
           </>
         )}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
