@@ -20,8 +20,10 @@ import {
   faceStages,
   FacePricingPreview,
   FaceSyncResult,
+  getFaceMediaReadUrl,
   getStoryWorkspace,
   getStudioWorkflow,
+  latestFaceOutput,
   latestPendingReview,
   previewParticipantFace,
   pricingQuote,
@@ -32,10 +34,7 @@ import {
   syncParticipantFace,
 } from "./api/multiPersonFace";
 
-type Props = {
-  storyId: string;
-};
-
+type Props = { storyId: string };
 type StageMap<T> = Record<string, T>;
 
 function errorMessage(error: any) {
@@ -107,7 +106,15 @@ function Button({
         pressed && !disabled && styles.buttonPressed,
       ]}
     >
-      <Text style={[styles.buttonText, secondary && styles.buttonTextSecondary]}>{label}</Text>
+      <Text
+        style={[
+          styles.buttonText,
+          secondary && styles.buttonTextSecondary,
+          danger && styles.buttonTextDanger,
+        ]}
+      >
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -117,6 +124,7 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
   const [workflow, setWorkflow] = useState<StudioWorkflowView | null>(null);
   const [previews, setPreviews] = useState<StageMap<FacePricingPreview>>({});
   const [syncs, setSyncs] = useState<StageMap<FaceSyncResult>>({});
+  const [mediaUrls, setMediaUrls] = useState<StageMap<string>>({});
   const [busy, setBusy] = useState<StageMap<boolean>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -129,50 +137,74 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
     };
   }, []);
 
-  const load = useCallback(async (quiet = false) => {
-    if (!storyId) return;
-    if (!quiet) setLoading(true);
-    try {
-      const [nextWorkspace, nextWorkflow] = await Promise.all([
-        getStoryWorkspace(storyId),
-        ensureStoryStudioWorkflow(storyId),
-      ]);
-      if (!mounted.current) return;
-      setWorkspace(nextWorkspace);
-      setWorkflow(nextWorkflow);
+  const hydrateMediaUrls = useCallback(async (nextWorkflow: StudioWorkflowView) => {
+    const candidates = faceStages(nextWorkflow)
+      .map((stage) => ({ stage, output: latestFaceOutput(stage) }))
+      .filter((item) => Boolean(item.output?.media_id));
+    if (!candidates.length) return;
 
-      // Recover image/status state after screen reload without replaying generation.
-      const recoverable = faceStages(nextWorkflow).filter(
-        (stage) => Boolean(stage.metadata?.compatibility_face_job_id)
-      );
-      if (recoverable.length) {
-        const settled = await Promise.allSettled(
-          recoverable.map((stage) => syncParticipantFace(nextWorkflow.workflow_id, stage.stage_run_id))
-        );
+    const settled = await Promise.allSettled(
+      candidates.map((item) => getFaceMediaReadUrl(String(item.output?.media_id)))
+    );
+    if (!mounted.current) return;
+    const next: StageMap<string> = {};
+    settled.forEach((result, index) => {
+      if (result.status === "fulfilled" && result.value.read_url) {
+        next[candidates[index].stage.stage_run_id] = result.value.read_url;
+      }
+    });
+    setMediaUrls((current) => ({ ...current, ...next }));
+  }, []);
+
+  const load = useCallback(
+    async (quiet = false) => {
+      if (!storyId) return;
+      if (!quiet) setLoading(true);
+      try {
+        const [nextWorkspace, nextWorkflow] = await Promise.all([
+          getStoryWorkspace(storyId),
+          ensureStoryStudioWorkflow(storyId),
+        ]);
         if (!mounted.current) return;
+        setWorkspace(nextWorkspace);
+        setWorkflow(nextWorkflow);
+
+        const recoverable = faceStages(nextWorkflow).filter((stage) =>
+          Boolean(stage.metadata?.compatibility_face_job_id)
+        );
         let latestWorkflow = nextWorkflow;
-        const recovered: StageMap<FaceSyncResult> = {};
-        settled.forEach((result, index) => {
-          if (result.status === "fulfilled") {
-            recovered[recoverable[index].stage_run_id] = result.value;
-            latestWorkflow = result.value.workflow || latestWorkflow;
-          }
-        });
-        setSyncs((current) => ({ ...current, ...recovered }));
-        setWorkflow(latestWorkflow);
+        if (recoverable.length) {
+          const settled = await Promise.allSettled(
+            recoverable.map((stage) =>
+              syncParticipantFace(nextWorkflow.workflow_id, stage.stage_run_id)
+            )
+          );
+          if (!mounted.current) return;
+          const recovered: StageMap<FaceSyncResult> = {};
+          settled.forEach((result, index) => {
+            if (result.status === "fulfilled") {
+              recovered[recoverable[index].stage_run_id] = result.value;
+              latestWorkflow = result.value.workflow || latestWorkflow;
+            }
+          });
+          setSyncs((current) => ({ ...current, ...recovered }));
+          setWorkflow(latestWorkflow);
+        }
+        await hydrateMediaUrls(latestWorkflow);
+      } catch (error) {
+        Alert.alert("Face Studio", errorMessage(error));
+      } finally {
+        if (mounted.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
-    } catch (error) {
-      Alert.alert("Face Studio", errorMessage(error));
-    } finally {
-      if (mounted.current) {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    }
-  }, [storyId]);
+    },
+    [storyId, hydrateMediaUrls]
+  );
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   const stages = useMemo(() => faceStages(workflow), [workflow]);
@@ -180,7 +212,10 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
   const participantById = useMemo(
     () =>
       new Map(
-        (workspace?.participants ?? []).map((participant) => [participant.participant_id, participant])
+        (workspace?.participants ?? []).map((participant) => [
+          participant.participant_id,
+          participant,
+        ])
       ),
     [workspace]
   );
@@ -194,6 +229,11 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
         if (!mounted.current) return;
         setSyncs((current) => ({ ...current, [stage.stage_run_id]: result }));
         setWorkflow(result.workflow);
+        if (result.image_url) {
+          setMediaUrls((current) => ({ ...current, [stage.stage_run_id]: String(result.image_url) }));
+        } else {
+          await hydrateMediaUrls(result.workflow);
+        }
       } catch (error) {
         if (!quiet) Alert.alert("Face Studio", errorMessage(error));
       } finally {
@@ -202,7 +242,7 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
         }
       }
     },
-    [workflow]
+    [workflow, hydrateMediaUrls]
   );
 
   useEffect(() => {
@@ -279,6 +319,7 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
         const next = await reviewStudioOutput(pending.review_item_id, decision);
         if (!mounted.current) return;
         setWorkflow(next);
+        await hydrateMediaUrls(next);
         if (decision !== "approved") {
           setPreviews((current) => {
             const copy = { ...current };
@@ -294,7 +335,7 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
         }
       }
     },
-    []
+    [hydrateMediaUrls]
   );
 
   if (loading && !workflow) {
@@ -309,8 +350,10 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
   }
 
   const required = cohort?.required_total ?? stages.length;
-  const approved = cohort?.approved_total ?? stages.filter((stage) => stage.state === "approved").length;
+  const approved =
+    cohort?.approved_total ?? stages.filter((stage) => stage.state === "approved").length;
   const castReady = Boolean(cohort?.satisfied && required > 0);
+  const progress = required ? Math.min(100, (approved / required) * 100) : 0;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -335,15 +378,12 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
         <View style={[styles.cohortCard, castReady && styles.cohortReady]}>
           <View style={styles.cohortHeader}>
             <Text style={styles.cohortTitle}>Face cast</Text>
-            <Text style={styles.cohortCount}>{approved}/{required} approved</Text>
+            <Text style={styles.cohortCount}>
+              {approved}/{required} approved
+            </Text>
           </View>
           <View style={styles.progressTrack}>
-            <View
-              style={[
-                styles.progressFill,
-                { width: `${required ? Math.min(100, (approved / required) * 100) : 0}%` },
-              ]}
-            />
+            <View style={[styles.progressFill, { width: `${progress}%` as any }]} />
           </View>
           <Text style={styles.cohortBody}>
             {castReady
@@ -362,7 +402,7 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
           const name = participant?.display_name || "Character";
           const preview = previews[stage.stage_run_id];
           const synced = syncs[stage.stage_run_id];
-          const imageUrl = synced?.image_url || null;
+          const imageUrl = synced?.image_url || mediaUrls[stage.stage_run_id] || null;
           const pendingReview = latestPendingReview(stage);
           const isBusy = Boolean(busy[stage.stage_run_id]);
           const canPrice = ["pending", "ready", "failed", "rejected"].includes(stage.state);
@@ -370,7 +410,10 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
           const locked = stage.state === "approved";
 
           return (
-            <View key={stage.stage_run_id} style={[styles.characterCard, locked && styles.characterLocked]}>
+            <View
+              key={stage.stage_run_id}
+              style={[styles.characterCard, locked && styles.characterLocked]}
+            >
               <View style={styles.characterHeader}>
                 <View style={styles.characterHeaderText}>
                   <Text style={styles.characterName}>{name}</Text>
@@ -385,7 +428,9 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
                 <View style={styles.imagePlaceholder}>
                   {stage.state === "generating" ? <ActivityIndicator size="large" /> : null}
                   <Text style={styles.placeholderText}>
-                    {stage.state === "generating" ? "Creating identity…" : "Face candidate will appear here"}
+                    {stage.state === "generating"
+                      ? "Creating identity…"
+                      : "Face candidate will appear here"}
                   </Text>
                 </View>
               )}
@@ -411,6 +456,10 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
               {synced?.attempt_no ? (
                 <Text style={styles.attemptText}>
                   Attempt {synced.attempt_no} • {humanState(synced.attempt_kind)}
+                </Text>
+              ) : stage.metadata?.face_attempt_count ? (
+                <Text style={styles.attemptText}>
+                  Attempt {String(stage.metadata.face_attempt_count)} • {humanState(stage.metadata.face_attempt_kind)}
                 </Text>
               ) : null}
 
@@ -495,11 +544,15 @@ export default function MultiPersonFaceCohortScreen({ storyId }: Props) {
         })}
 
         <View style={styles.footerGate}>
-          <Text style={styles.footerGateTitle}>{castReady ? "Face Studio complete" : "Face Studio is not complete"}</Text>
+          <Text style={styles.footerGateTitle}>
+            {castReady ? "Face Studio complete" : "Face Studio is not complete"}
+          </Text>
           <Text style={styles.footerGateBody}>
             {castReady
               ? "All required identities are approved and locked. The workflow may now move to Audio Studio."
-              : `Audio remains blocked until ${required - approved} more required Face${required - approved === 1 ? " is" : "s are"} approved.`}
+              : `Audio remains blocked until ${required - approved} more required Face${
+                  required - approved === 1 ? " is" : "s are"
+                } approved.`}
           </Text>
         </View>
       </ScrollView>
@@ -514,7 +567,12 @@ const styles = StyleSheet.create({
   loadingText: { color: "rgba(255,255,255,0.76)", fontSize: 15, fontWeight: "700" },
   eyebrow: { color: "#D2B07A", fontSize: 12, fontWeight: "900", letterSpacing: 1.8 },
   title: { color: "#FFFFFF", fontSize: 30, fontWeight: "900", letterSpacing: -0.6 },
-  subtitle: { color: "rgba(255,255,255,0.68)", fontSize: 15, lineHeight: 22, maxWidth: 620 },
+  subtitle: {
+    color: "rgba(255,255,255,0.68)",
+    fontSize: 15,
+    lineHeight: 22,
+    maxWidth: 620,
+  },
   cohortCard: {
     backgroundColor: "#14161C",
     borderWidth: 1,
@@ -524,12 +582,27 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   cohortReady: { borderColor: "rgba(255,255,255,0.34)" },
-  cohortHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
+  cohortHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
   cohortTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "900" },
   cohortCount: { color: "#D2B07A", fontSize: 14, fontWeight: "900" },
-  progressTrack: { height: 7, backgroundColor: "rgba(255,255,255,0.10)", borderRadius: 99, overflow: "hidden" },
+  progressTrack: {
+    height: 7,
+    backgroundColor: "rgba(255,255,255,0.10)",
+    borderRadius: 99,
+    overflow: "hidden",
+  },
   progressFill: { height: "100%", backgroundColor: "#D2B07A", borderRadius: 99 },
-  cohortBody: { color: "rgba(255,255,255,0.82)", fontSize: 14, lineHeight: 21, fontWeight: "650" },
+  cohortBody: {
+    color: "rgba(255,255,255,0.82)",
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: "600",
+  },
   cohortMeta: { color: "rgba(255,255,255,0.52)", fontSize: 12, fontWeight: "700" },
   characterCard: {
     backgroundColor: "#101218",
@@ -540,31 +613,108 @@ const styles = StyleSheet.create({
     gap: 13,
   },
   characterLocked: { borderColor: "rgba(210,176,122,0.55)" },
-  characterHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  characterHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   characterHeaderText: { flex: 1 },
   characterName: { color: "#FFFFFF", fontSize: 21, fontWeight: "900" },
-  characterState: { color: "rgba(255,255,255,0.56)", fontSize: 12, fontWeight: "800", marginTop: 3 },
-  lockBadge: { color: "#201708", backgroundColor: "#D2B07A", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99, fontSize: 10, fontWeight: "900" },
-  faceImage: { width: "100%", aspectRatio: 3 / 4, borderRadius: 18, backgroundColor: "#1C1F27" },
-  imagePlaceholder: { width: "100%", aspectRatio: 3 / 4, borderRadius: 18, backgroundColor: "#191B22", alignItems: "center", justifyContent: "center", gap: 12, padding: 24 },
-  placeholderText: { color: "rgba(255,255,255,0.48)", fontSize: 13, textAlign: "center", fontWeight: "700" },
-  statusText: { color: "rgba(255,255,255,0.78)", fontSize: 14, lineHeight: 21, fontWeight: "650" },
-  promptBox: { backgroundColor: "#090A0E", borderRadius: 14, padding: 13, gap: 7, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)" },
-  promptLabel: { color: "#D2B07A", fontSize: 11, fontWeight: "900", letterSpacing: 0.6 },
+  characterState: {
+    color: "rgba(255,255,255,0.56)",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  lockBadge: {
+    color: "#201708",
+    backgroundColor: "#D2B07A",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 99,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  faceImage: {
+    width: "100%",
+    aspectRatio: 3 / 4,
+    borderRadius: 18,
+    backgroundColor: "#1C1F27",
+  },
+  imagePlaceholder: {
+    width: "100%",
+    aspectRatio: 3 / 4,
+    borderRadius: 18,
+    backgroundColor: "#191B22",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    padding: 24,
+  },
+  placeholderText: {
+    color: "rgba(255,255,255,0.48)",
+    fontSize: 13,
+    textAlign: "center",
+    fontWeight: "700",
+  },
+  statusText: {
+    color: "rgba(255,255,255,0.78)",
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: "600",
+  },
+  promptBox: {
+    backgroundColor: "#090A0E",
+    borderRadius: 14,
+    padding: 13,
+    gap: 7,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+  },
+  promptLabel: {
+    color: "#D2B07A",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+  },
   promptText: { color: "rgba(255,255,255,0.66)", fontSize: 12, lineHeight: 18 },
   attemptText: { color: "rgba(255,255,255,0.48)", fontSize: 11, fontWeight: "800" },
   actions: { gap: 9 },
-  button: { minHeight: 48, borderRadius: 14, backgroundColor: "#D2B07A", alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
-  buttonSecondary: { backgroundColor: "transparent", borderWidth: 1, borderColor: "rgba(255,255,255,0.20)" },
+  button: {
+    minHeight: 48,
+    borderRadius: 14,
+    backgroundColor: "#D2B07A",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  buttonSecondary: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.20)",
+  },
   buttonDanger: { backgroundColor: "#5D2227" },
   buttonDisabled: { opacity: 0.45 },
   buttonPressed: { opacity: 0.82 },
   buttonText: { color: "#211708", fontSize: 14, fontWeight: "900" },
   buttonTextSecondary: { color: "#FFFFFF" },
-  reviewBlock: { backgroundColor: "rgba(210,176,122,0.08)", borderRadius: 16, padding: 14, gap: 9 },
+  buttonTextDanger: { color: "#FFFFFF" },
+  reviewBlock: {
+    backgroundColor: "rgba(210,176,122,0.08)",
+    borderRadius: 16,
+    padding: 14,
+    gap: 9,
+  },
   reviewTitle: { color: "#FFFFFF", fontSize: 15, fontWeight: "900" },
   reviewBody: { color: "rgba(255,255,255,0.66)", fontSize: 13, lineHeight: 19 },
-  footerGate: { marginTop: 4, borderRadius: 18, padding: 18, backgroundColor: "#14161C", gap: 6 },
+  footerGate: {
+    marginTop: 4,
+    borderRadius: 18,
+    padding: 18,
+    backgroundColor: "#14161C",
+    gap: 6,
+  },
   footerGateTitle: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" },
   footerGateBody: { color: "rgba(255,255,255,0.66)", fontSize: 13, lineHeight: 20 },
 });
