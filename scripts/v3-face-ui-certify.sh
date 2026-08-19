@@ -20,7 +20,10 @@ echo "V3_FACE_UI_SOURCE=PASS"
 npx eslint \
   'src/core/config/env.ts' \
   'src/features/face/api/multiPersonFace.ts' \
+  'src/features/face/api/multiPersonDirector.ts' \
+  'src/features/face/MultiPersonFaceDirectorScreen.tsx' \
   'src/features/face/MultiPersonFaceCohortScreen.tsx' \
+  'src/app/(tabs)/face/index.tsx' \
   'src/app/(tabs)/face/story/[storyId].tsx'
 echo "V3_FACE_UI_ESLINT=PASS"
 
@@ -31,7 +34,14 @@ node <<'NODE'
 const fs = require('fs');
 const checks = [
   ['src/app/(tabs)/face/index.tsx', 'FaceStudioScreen'],
+  ['src/app/(tabs)/face/index.tsx', 'Multi-Person'],
+  ['src/app/(tabs)/face/index.tsx', 'MultiPersonFaceDirectorScreen'],
   ['src/app/(tabs)/face/story/[storyId].tsx', 'MultiPersonFaceCohortScreen'],
+  ['src/features/face/api/multiPersonDirector.ts', '/api/director/runs'],
+  ['src/features/face/api/multiPersonDirector.ts', '/resume'],
+  ['src/features/face/MultiPersonFaceDirectorScreen.tsx', 'Ask Creative Director'],
+  ['src/features/face/MultiPersonFaceDirectorScreen.tsx', 'Approve Director plan'],
+  ['src/features/face/MultiPersonFaceDirectorScreen.tsx', 'Open Face Cast'],
   ['src/features/face/api/multiPersonFace.ts', 'DIRECTOR_BASE'],
   ['src/features/face/api/multiPersonFace.ts', 'getFaceMediaReadUrl'],
   ['src/features/face/MultiPersonFaceCohortScreen.tsx', 'Audio is locked'],
@@ -49,10 +59,14 @@ for (const [file, needle] of checks) {
 console.log('V3_FACE_UI_CONTRACT=PASS');
 NODE
 
-# Explicitly preserve the existing one-person Face Studio route while Story casts
-# use the new cohort screen. This is the required 1-person backward-compatibility gate.
+# Preserve one-person Face Studio while exposing Multi-Person Director as a
+# sibling mode and Story cast as the participant cohort execution route.
 if ! grep -q 'FaceStudioScreen' 'src/app/(tabs)/face/index.tsx'; then
   echo "V3_FACE_UI_FAIL=one_person_face_route_changed"
+  exit 1
+fi
+if ! grep -q 'MultiPersonFaceDirectorScreen' 'src/app/(tabs)/face/index.tsx'; then
+  echo "V3_FACE_UI_FAIL=multi_person_face_entry_missing"
   exit 1
 fi
 if ! grep -q 'MultiPersonFaceCohortScreen' 'src/app/(tabs)/face/story/[storyId].tsx'; then
@@ -61,4 +75,5 @@ if ! grep -q 'MultiPersonFaceCohortScreen' 'src/app/(tabs)/face/story/[storyId].
 fi
 echo "V3_FACE_UI_ROUTE_COMPATIBILITY=PASS"
 
+echo "V3_FACE_UI_DIRECTOR_ENTRY=PASS"
 echo "V3_FACE_UI_ZERO_PROVIDER_CERTIFICATION=PASS"
