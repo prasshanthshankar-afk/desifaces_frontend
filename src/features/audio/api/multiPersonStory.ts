@@ -48,9 +48,32 @@ export type AudioSyncResult = {
   workflow: StudioWorkflowView;
 };
 
+export type ParticipantVoiceProfileResult = {
+  workflow_id: string;
+  participant_id: string;
+  display_name: string;
+  voice_id: string;
+  voice_locale: string;
+  voice_gender: string;
+  voice_display_name: string;
+  applies_to: "all_dialogue_turns_for_participant" | string;
+};
+
 export function audioStages(workflow: StudioWorkflowView | null | undefined) {
   return (workflow?.stages ?? []).filter(
     (stage) => stage.stage_type === "audio" && stage.scope_type === "dialogue_turn"
+  );
+}
+
+export function configureParticipantVoice(
+  workflowId: string,
+  participantId: string,
+  params: { voice_id: string; voice_locale: string }
+) {
+  return api.put<ParticipantVoiceProfileResult>(
+    DIRECTOR_BASE,
+    `/api/director/studio-workflows/${encodeURIComponent(workflowId)}/participants/${encodeURIComponent(participantId)}/voice-profile`,
+    params
   );
 }
 
