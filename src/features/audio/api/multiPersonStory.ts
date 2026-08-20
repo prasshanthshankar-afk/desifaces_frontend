@@ -45,6 +45,8 @@ export type AudioSyncResult = {
   audio_url?: string | null;
   review_item_id?: string | null;
   review_decision?: ReviewDecision | null;
+  error_code?: string | null;
+  error_message?: string | null;
   workflow: StudioWorkflowView;
 };
 
@@ -59,10 +61,28 @@ export type ParticipantVoiceProfileResult = {
   applies_to: "all_dialogue_turns_for_participant" | string;
 };
 
+/**
+ * Audio stages are canonically dialogue-turn scoped, so participant_id is
+ * intentionally null on the wire. The Director persists the speaker relation
+ * as stage.metadata.speaker_participant_id when it creates the workflow.
+ *
+ * The mobile Audio workspace needs that relation for participant-level voice
+ * controls. Enrich a presentation copy only; do not change the canonical
+ * workflow contract or scope semantics.
+ */
 export function audioStages(workflow: StudioWorkflowView | null | undefined) {
-  return (workflow?.stages ?? []).filter(
-    (stage) => stage.stage_type === "audio" && stage.scope_type === "dialogue_turn"
-  );
+  return (workflow?.stages ?? [])
+    .filter(
+      (stage) => stage.stage_type === "audio" && stage.scope_type === "dialogue_turn"
+    )
+    .map((stage) => ({
+      ...stage,
+      participant_id:
+        (stage as any).participant_id ??
+        (stage.metadata?.speaker_participant_id
+          ? String(stage.metadata.speaker_participant_id)
+          : null),
+    }));
 }
 
 export function configureParticipantVoice(
@@ -101,12 +121,55 @@ export function dispatchDialogueAudio(
   );
 }
 
-export function syncDialogueAudio(workflowId: string, stageRunId: string) {
-  return api.post<AudioSyncResult>(
-    DIRECTOR_BASE,
-    `/api/director/studio-workflows/${encodeURIComponent(workflowId)}/audio-stages/${encodeURIComponent(stageRunId)}/sync`,
-    {}
-  );
+/**
+ * Sync is a state-refresh operation. Director marks a terminal provider failure
+ * in the workflow before returning the error response. Recover that authoritative
+ * workflow so the UI cannot remain visually stuck on "Generating" forever.
+ */
+export async function syncDialogueAudio(workflowId: string, stageRunId: string) {
+  try {
+    return await api.post<AudioSyncResult>(
+      DIRECTOR_BASE,
+      `/api/director/studio-workflows/${encodeURIComponent(workflowId)}/audio-stages/${encodeURIComponent(stageRunId)}/sync`,
+      {}
+    );
+  } catch (error) {
+    const workflow = await api.get<StudioWorkflowView>(
+      DIRECTOR_BASE,
+      `/api/director/studio-workflows/${encodeURIComponent(workflowId)}`
+    );
+    const stage = audioStages(workflow).find(
+      (item) => item.stage_run_id === stageRunId
+    );
+
+    if (
+      stage &&
+      ["failed", "rejected", "awaiting_review", "approved"].includes(String(stage.state))
+    ) {
+      return {
+        workflow_id: workflowId,
+        stage_run_id: stageRunId,
+        dialogue_turn_id: String(stage.dialogue_turn_id || ""),
+        participant_id: String((stage as any).participant_id || ""),
+        display_name: "",
+        provider_state: stage.state === "failed" ? "failed" : null,
+        stage_state: stage.state,
+        audio_job_id: String(stage.generation_job_id || "") || null,
+        media_asset_id: null,
+        audio_url: null,
+        review_item_id: null,
+        review_decision: null,
+        error_code: stage.state === "failed" ? "audio_generation_failed" : null,
+        error_message:
+          stage.state === "failed"
+            ? String(stage.metadata?.error || stage.metadata?.error_message || "Audio generation failed")
+            : null,
+        workflow,
+      } satisfies AudioSyncResult;
+    }
+
+    throw error;
+  }
 }
 
 export function audioPricingQuote(preview: AudioPricingPreview) {
