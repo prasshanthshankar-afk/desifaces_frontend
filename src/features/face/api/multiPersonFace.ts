@@ -55,6 +55,15 @@ export type FaceMediaReadUrl = {
   read_url: string;
 };
 
+export type SavedFaceReuseResult = {
+  workflow: StudioWorkflowView;
+  participant_id: string;
+  display_name?: string;
+  media_asset_id: string;
+  reused: boolean;
+  charged: boolean;
+};
+
 export function previewParticipantFace(workflowId: string, stageRunId: string) {
   return api.post<FacePricingPreview>(
     DIRECTOR_BASE,
@@ -84,6 +93,18 @@ export function syncParticipantFace(workflowId: string, stageRunId: string) {
     DIRECTOR_BASE,
     `/api/director/studio-workflows/${encodeURIComponent(workflowId)}/face-stages/${encodeURIComponent(stageRunId)}/sync`,
     {}
+  );
+}
+
+export function reuseSavedFace(
+  workflowId: string,
+  participantId: string,
+  mediaAssetId: string
+) {
+  return api.put<SavedFaceReuseResult>(
+    DIRECTOR_BASE,
+    `/api/director/studio-workflows/${encodeURIComponent(workflowId)}/participants/${encodeURIComponent(participantId)}/saved-face`,
+    { media_asset_id: mediaAssetId }
   );
 }
 
