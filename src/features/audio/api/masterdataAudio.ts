@@ -82,24 +82,18 @@ async function getJson<T>(url: string, token?: string): Promise<T> {
 }
 
 /**
- * Legacy all-locales catalog retained for callers that still need it.
- * New Studio country/target selection uses fetchAudioCountries and
- * fetchAudioTargetLanguages.
+ * User-facing locale catalog. Only enabled end-to-end locales should be offered
+ * in Studio pickers; availability remains owned by svc-audio/masterdata.
  */
 export async function fetchAudioLocales(token?: string) {
-  return getJson<LocalesResponse>(`${base()}/api/audio/catalog/locales`, token);
-}
-
-/**
- * Compact user-facing locale catalog for character voice assignment.
- * Availability remains owned by svc-audio/masterdata; the client never hardcodes
- * country, language, locale, provider or voice mappings.
- */
-export async function fetchSelectableAudioLocales(token?: string) {
   return getJson<LocalesResponse>(
     `${base()}/api/audio/catalog/locales?end_to_end_only=true&enabled_only=true`,
     token
   );
+}
+
+export async function fetchSelectableAudioLocales(token?: string) {
+  return fetchAudioLocales(token);
 }
 
 export async function fetchAudioCountries(token?: string) {
