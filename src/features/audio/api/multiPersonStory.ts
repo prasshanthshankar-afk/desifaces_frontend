@@ -58,17 +58,15 @@ export type ParticipantVoiceProfileResult = {
   voice_locale: string;
   voice_gender: string;
   voice_display_name: string;
+  style?: string | null;
+  available_styles?: string[];
   applies_to: "all_dialogue_turns_for_participant" | string;
 };
 
 /**
- * Audio stages are canonically dialogue-turn scoped, so participant_id is
- * intentionally null on the wire. The Director persists the speaker relation
- * as stage.metadata.speaker_participant_id when it creates the workflow.
- *
- * The mobile Audio workspace needs that relation for participant-level voice
- * controls. Enrich a presentation copy only; do not change the canonical
- * workflow contract or scope semantics.
+ * Audio stages are canonically dialogue-turn scoped. Older workflows stored the
+ * speaker only in metadata while newer writers also persist participant_id.
+ * Normalize both shapes for participant-level character voice controls.
  */
 export function audioStages(workflow: StudioWorkflowView | null | undefined) {
   return (workflow?.stages ?? [])
@@ -88,7 +86,7 @@ export function audioStages(workflow: StudioWorkflowView | null | undefined) {
 export function configureParticipantVoice(
   workflowId: string,
   participantId: string,
-  params: { voice_id: string; voice_locale: string }
+  params: { voice_id: string; voice_locale: string; style?: string | null }
 ) {
   return api.put<ParticipantVoiceProfileResult>(
     DIRECTOR_BASE,
@@ -162,7 +160,7 @@ export async function syncDialogueAudio(workflowId: string, stageRunId: string) 
         error_code: stage.state === "failed" ? "audio_generation_failed" : null,
         error_message:
           stage.state === "failed"
-            ? String(stage.metadata?.error || stage.metadata?.error_message || "Audio generation failed")
+            ? String(stage.metadata?.last_error || stage.metadata?.error || stage.metadata?.error_message || "Audio generation failed")
             : null,
         workflow,
       } satisfies AudioSyncResult;
