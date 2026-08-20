@@ -106,6 +106,29 @@ export type StoryWorkspaceView = {
   updated_at: string;
 };
 
+function clean(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+/**
+ * Older story Audio stages were dialogue-turn scoped and stored the canonical
+ * speaker id only in metadata.speaker_participant_id. Newer writers also fill
+ * participant_id directly. Normalize both shapes at the shared client boundary
+ * so all Studio screens see the same participant identity without mutating the
+ * durable workflow or guessing from display names.
+ */
+export function normalizeStudioWorkflow(view: StudioWorkflowView): StudioWorkflowView {
+  return {
+    ...view,
+    stages: (view?.stages ?? []).map((stage) => {
+      if (stage.participant_id) return stage;
+      if (stage.stage_type !== "audio" || stage.scope_type !== "dialogue_turn") return stage;
+      const speakerId = clean(stage.metadata?.speaker_participant_id);
+      return speakerId ? { ...stage, participant_id: speakerId } : stage;
+    }),
+  };
+}
+
 export function getStoryWorkspace(storyId: string) {
   return api.get<StoryWorkspaceView>(
     DIRECTOR_BASE,
@@ -113,31 +136,34 @@ export function getStoryWorkspace(storyId: string) {
   );
 }
 
-export function ensureStoryStudioWorkflow(storyId: string) {
-  return api.post<StudioWorkflowView>(
+export async function ensureStoryStudioWorkflow(storyId: string) {
+  const view = await api.post<StudioWorkflowView>(
     DIRECTOR_BASE,
     `/api/director/stories/${encodeURIComponent(storyId)}/studio-workflows`,
     {}
   );
+  return normalizeStudioWorkflow(view);
 }
 
-export function getStudioWorkflow(workflowId: string) {
-  return api.get<StudioWorkflowView>(
+export async function getStudioWorkflow(workflowId: string) {
+  const view = await api.get<StudioWorkflowView>(
     DIRECTOR_BASE,
     `/api/director/studio-workflows/${encodeURIComponent(workflowId)}`
   );
+  return normalizeStudioWorkflow(view);
 }
 
-export function reviewStudioOutput(
+export async function reviewStudioOutput(
   reviewItemId: string,
   decision: Exclude<ReviewDecision, "pending">,
   feedback?: string | null
 ) {
-  return api.post<StudioWorkflowView>(
+  const view = await api.post<StudioWorkflowView>(
     DIRECTOR_BASE,
     `/api/director/studio-reviews/${encodeURIComponent(reviewItemId)}`,
     { decision, feedback: feedback ?? null }
   );
+  return normalizeStudioWorkflow(view);
 }
 
 export function latestPendingReview(stage: StudioStageView | null | undefined) {
@@ -145,10 +171,11 @@ export function latestPendingReview(stage: StudioStageView | null | undefined) {
   return reviews.find((item) => item.decision === "pending") ?? null;
 }
 
-export function advanceStudioWorkflow(workflowId: string) {
-  return api.post<StudioWorkflowView>(
+export async function advanceStudioWorkflow(workflowId: string) {
+  const view = await api.post<StudioWorkflowView>(
     DIRECTOR_BASE,
     `/api/director/studio-workflows/${encodeURIComponent(workflowId)}/advance`,
     {}
   );
+  return normalizeStudioWorkflow(view);
 }
