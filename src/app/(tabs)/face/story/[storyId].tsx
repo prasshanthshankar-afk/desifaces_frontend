@@ -2,12 +2,12 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
+import { ensureStoryStudioWorkflow } from "../../../../core/studio/multiPersonWorkflow";
 import { DF } from "../../../../core/theme/colors";
 import DFHeader from "../../../../core/ui/DFHeader";
-import MultiPersonAudioCohortScreen from "../../../../features/face/MultiPersonAudioCohortScreen";
+import MultiPersonAudioCohortScreen from "../../../../features/audio/MultiPersonAudioCohortScreen";
 import MultiPersonFaceCohortScreen from "../../../../features/face/MultiPersonFaceCohortScreen";
-import MultiPersonFusionScreen from "../../../../features/face/MultiPersonFusionScreen";
-import { ensureStoryStudioWorkflow } from "../../../../features/face/api/multiPersonFace";
+import MultiPersonFusionScreen from "../../../../features/fusion/MultiPersonFusionScreen";
 
 type StoryStage = "face" | "audio" | "fusion";
 
@@ -44,9 +44,6 @@ export default function StoryStudioRoute() {
     if (!activeRef.current) return;
     const canonical = normalizeStage(String(workflow?.current_stage || "")) || "face";
     setResolvedStage((current) => {
-      // A stale route parameter must never trap the user in an earlier studio after
-      // the canonical HITL workflow has advanced. It may, however, intentionally
-      // show a later studio's blocked state without mutating the workflow.
       const requested = current || explicitStage;
       return stageRank(canonical) > stageRank(requested) ? canonical : requested || canonical;
     });
@@ -113,8 +110,6 @@ export default function StoryStudioRoute() {
   if (resolvedStage === "audio") return <MultiPersonAudioCohortScreen storyId={storyId} />;
   if (resolvedStage === "fusion") return <MultiPersonFusionScreen storyId={storyId} />;
 
-  // MultiPersonFaceCohortScreen predates the shared-header rule. Keep its proven
-  // Face workflow logic untouched and host it beneath the canonical DFHeader.
   return (
     <View style={styles.safe}>
       <DFHeader subtitle="Story Face Studio" onMenuPress={openHamburgerMenu} onPressMeta={openPlanScreen} />

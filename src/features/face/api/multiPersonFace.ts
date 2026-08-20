@@ -1,109 +1,13 @@
 import { api } from "../../../core/api/client";
 import { DIRECTOR_BASE, FACE_BASE } from "../../../core/config/env";
+import type {
+  ReviewDecision,
+  StudioStageState,
+  StudioStageView,
+  StudioWorkflowView,
+} from "../../../core/studio/multiPersonWorkflow";
 
-export type StudioStageState =
-  | "pending"
-  | "ready"
-  | "generating"
-  | "awaiting_review"
-  | "approved"
-  | "rejected"
-  | "failed"
-  | "skipped";
-
-export type ReviewDecision = "pending" | "approved" | "rejected" | "revise";
-
-export type StudioReviewItem = {
-  review_item_id: string;
-  stage_run_id: string;
-  media_id: string;
-  decision: ReviewDecision;
-  feedback?: string | null;
-  decided_at?: string | null;
-};
-
-export type StudioArtifactRef = {
-  media_id: string;
-  role: string;
-  source_stage_run_id?: string | null;
-  is_active?: boolean;
-};
-
-export type StudioStageView = {
-  stage_run_id: string;
-  workflow_id: string;
-  stage_type: "face" | "audio" | "fusion" | "story_final";
-  scope_type: "participant" | "dialogue_turn" | "scene" | "story";
-  participant_id?: string | null;
-  scene_id?: string | null;
-  dialogue_turn_id?: string | null;
-  state: StudioStageState;
-  generation_request_id?: string | null;
-  generation_job_id?: string | null;
-  inputs: StudioArtifactRef[];
-  outputs: StudioArtifactRef[];
-  reviews: StudioReviewItem[];
-  metadata: Record<string, any>;
-  created_at: string;
-  updated_at: string;
-};
-
-export type StudioCohortView = {
-  cohort_key: string;
-  stage_type: "face" | "audio" | "fusion" | "story_final";
-  downstream_stage_type?: "face" | "audio" | "fusion" | "story_final" | null;
-  required_total: number;
-  approved_total: number;
-  awaiting_review_total: number;
-  generating_total: number;
-  failed_total: number;
-  rejected_total: number;
-  pending_total: number;
-  satisfied: boolean;
-  required_stage_run_ids: string[];
-  approved_stage_run_ids: string[];
-};
-
-export type StudioWorkflowView = {
-  workflow_id: string;
-  account_id: string;
-  owner_user_id: string;
-  project_id: string;
-  story_id?: string | null;
-  state: string;
-  current_stage?: "face" | "audio" | "fusion" | "story_final" | null;
-  stages: StudioStageView[];
-  cohorts: StudioCohortView[];
-  metadata: Record<string, any>;
-  final_media_id?: string | null;
-  next_action?: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type WorkspaceParticipant = {
-  participant_id: string;
-  display_name?: string | null;
-  kind: string;
-  primary_face_media_id?: string | null;
-  preferred_locale?: string | null;
-  persona?: Record<string, any>;
-  continuity?: Record<string, any>;
-  generation_state?: string | null;
-};
-
-export type StoryWorkspaceView = {
-  project_id: string;
-  story_id: string;
-  title: string;
-  status: string;
-  revision: number;
-  participants: WorkspaceParticipant[];
-  scenes: any[];
-  warnings: string[];
-  actions: string[];
-  updated_at: string;
-};
+export * from "../../../core/studio/multiPersonWorkflow";
 
 export type FacePricingPreview = {
   workflow_id: string;
@@ -151,28 +55,6 @@ export type FaceMediaReadUrl = {
   read_url: string;
 };
 
-export function getStoryWorkspace(storyId: string) {
-  return api.get<StoryWorkspaceView>(
-    DIRECTOR_BASE,
-    `/api/director/stories/${encodeURIComponent(storyId)}/workspace`
-  );
-}
-
-export function ensureStoryStudioWorkflow(storyId: string) {
-  return api.post<StudioWorkflowView>(
-    DIRECTOR_BASE,
-    `/api/director/stories/${encodeURIComponent(storyId)}/studio-workflows`,
-    {}
-  );
-}
-
-export function getStudioWorkflow(workflowId: string) {
-  return api.get<StudioWorkflowView>(
-    DIRECTOR_BASE,
-    `/api/director/studio-workflows/${encodeURIComponent(workflowId)}`
-  );
-}
-
 export function previewParticipantFace(workflowId: string, stageRunId: string) {
   return api.post<FacePricingPreview>(
     DIRECTOR_BASE,
@@ -205,18 +87,6 @@ export function syncParticipantFace(workflowId: string, stageRunId: string) {
   );
 }
 
-export function reviewStudioOutput(
-  reviewItemId: string,
-  decision: Exclude<ReviewDecision, "pending">,
-  feedback?: string | null
-) {
-  return api.post<StudioWorkflowView>(
-    DIRECTOR_BASE,
-    `/api/director/studio-reviews/${encodeURIComponent(reviewItemId)}`,
-    { decision, feedback: feedback ?? null }
-  );
-}
-
 export function getFaceMediaReadUrl(mediaAssetId: string) {
   return api.get<FaceMediaReadUrl>(
     FACE_BASE,
@@ -232,11 +102,6 @@ export function faceStages(workflow: StudioWorkflowView | null | undefined) {
   return (workflow?.stages ?? []).filter(
     (stage) => stage.stage_type === "face" && stage.scope_type === "participant"
   );
-}
-
-export function latestPendingReview(stage: StudioStageView | null | undefined) {
-  const reviews = [...(stage?.reviews ?? [])].reverse();
-  return reviews.find((item) => item.decision === "pending") ?? null;
 }
 
 export function latestFaceOutput(stage: StudioStageView | null | undefined) {

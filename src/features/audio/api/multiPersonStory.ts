@@ -1,0 +1,97 @@
+import { api } from "../../../core/api/client";
+import { DIRECTOR_BASE } from "../../../core/config/env";
+import type {
+  ReviewDecision,
+  StudioStageState,
+  StudioWorkflowView,
+} from "../../../core/studio/multiPersonWorkflow";
+
+export * from "../../../core/studio/multiPersonWorkflow";
+
+export type AudioPricingPreview = {
+  workflow_id: string;
+  stage_run_id: string;
+  dialogue_turn_id: string;
+  participant_id: string;
+  display_name: string;
+  stage_state: StudioStageState;
+  studio_input: Record<string, any>;
+  pricing: Record<string, any>;
+};
+
+export type AudioDispatchResult = {
+  workflow_id: string;
+  stage_run_id: string;
+  dialogue_turn_id: string;
+  participant_id: string;
+  display_name: string;
+  audio_job_id: string;
+  stage_state: StudioStageState;
+  attempt_id: string;
+  attempt_count: number;
+  attempt_kind: "initial" | "retry" | "regenerate";
+};
+
+export type AudioSyncResult = {
+  workflow_id: string;
+  stage_run_id: string;
+  dialogue_turn_id: string;
+  participant_id: string;
+  display_name: string;
+  provider_state?: string | null;
+  stage_state: StudioStageState;
+  audio_job_id?: string | null;
+  media_asset_id?: string | null;
+  audio_url?: string | null;
+  review_item_id?: string | null;
+  review_decision?: ReviewDecision | null;
+  workflow: StudioWorkflowView;
+};
+
+export function audioStages(workflow: StudioWorkflowView | null | undefined) {
+  return (workflow?.stages ?? []).filter(
+    (stage) => stage.stage_type === "audio" && stage.scope_type === "dialogue_turn"
+  );
+}
+
+export function previewDialogueAudio(workflowId: string, stageRunId: string) {
+  return api.post<AudioPricingPreview>(
+    DIRECTOR_BASE,
+    `/api/director/studio-workflows/${encodeURIComponent(workflowId)}/audio-stages/${encodeURIComponent(stageRunId)}/pricing-preview`,
+    {}
+  );
+}
+
+export function dispatchDialogueAudio(
+  workflowId: string,
+  stageRunId: string,
+  params: { quote_id: string; preview_fingerprint?: string | null }
+) {
+  return api.post<AudioDispatchResult>(
+    DIRECTOR_BASE,
+    `/api/director/studio-workflows/${encodeURIComponent(workflowId)}/audio-stages/${encodeURIComponent(stageRunId)}/dispatch`,
+    {
+      quote_id: params.quote_id,
+      preview_fingerprint: params.preview_fingerprint ?? null,
+      user_confirmed: true,
+    }
+  );
+}
+
+export function syncDialogueAudio(workflowId: string, stageRunId: string) {
+  return api.post<AudioSyncResult>(
+    DIRECTOR_BASE,
+    `/api/director/studio-workflows/${encodeURIComponent(workflowId)}/audio-stages/${encodeURIComponent(stageRunId)}/sync`,
+    {}
+  );
+}
+
+export function audioPricingQuote(preview: AudioPricingPreview) {
+  const envelope = preview.pricing ?? {};
+  const quoteId = String(envelope?.quote_id || envelope?.pricing?.quote_id || "").trim();
+  const fingerprint = String(
+    envelope?.preview_fingerprint || envelope?.pricing?.preview_fingerprint || ""
+  ).trim();
+  if (!quoteId) throw new Error("Audio pricing preview did not return a quote_id");
+  return { quote_id: quoteId, preview_fingerprint: fingerprint || null };
+}
