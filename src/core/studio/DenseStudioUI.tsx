@@ -5,6 +5,7 @@ import {
   Text,
   useWindowDimensions,
   View,
+  type StyleProp,
   type ViewStyle,
 } from "react-native";
 
@@ -75,7 +76,7 @@ export function Surface({
   accent,
 }: {
   children: React.ReactNode;
-  style?: ViewStyle | ViewStyle[];
+  style?: StyleProp<ViewStyle>;
   accent?: boolean;
 }) {
   return (
