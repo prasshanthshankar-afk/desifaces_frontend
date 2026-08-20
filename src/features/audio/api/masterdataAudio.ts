@@ -90,6 +90,18 @@ export async function fetchAudioLocales(token?: string) {
   return getJson<LocalesResponse>(`${base()}/api/audio/catalog/locales`, token);
 }
 
+/**
+ * Compact user-facing locale catalog for character voice assignment.
+ * Availability remains owned by svc-audio/masterdata; the client never hardcodes
+ * country, language, locale, provider or voice mappings.
+ */
+export async function fetchSelectableAudioLocales(token?: string) {
+  return getJson<LocalesResponse>(
+    `${base()}/api/audio/catalog/locales?end_to_end_only=true&enabled_only=true`,
+    token
+  );
+}
+
 export async function fetchAudioCountries(token?: string) {
   return getJson<CountriesResponse>(`${base()}/api/audio/catalog/countries`, token);
 }
@@ -103,7 +115,6 @@ export async function fetchAudioTargetLanguages(
     token
   );
 }
-
 
 export async function fetchAudioVoices(token: string | undefined, locale: string) {
   // REQUIRED query param: locale
