@@ -5,9 +5,9 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { ensureStoryStudioWorkflow } from "../../../../core/studio/multiPersonWorkflow";
 import { DF } from "../../../../core/theme/colors";
 import DFHeader from "../../../../core/ui/DFHeader";
-import MultiPersonAudioCohortScreen from "../../../../features/audio/MultiPersonAudioCohortScreen";
-import MultiPersonFaceCohortScreen from "../../../../features/face/MultiPersonFaceCohortScreen";
-import MultiPersonFusionScreen from "../../../../features/fusion/MultiPersonFusionScreen";
+import MultiPersonAudioCohortDenseScreen from "../../../../features/audio/MultiPersonAudioCohortDenseScreen";
+import MultiPersonFaceCohortDenseScreen from "../../../../features/face/MultiPersonFaceCohortDenseScreen";
+import MultiPersonFusionDenseScreen from "../../../../features/fusion/MultiPersonFusionDenseScreen";
 
 type StoryStage = "face" | "audio" | "fusion";
 
@@ -107,14 +107,14 @@ export default function StoryStudioRoute() {
     );
   }
 
-  if (resolvedStage === "audio") return <MultiPersonAudioCohortScreen storyId={storyId} />;
-  if (resolvedStage === "fusion") return <MultiPersonFusionScreen storyId={storyId} />;
+  if (resolvedStage === "audio") return <MultiPersonAudioCohortDenseScreen storyId={storyId} />;
+  if (resolvedStage === "fusion") return <MultiPersonFusionDenseScreen storyId={storyId} />;
 
   return (
     <View style={styles.safe}>
       <DFHeader subtitle="Story Face Studio" onMenuPress={openHamburgerMenu} onPressMeta={openPlanScreen} />
       <View style={styles.body}>
-        <MultiPersonFaceCohortScreen storyId={storyId} />
+        <MultiPersonFaceCohortDenseScreen storyId={storyId} />
       </View>
     </View>
   );
