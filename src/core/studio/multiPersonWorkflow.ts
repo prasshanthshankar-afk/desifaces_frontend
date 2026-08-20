@@ -86,6 +86,7 @@ export type WorkspaceParticipant = {
   display_name?: string | null;
   kind: string;
   primary_face_media_id?: string | null;
+  voice_profile_ref?: string | null;
   preferred_locale?: string | null;
   persona?: Record<string, any>;
   continuity?: Record<string, any>;
