@@ -11,7 +11,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 
@@ -156,6 +155,14 @@ function voiceStyles(voice: UiVoice | undefined): string[] {
   return [...new Map(values.filter(Boolean).map((value) => [value.toLowerCase(), value])).values()];
 }
 
+function localeDefaultVoice(locale: UiLocale | null | undefined) {
+  return clean((locale?.raw as any)?.default_voice);
+}
+
+function persistedVoiceLocale(participant: WorkspaceParticipant) {
+  return clean(participant.voice_profile_ref) ? clean(participant.preferred_locale) : "";
+}
+
 function ChoiceModal({
   visible,
   title,
@@ -173,16 +180,6 @@ function ChoiceModal({
   onClose: () => void;
   onSelect: (choice: Choice) => void;
 }) {
-  const [query, setQuery] = useState("");
-  useEffect(() => {
-    if (!visible) setQuery("");
-  }, [visible]);
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return choices;
-    return choices.filter((item) => `${item.label} ${item.subtitle || ""}`.toLowerCase().includes(q));
-  }, [choices, query]);
-
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.modalBackdrop}>
@@ -191,22 +188,15 @@ function ChoiceModal({
             <Text style={styles.modalTitle}>{title}</Text>
             <Pressable onPress={onClose} hitSlop={8}><Text style={styles.modalClose}>×</Text></Pressable>
           </View>
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search"
-            placeholderTextColor={STUDIO.faint}
-            style={styles.searchInput}
-          />
           {loading ? (
             <View style={styles.modalLoading}><ActivityIndicator color={STUDIO.accent} /></View>
           ) : (
             <FlatList
-              data={filtered}
+              data={choices}
               keyExtractor={(item) => item.key || "default"}
               keyboardShouldPersistTaps="handled"
               contentContainerStyle={styles.choiceList}
-              ListEmptyComponent={<Text style={styles.empty}>No matching options are available.</Text>}
+              ListEmptyComponent={<Text style={styles.empty}>No configured options are available.</Text>}
               renderItem={({ item }) => (
                 <Pressable
                   onPress={() => onSelect(item)}
@@ -315,7 +305,7 @@ export default function MultiPersonAudioCharacterWorkspaceScreen({ storyId }: Pr
     setDraftLocales((current) => {
       const copy = { ...current };
       next.participants.forEach((p) => {
-        if (!copy[p.participant_id]) copy[p.participant_id] = clean(p.preferred_locale);
+        if (!copy[p.participant_id]) copy[p.participant_id] = persistedVoiceLocale(p);
       });
       return copy;
     });
@@ -371,11 +361,57 @@ export default function MultiPersonAudioCharacterWorkspaceScreen({ storyId }: Pr
         : initialWorkflow;
 
       if (!mounted.current) return;
+      const executableLocales = normalizeLocales(localeResponse).filter((locale) => localeDefaultVoice(locale));
+      const executableByCode = new Map(executableLocales.map((locale) => [locale.code, locale]));
+
       setWorkspace(nextWorkspace);
       setWorkflow(latestWorkflow);
       setSyncs((current) => ({ ...current, ...recovered }));
-      setLocales(normalizeLocales(localeResponse));
-      hydrateDrafts(nextWorkspace);
+      setLocales(executableLocales);
+
+      // Reconcile local drafts against the executable svc-audio catalog on every
+      // authoritative load. This deliberately clears stale values such as en-PK
+      // when no configured provider/model can synthesize that locale.
+      setDraftLocales((current) => {
+        const copy = { ...current };
+        nextWorkspace.participants.forEach((participant) => {
+          const participantId = participant.participant_id;
+          const currentLocale = clean(copy[participantId]);
+          const persistedLocale = persistedVoiceLocale(participant);
+
+          if (currentLocale && executableByCode.has(currentLocale)) return;
+          copy[participantId] =
+            persistedLocale && executableByCode.has(persistedLocale)
+              ? persistedLocale
+              : "";
+        });
+        return copy;
+      });
+
+      setDraftVoices((current) => {
+        const copy = { ...current };
+        nextWorkspace.participants.forEach((participant) => {
+          const participantId = participant.participant_id;
+          const persistedLocale = persistedVoiceLocale(participant);
+          const persistedVoice = clean(participant.voice_profile_ref);
+
+          if (persistedVoice && persistedLocale && executableByCode.has(persistedLocale)) {
+            copy[participantId] = persistedVoice;
+            return;
+          }
+
+          // A voice cannot remain selected after its locale becomes non-executable.
+          const draftLocale = clean(
+            persistedLocale && executableByCode.has(persistedLocale)
+              ? persistedLocale
+              : ""
+          );
+          copy[participantId] = draftLocale
+            ? localeDefaultVoice(executableByCode.get(draftLocale))
+            : "";
+        });
+        return copy;
+      });
     } catch (error) {
       Alert.alert("Audio Studio", errorMessage(error));
     } finally {
@@ -413,7 +449,7 @@ export default function MultiPersonAudioCharacterWorkspaceScreen({ storyId }: Pr
 
   useEffect(() => {
     speakers.forEach((participant) => {
-      const locale = clean(draftLocales[participant.participant_id] || participant.preferred_locale);
+      const locale = clean(draftLocales[participant.participant_id]);
       if (locale) void loadVoices(locale);
     });
   }, [draftLocales, loadVoices, speakers]);
@@ -449,8 +485,8 @@ export default function MultiPersonAudioCharacterWorkspaceScreen({ storyId }: Pr
   const saveVoice = useCallback(async (participant: WorkspaceParticipant) => {
     if (!workflow) return;
     const participantId = participant.participant_id;
-    const locale = clean(draftLocales[participantId] || participant.preferred_locale);
-    const voiceId = clean(draftVoices[participantId] || participant.voice_profile_ref);
+    const locale = clean(draftLocales[participantId]);
+    const voiceId = clean(draftVoices[participantId]);
     const style = clean(draftStyles[participantId]) || null;
     if (!locale || !voiceId) {
       Alert.alert("Character voice", "Choose a language and voice first.");
@@ -486,11 +522,20 @@ export default function MultiPersonAudioCharacterWorkspaceScreen({ storyId }: Pr
     }
   }, [draftLocales, draftStyles, draftVoices, hydrateDrafts, storyId, workflow]);
 
+  const executableLocaleCodes = useMemo(
+    () => new Set(locales.map((locale) => locale.code)),
+    [locales]
+  );
+
   const profilesReady = speakers.length > 0 && speakers.every((participant) => {
-    const local = savedProfiles[participant.participant_id];
+    const participantId = participant.participant_id;
+    const local = savedProfiles[participantId];
+    const persistedLocale = persistedVoiceLocale(participant);
+    const persistedVoice = clean(participant.voice_profile_ref);
+
     return Boolean(
-      (local?.voiceId && local?.locale) ||
-      (clean(participant.voice_profile_ref) && clean(participant.preferred_locale))
+      (local?.voiceId && local?.locale && executableLocaleCodes.has(local.locale)) ||
+      (persistedVoice && persistedLocale && executableLocaleCodes.has(persistedLocale))
     );
   });
 
@@ -648,10 +693,10 @@ export default function MultiPersonAudioCharacterWorkspaceScreen({ storyId }: Pr
 
   const pickerParticipant = picker ? participantById.get(picker.participantId) : undefined;
   const pickerLocale = pickerParticipant
-    ? clean(draftLocales[pickerParticipant.participant_id] || pickerParticipant.preferred_locale)
+    ? clean(draftLocales[pickerParticipant.participant_id])
     : "";
   const pickerVoiceId = pickerParticipant
-    ? clean(draftVoices[pickerParticipant.participant_id] || pickerParticipant.voice_profile_ref)
+    ? clean(draftVoices[pickerParticipant.participant_id])
     : "";
   const pickerVoice = (voiceCache[pickerLocale] ?? []).find((voice) => voice.key === pickerVoiceId);
 
@@ -715,8 +760,8 @@ export default function MultiPersonAudioCharacterWorkspaceScreen({ storyId }: Pr
         <View style={[styles.voiceGrid, viewport.wide && styles.voiceGridWide]}>
           {speakers.map((participant) => {
             const participantId = participant.participant_id;
-            const locale = clean(draftLocales[participantId] || participant.preferred_locale);
-            const voiceId = clean(draftVoices[participantId] || participant.voice_profile_ref);
+            const locale = clean(draftLocales[participantId]);
+            const voiceId = clean(draftVoices[participantId]);
             const selectedVoice = (voiceCache[locale] ?? []).find((voice) => voice.key === voiceId);
             const style = clean(draftStyles[participantId]);
             const saved = savedProfiles[participantId];
@@ -941,8 +986,10 @@ export default function MultiPersonAudioCharacterWorkspaceScreen({ storyId }: Pr
         onSelect={(choice) => {
           if (!picker) return;
           if (picker.kind === "locale") {
+            const selectedLocale = locales.find((locale) => locale.code === choice.key);
+            const defaultVoice = localeDefaultVoice(selectedLocale);
             setDraftLocales((current) => ({ ...current, [picker.participantId]: choice.key }));
-            setDraftVoices((current) => ({ ...current, [picker.participantId]: "" }));
+            setDraftVoices((current) => ({ ...current, [picker.participantId]: defaultVoice }));
             setDraftStyles((current) => ({ ...current, [picker.participantId]: "" }));
             void loadVoices(choice.key);
           } else if (picker.kind === "voice") {
@@ -1009,7 +1056,6 @@ const styles = StyleSheet.create({
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   modalTitle: { flex: 1, color: STUDIO.text, fontSize: 15, fontWeight: "900" },
   modalClose: { color: STUDIO.muted, fontSize: 24, lineHeight: 28 },
-  searchInput: { minHeight: 40, borderRadius: 10, borderWidth: 1, borderColor: STUDIO.border, backgroundColor: "rgba(0,0,0,0.18)", color: STUDIO.text, paddingHorizontal: 10, marginTop: 10, marginBottom: 8 },
   modalLoading: { padding: 28, alignItems: "center" },
   choiceList: { paddingBottom: 8 },
   choiceRow: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 8, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.05)", paddingHorizontal: 8 },
