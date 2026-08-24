@@ -1,0 +1,56 @@
+name: V3 Story Studio Static Certification
+
+on:
+  push:
+    branches:
+      - feature/v3-multiperson-ui-20260818
+    paths:
+      - 'src/app/(tabs)/face/story/**'
+      - 'src/core/studio/**'
+      - 'src/features/face/**'
+      - 'src/features/audio/**'
+      - 'src/features/fusion/**'
+      - 'package.json'
+      - 'tsconfig.json'
+      - '.github/workflows/v3-story-static.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-certification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout V3 frontend
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Lint V3 Story surfaces
+        run: >-
+          npx eslint
+          'src/app/(tabs)/face/story/[storyId].tsx'
+          src/core/studio/DenseStudioUI.tsx
+          src/core/studio/productionExperience.ts
+          src/core/studio/multiPersonWorkflow.ts
+          src/features/face/MultiPersonFaceSavedWorkScreen.tsx
+          src/features/face/MultiPersonFaceCohortDenseScreen.tsx
+          src/features/audio/MultiPersonAudioWorkspaceScreen.tsx
+          src/features/audio/api/multiPersonStory.ts
+          src/features/audio/api/masterdataAudio.ts
+          src/features/fusion/MultiPersonFusionDenseScreen.tsx
+          src/features/fusion/api/multiPersonStory.ts
+          --max-warnings=0
+
+      - name: TypeScript compile gate
+        run: npx tsc --noEmit --pretty false
