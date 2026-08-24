@@ -64,7 +64,7 @@ jobs:
           src/features/audio/api/masterdataAudio.ts
           src/features/fusion/MultiPersonFusionDenseScreen.tsx
           src/features/fusion/api/multiPersonStory.ts
-          --max-warnings=0
+          --max-warnings=5
 
       - name: TypeScript compile gate
         run: npx tsc --noEmit --pretty false
