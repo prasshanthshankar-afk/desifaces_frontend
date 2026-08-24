@@ -5,7 +5,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { ensureStoryStudioWorkflow } from "../../../../core/studio/multiPersonWorkflow";
 import { DF } from "../../../../core/theme/colors";
 import DFHeader from "../../../../core/ui/DFHeader";
-import MultiPersonAudioCharacterWorkspaceScreen from "../../../../features/audio/MultiPersonAudioCharacterWorkspaceScreen";
+import MultiPersonAudioWorkspaceScreen from "../../../../features/audio/MultiPersonAudioWorkspaceScreen";
 import MultiPersonFaceSavedWorkScreen from "../../../../features/face/MultiPersonFaceSavedWorkScreen";
 import MultiPersonFusionDenseScreen from "../../../../features/fusion/MultiPersonFusionDenseScreen";
 
@@ -108,7 +108,7 @@ export default function StoryStudioRoute() {
   }
 
   if (resolvedStage === "audio") {
-    return <MultiPersonAudioCharacterWorkspaceScreen storyId={storyId} />;
+    return <MultiPersonAudioWorkspaceScreen storyId={storyId} />;
   }
   if (resolvedStage === "fusion") {
     return <MultiPersonFusionDenseScreen storyId={storyId} />;
