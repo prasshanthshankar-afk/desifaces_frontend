@@ -2,7 +2,7 @@ import { AUDIO_BASE } from "../../../core/config/env";
 
 export type LocaleItem =
   | string
-  | { locale?: string; code?: string; label?: string; name?: string };
+  | { locale?: string; code?: string; label?: string; name?: string; display_name?: string; default_voice?: string | null };
 
 export type LocalesResponse =
   | { items: LocaleItem[] }
@@ -11,6 +11,7 @@ export type LocalesResponse =
 
 export type CountryCatalogItem = {
   country_code: string;
+  display_name?: string | null;
   locale_count: number;
 };
 
@@ -43,7 +44,7 @@ export type VoiceItem = {
   voice_type?: string;
   is_default?: boolean;
   supports_styles?: boolean;
-  meta_json?: string; // JSON string from Azure
+  meta_json?: string;
 };
 
 export type VoicesResponse = { items: VoiceItem[] };
@@ -81,10 +82,6 @@ async function getJson<T>(url: string, token?: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-/**
- * User-facing locale catalog. Only enabled end-to-end locales should be offered
- * in Studio pickers; availability remains owned by svc-audio/masterdata.
- */
 export async function fetchAudioLocales(token?: string) {
   return getJson<LocalesResponse>(
     `${base()}/api/audio/catalog/locales?end_to_end_only=true&enabled_only=true`,
@@ -111,7 +108,6 @@ export async function fetchAudioTargetLanguages(
 }
 
 export async function fetchAudioVoices(token: string | undefined, locale: string) {
-  // REQUIRED query param: locale
   return getJson<VoicesResponse>(
     `${base()}/api/audio/catalog/voices?locale=${encodeURIComponent(locale)}`,
     token
@@ -127,17 +123,17 @@ function safeParse(meta_json?: string): any | null {
   }
 }
 
-function countryDisplayName(countryCode: string): string {
+function countryDisplayName(countryCode: string, configured?: string | null): string {
+  const explicit = String(configured || "").trim();
+  if (explicit) return explicit;
   const code = String(countryCode || "").trim().toUpperCase();
   if (!code) return "";
-
   try {
     const DisplayNames = (Intl as any)?.DisplayNames;
     if (typeof DisplayNames === "function") {
       return new DisplayNames(["en"], { type: "region" }).of(code) || code;
     }
   } catch {}
-
   return code;
 }
 
@@ -147,7 +143,7 @@ export function normalizeCountries(resp: CountriesResponse): UiCountry[] {
       const code = String(item?.country_code ?? "").trim().toUpperCase();
       return {
         code,
-        label: countryDisplayName(code),
+        label: countryDisplayName(code, item?.display_name),
         localeCount: Number(item?.locale_count ?? 0),
         raw: item,
       };
@@ -165,7 +161,6 @@ export function normalizeTargetLanguages(
         String(item?.display_name ?? "").trim() ||
         String(item?.native_name ?? "").trim() ||
         code;
-
       return {
         code,
         label,
@@ -195,14 +190,10 @@ export function normalizeLocales(payload: LocalesResponse): UiLocale[] {
       .filter((x) => x.code);
   }
 
-  // fallback: object map
   if (payload && typeof payload === "object") {
     const maybe = (payload as any).locales || (payload as any).data;
     if (maybe && typeof maybe === "object") {
-      return Object.entries(maybe).map(([code, label]) => ({
-        code,
-        label: String(label),
-      }));
+      return Object.entries(maybe).map(([code, label]) => ({ code, label: String(label) }));
     }
   }
   return [];
@@ -224,9 +215,7 @@ export function normalizeVoices(resp: VoicesResponse): UiVoice[] {
       v.gender ? `(${v.gender})` : null,
       v.voice_type ? `• ${v.voice_type}` : null,
       v.is_default ? "• default" : null,
-    ]
-      .filter(Boolean)
-      .join(" ");
+    ].filter(Boolean).join(" ");
 
     return { key: v.voice_name, label, locale: v.locale, raw: v };
   });
