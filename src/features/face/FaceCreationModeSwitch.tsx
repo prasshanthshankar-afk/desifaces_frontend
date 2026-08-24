@@ -2,6 +2,8 @@ import { router } from "expo-router";
 import React, { useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { STUDIO } from "../../core/studio/DenseStudioUI";
+
 type FaceCreationMode = "individual" | "multi-person";
 
 function ModeTab({
@@ -64,45 +66,45 @@ export default function FaceCreationModeSwitch({
 const styles = StyleSheet.create({
   section: {
     paddingHorizontal: 14,
-    paddingTop: 10,
+    paddingTop: 8,
     paddingBottom: 4,
-    backgroundColor: "#080A0F",
+    backgroundColor: STUDIO.bg,
   },
   headingRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
-    marginBottom: 7,
+    marginBottom: 6,
   },
   label: {
-    color: "#D2B07A",
-    fontSize: 10,
+    color: STUDIO.accentText,
+    fontSize: 9,
     fontWeight: "900",
     letterSpacing: 1.1,
   },
   helper: {
     flexShrink: 1,
-    color: "rgba(255,255,255,0.48)",
-    fontSize: 10,
+    color: STUDIO.muted,
+    fontSize: 9,
     fontWeight: "700",
     textAlign: "right",
   },
   segmented: {
-    minHeight: 48,
+    minHeight: 42,
     flexDirection: "row",
     alignItems: "stretch",
-    padding: 4,
-    gap: 4,
-    borderRadius: 16,
+    padding: 3,
+    gap: 3,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
-    backgroundColor: "rgba(255,255,255,0.045)",
+    borderColor: STUDIO.border,
+    backgroundColor: STUDIO.surfaceSoft,
   },
   tab: {
     flex: 1,
-    minHeight: 40,
-    borderRadius: 12,
+    minHeight: 34,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
@@ -110,18 +112,18 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   tabActive: {
-    borderColor: "rgba(210,176,122,0.72)",
-    backgroundColor: "rgba(210,176,122,0.18)",
+    borderColor: STUDIO.accentBorder,
+    backgroundColor: STUDIO.accentFill,
   },
   tabPressed: {
     opacity: 0.72,
   },
   tabText: {
-    color: "rgba(255,255,255,0.62)",
-    fontSize: 14,
+    color: STUDIO.muted,
+    fontSize: 11,
     fontWeight: "900",
   },
   tabTextActive: {
-    color: "#F1D291",
+    color: STUDIO.accentText,
   },
 });

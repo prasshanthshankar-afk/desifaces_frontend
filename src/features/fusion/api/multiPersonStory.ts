@@ -46,7 +46,7 @@ export type FusionDispatchResult = {
   attempt_id: string;
   attempt_count: number;
   attempt_kind: "initial" | "retry" | "regenerate";
-  children: Array<Record<string, any>>;
+  children: Record<string, any>[];
 };
 
 export type FusionSyncResult = {
@@ -59,7 +59,7 @@ export type FusionSyncResult = {
   video_url?: string | null;
   review_item_id?: string | null;
   review_decision?: ReviewDecision | null;
-  children: Array<Record<string, any>>;
+  children: Record<string, any>[];
   workflow: StudioWorkflowView;
 };
 

@@ -31,26 +31,26 @@ export type StudioProductionPreflight = {
     approved: number;
     total: number;
     speakers_ready: boolean;
-    speakers: Array<{
+    speakers: {
       participant_id: string;
       display_name: string;
       voice_profile_ref?: string | null;
       voice_locale?: string | null;
       ready: boolean;
       user_message: string;
-    }>;
+    }[];
     states: Record<string, number>;
   };
   fusion: {
     approved: number;
     total: number;
     ready: boolean;
-    items: Array<{
+    items: {
       stage_run_id: string;
       scene_id: string;
       state: string;
       ready_for_pricing: boolean;
-    }>;
+    }[];
   };
 };
 

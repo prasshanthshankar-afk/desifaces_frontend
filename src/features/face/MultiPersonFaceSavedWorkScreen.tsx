@@ -162,7 +162,7 @@ export default function MultiPersonFaceSavedWorkScreen({ storyId }: Props) {
     void loadSavedFaces();
   }, [loadSavedFaces]);
 
-  const useSavedFace = useCallback(async (item: SavedFaceItem) => {
+  const applySavedFace = useCallback(async (item: SavedFaceItem) => {
     if (!workflow || !pickerParticipantId) return;
     const participantId = pickerParticipantId;
     const selectedMediaId = mediaId(item);
@@ -274,7 +274,7 @@ export default function MultiPersonFaceSavedWorkScreen({ storyId }: Props) {
                   return (
                     <Pressable
                       disabled={reuseBusy}
-                      onPress={() => void useSavedFace(item)}
+                      onPress={() => void applySavedFace(item)}
                       style={({ pressed }) => [styles.faceCard, pressed && !reuseBusy && styles.pressed, reuseBusy && styles.disabled]}
                     >
                       <View style={styles.faceImageWrap}>
