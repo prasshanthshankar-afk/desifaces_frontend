@@ -11,6 +11,7 @@ on:
       - 'src/features/face/**'
       - 'src/features/audio/**'
       - 'src/features/fusion/**'
+      - 'src/features/story/**'
       - 'package.json'
       - 'tsconfig.json'
       - '.github/workflows/v3-story-static.yml'
@@ -23,6 +24,7 @@ on:
       - 'src/features/face/**'
       - 'src/features/audio/**'
       - 'src/features/fusion/**'
+      - 'src/features/story/**'
       - 'package.json'
       - 'tsconfig.json'
       - '.github/workflows/v3-story-static.yml'
@@ -64,6 +66,7 @@ jobs:
           src/features/audio/api/masterdataAudio.ts
           src/features/fusion/MultiPersonFusionDenseScreen.tsx
           src/features/fusion/api/multiPersonStory.ts
+          src/features/story/MultiPersonStoryFinalScreen.tsx
           --max-warnings=5
 
       - name: TypeScript compile gate

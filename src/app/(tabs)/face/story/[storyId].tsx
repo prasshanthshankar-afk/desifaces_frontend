@@ -8,8 +8,9 @@ import DFHeader from "../../../../core/ui/DFHeader";
 import MultiPersonAudioWorkspaceScreen from "../../../../features/audio/MultiPersonAudioWorkspaceScreen";
 import MultiPersonFaceSavedWorkScreen from "../../../../features/face/MultiPersonFaceSavedWorkScreen";
 import MultiPersonFusionDenseScreen from "../../../../features/fusion/MultiPersonFusionDenseScreen";
+import MultiPersonStoryFinalScreen from "../../../../features/story/MultiPersonStoryFinalScreen";
 
-type StoryStage = "face" | "audio" | "fusion";
+type StoryStage = "face" | "audio" | "fusion" | "story_final";
 
 function one(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -17,10 +18,16 @@ function one(value: string | string[] | undefined) {
 
 function normalizeStage(value: string | undefined): StoryStage | null {
   const raw = String(value || "").trim().toLowerCase();
-  return raw === "face" || raw === "audio" || raw === "fusion" ? raw : null;
+  return raw === "face" ||
+    raw === "audio" ||
+    raw === "fusion" ||
+    raw === "story_final"
+    ? raw
+    : null;
 }
 
 function stageRank(stage: StoryStage | null) {
+  if (stage === "story_final") return 4;
   if (stage === "fusion") return 3;
   if (stage === "audio") return 2;
   if (stage === "face") return 1;
@@ -42,7 +49,17 @@ export default function StoryStudioRoute() {
     if (!storyId) return;
     const workflow = await ensureStoryStudioWorkflow(storyId);
     if (!activeRef.current) return;
-    const canonical = normalizeStage(String(workflow?.current_stage || "")) || "face";
+    const hasStoryFinal = (workflow?.stages ?? []).some(
+      (stage) =>
+        stage.stage_type === "story_final" &&
+        stage.scope_type === "story"
+    );
+
+    const canonical =
+      hasStoryFinal &&
+      String(workflow?.state || "").trim().toLowerCase() === "completed"
+        ? "story_final"
+        : normalizeStage(String(workflow?.current_stage || "")) || "face";
     setResolvedStage((current) => {
       const requested = current || explicitStage;
       return stageRank(canonical) > stageRank(requested) ? canonical : requested || canonical;
@@ -107,6 +124,10 @@ export default function StoryStudioRoute() {
         )}
       </View>
     );
+  }
+
+  if (resolvedStage === "story_final") {
+    return <MultiPersonStoryFinalScreen storyId={storyId} />;
   }
 
   if (resolvedStage === "audio") {

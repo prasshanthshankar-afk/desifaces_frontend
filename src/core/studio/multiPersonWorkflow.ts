@@ -1,5 +1,5 @@
 import { api } from "../api/client";
-import { DIRECTOR_BASE } from "../config/env";
+import { DIRECTOR_BASE, FUSION_EXTENSION_BASE } from "../config/env";
 
 export type StudioStageState =
   | "pending"
@@ -178,4 +178,60 @@ export async function advanceStudioWorkflow(workflowId: string) {
     {}
   );
   return normalizeStudioWorkflow(view);
+}
+
+
+export type StoryFinalStitchResult = {
+  workflow_id: string;
+  stage_run_id: string;
+  story_id: string;
+  stage_state: StudioStageState;
+  media_asset_id: string;
+  review_item_id: string;
+  video_url: string;
+  scene_count: number;
+  reused: boolean;
+  assembly_key: string;
+  workflow: StudioWorkflowView;
+};
+
+export type StoryFinalMediaReadUrl = {
+  media_id: string;
+  read_url: string;
+};
+
+export function storyFinalStage(
+  workflow: StudioWorkflowView | null | undefined
+) {
+  return (
+    (workflow?.stages ?? []).find(
+      (stage) =>
+        stage.stage_type === "story_final" &&
+        stage.scope_type === "story"
+    ) ?? null
+  );
+}
+
+export async function stitchStoryFinal(
+  workflowId: string,
+  stageRunId: string
+) {
+  const result = await api.post<StoryFinalStitchResult>(
+    DIRECTOR_BASE,
+    `/api/director/studio-workflows/${encodeURIComponent(workflowId)}/story-final-stages/${encodeURIComponent(stageRunId)}/stitch`,
+    {},
+    { timeoutMs: 600000 }
+  );
+
+  return {
+    ...result,
+    workflow: normalizeStudioWorkflow(result.workflow),
+  };
+}
+
+export function getStoryFinalMediaReadUrl(mediaId: string) {
+  return api.get<StoryFinalMediaReadUrl>(
+    FUSION_EXTENSION_BASE,
+    `/api/longform/v3/assets/${encodeURIComponent(mediaId)}/read-url`
+  );
 }
