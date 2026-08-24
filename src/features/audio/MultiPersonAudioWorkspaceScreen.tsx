@@ -72,6 +72,9 @@ type PickerState = { kind: PickerKind; participantId: string } | null;
 type Choice = { key: string; label: string; subtitle?: string };
 type VoiceProfile = { locale: string; voiceId: string; style: string };
 
+const AUDIO_FANOUT_CONCURRENCY = 32;
+const AUDIO_STATUS_CONCURRENCY = 32;
+
 function clean(value: unknown) {
   return String(value ?? "").trim();
 }
@@ -341,7 +344,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
         ["generating", "awaiting_review", "approved"].includes(stage.state)
       );
       if (recoverable.length) {
-        const recovered = await runLimited(recoverable, 4, async (stage) => {
+        const recovered = await runLimited(recoverable, AUDIO_STATUS_CONCURRENCY, async (stage) => {
           try { return await syncDialogueAudio(latestWorkflow.workflow_id, stage.stage_run_id); }
           catch { return null; }
         });
@@ -408,7 +411,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     const generating = audioStages(workflow).filter((stage) => stage.state === "generating");
     if (!generating.length) return;
     const timer = setInterval(() => {
-      void runLimited(generating, 4, async (stage) => {
+      void runLimited(generating, AUDIO_STATUS_CONCURRENCY, async (stage) => {
         try {
           const result = await syncDialogueAudio(workflow.workflow_id, stage.stage_run_id);
           if (mounted.current) {
@@ -505,7 +508,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     setBusy(true);
     setMessage("");
     try {
-      const results = await runLimited(priceableStages, 4, (stage) =>
+      const results = await runLimited(priceableStages, AUDIO_FANOUT_CONCURRENCY, (stage) =>
         previewDialogueAudio(workflow.workflow_id, stage.stage_run_id)
       );
       if (!mounted.current) return;
@@ -533,16 +536,16 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     if (!workflow || !allPriceableQuoted) return;
     Alert.alert(
       "Create Story Audio?",
-      `${pricedTargets.length} dialogue line${pricedTargets.length === 1 ? "" : "s"} will be created using the prices you just reviewed.${totalCredits !== null ? `\n\nEstimated total: ${totalCredits} credits.` : ""}`,
+      `${pricedTargets.length} dialogue line${pricedTargets.length === 1 ? "" : "s"} will be submitted together and created in parallel using the prices you just reviewed.${totalCredits !== null ? `\n\nEstimated total: ${totalCredits} credits.` : ""}\n\nYou can continue working while the lines are generated.`,
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Create Audio",
+          text: "Create in parallel",
           onPress: () => void (async () => {
             setBusy(true);
             setMessage("");
             try {
-              await runLimited(pricedTargets, 3, async (stage) => {
+              await runLimited(pricedTargets, AUDIO_FANOUT_CONCURRENCY, async (stage) => {
                 const preview = previews[stage.stage_run_id];
                 if (!preview) return null;
                 return dispatchDialogueAudio(
@@ -554,6 +557,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
               if (!mounted.current) return;
               setWorkflow(await getStudioWorkflow(workflow.workflow_id));
               setPreviews({});
+              setMessage(`${pricedTargets.length} Audio jobs were submitted together and are being generated in parallel.`);
             } catch (error) {
               setMessage(userFacingStudioError(error));
               const authoritative = await getStudioWorkflow(workflow.workflow_id).catch(() => null);
@@ -723,6 +727,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
 
   const approvedCount = stages.filter((stage) => stage.state === "approved").length;
   const reviewableCount = stages.filter((stage) => stage.state === "awaiting_review").length;
+  const generatingCount = stages.filter((stage) => stage.state === "generating").length;
 
   return (
     <View style={styles.safe}>
@@ -743,7 +748,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
         <StudioHero
           eyebrow="STORY AUDIO STUDIO"
           title={workspace?.title || "Character voices"}
-          subtitle="desifaces prepares compatible voices from your story. Keep the suggestion or change only what matters. Your dialogue remains yours."
+          subtitle="desifaces prepares compatible voices from your story. Once confirmed, all independent dialogue lines are submitted together and generated in parallel."
           right={<ProgressLine current={approvedCount} total={stages.length} label="Dialogue" />}
         />
 
@@ -833,23 +838,31 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
         })}
 
         <SectionLabel title="Conversation" meta={`${approvedCount}/${stages.length} approved`} />
-        <Surface style={styles.pricingBar} accent={allPriceableQuoted}>
+        <Surface style={styles.pricingBar} accent={allPriceableQuoted || generatingCount > 0}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.pricingTitle}>{allPriceableQuoted ? "Audio price ready" : "Price before creating"}</Text>
+            <Text style={styles.pricingTitle}>
+              {generatingCount > 0
+                ? `Creating ${generatingCount} Audio line${generatingCount === 1 ? "" : "s"} in parallel`
+                : allPriceableQuoted
+                  ? "Audio price ready"
+                  : "Price before creating"}
+            </Text>
             <Text style={styles.pricingMeta}>
-              {allPriceableQuoted
-                ? `${pricedTargets.length} line${pricedTargets.length === 1 ? "" : "s"}${totalCredits !== null ? ` • ${totalCredits} credits estimated` : ""}. Existing Audio pricing is used as-is.`
-                : "desifaces prices each dialogue line through the existing pricing service. Nothing starts until you confirm."}
+              {generatingCount > 0
+                ? `${reviewableCount} already ready to review. Completed lines stay preserved; you can continue working while the rest finish.`
+                : allPriceableQuoted
+                  ? `${pricedTargets.length} line${pricedTargets.length === 1 ? "" : "s"}${totalCredits !== null ? ` • ${totalCredits} credits estimated` : ""}. All lines will be submitted together.`
+                  : "desifaces prices each dialogue line through the existing pricing service. Nothing starts until you confirm."}
             </Text>
           </View>
           <View style={styles.pricingActions}>
-            {!allPriceableQuoted && priceableStages.length ? (
+            {!allPriceableQuoted && priceableStages.length && generatingCount === 0 ? (
               <CompactButton label="Check price" onPress={() => void checkConversationPrice()} disabled={busy} />
             ) : null}
-            {allPriceableQuoted ? (
-              <CompactButton label="Confirm & create Audio" onPress={generateConversation} disabled={busy} tone="primary" />
+            {allPriceableQuoted && generatingCount === 0 ? (
+              <CompactButton label="Confirm & create in parallel" onPress={generateConversation} disabled={busy} tone="primary" />
             ) : null}
-            {allPriceableQuoted ? (
+            {allPriceableQuoted && generatingCount === 0 ? (
               <CompactButton label="Reprice" onPress={() => void checkConversationPrice()} disabled={busy} />
             ) : null}
             {reviewableCount ? (
