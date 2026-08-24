@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Pressable,
   RefreshControl,
@@ -83,11 +84,18 @@ function shortStatus(stage: StudioStageView, needsChoice: boolean) {
   switch (stage.state) {
     case "approved": return "Identity locked";
     case "awaiting_review": return "Your Face is ready to review";
-    case "generating": return "Creating this Face…";
+    case "generating": return "Creating this Face in parallel with the rest of your cast…";
     case "failed": return "Creation did not finish — retry only this character";
     case "rejected": return "Ready for a new version";
     default: return "Ready to check price";
   }
+}
+
+function previewCredits(preview: FacePricingPreview | undefined): number | null {
+  if (!preview) return null;
+  const text = displayPrice(preview);
+  const match = clean(text).match(/([0-9]+(?:\.[0-9]+)?)/);
+  return match ? Number(match[1]) : null;
 }
 
 export default function MultiPersonFaceCohortDenseScreen({
@@ -103,6 +111,7 @@ export default function MultiPersonFaceCohortDenseScreen({
   const [syncs, setSyncs] = useState<StageMap<FaceSyncResult>>({});
   const [mediaUrls, setMediaUrls] = useState<StageMap<string>>({});
   const [busy, setBusy] = useState<StageMap<boolean>>({});
+  const [batchBusy, setBatchBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -187,6 +196,31 @@ export default function MultiPersonFaceCohortDenseScreen({
     [preflight]
   );
 
+  const batchTargets = useMemo(
+    () => stages.filter((stage) => {
+      const participantId = clean(stage.participant_id);
+      return (
+        ["pending", "ready", "failed", "rejected"].includes(stage.state) &&
+        Boolean(participantId) &&
+        Boolean(preflightByParticipant.get(participantId)?.ready_for_pricing)
+      );
+    }),
+    [preflightByParticipant, stages]
+  );
+  const batchQuoted = useMemo(
+    () => batchTargets.length > 0 && batchTargets.every((stage) => Boolean(previews[stage.stage_run_id])),
+    [batchTargets, previews]
+  );
+  const batchCredits = useMemo(() => {
+    if (!batchQuoted) return null;
+    const values = batchTargets.map((stage) => previewCredits(previews[stage.stage_run_id]));
+    return values.every((value) => value !== null)
+      ? (values as number[]).reduce((sum, value) => sum + value, 0)
+      : null;
+  }, [batchQuoted, batchTargets, previews]);
+  const generatingCount = stages.filter((stage) => stage.state === "generating").length;
+  const reviewReadyCount = stages.filter((stage) => stage.state === "awaiting_review").length;
+
   const syncStage = useCallback(async (stage: StudioStageView, quiet = false) => {
     if (!workflow) return;
     if (!quiet) setBusy((c) => ({ ...c, [stage.stage_run_id]: true }));
@@ -260,6 +294,25 @@ export default function MultiPersonFaceCohortDenseScreen({
     }
   }, [preflightByParticipant, workflow]);
 
+  const checkCastPrice = useCallback(async () => {
+    if (!workflow || !batchTargets.length) return;
+    setBatchBusy(true);
+    setMessage("");
+    try {
+      const results = await Promise.all(
+        batchTargets.map((stage) => previewParticipantFace(workflow.workflow_id, stage.stage_run_id))
+      );
+      if (!mounted.current) return;
+      const patch: StageMap<FacePricingPreview> = {};
+      results.forEach((preview) => { patch[preview.stage_run_id] = preview; });
+      setPreviews((current) => ({ ...current, ...patch }));
+    } catch (error) {
+      setMessage(userFacingStudioError(error));
+    } finally {
+      if (mounted.current) setBatchBusy(false);
+    }
+  }, [batchTargets, workflow]);
+
   const generate = useCallback(async (stage: StudioStageView) => {
     if (!workflow) return;
     const preview = previews[stage.stage_run_id];
@@ -283,6 +336,59 @@ export default function MultiPersonFaceCohortDenseScreen({
       if (mounted.current) setBusy((c) => ({ ...c, [stage.stage_run_id]: false }));
     }
   }, [checkPrice, previews, workflow]);
+
+  const generateCast = useCallback(() => {
+    if (!workflow || !batchQuoted || !batchTargets.length) return;
+    Alert.alert(
+      "Create remaining Faces?",
+      `${batchTargets.length} Face${batchTargets.length === 1 ? "" : "s"} will be submitted together and created in parallel.${batchCredits !== null ? `\n\nEstimated total: ${batchCredits} credits.` : ""}\n\nYou can continue working while the cast is created.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Create in parallel",
+          onPress: () => void (async () => {
+            setBatchBusy(true);
+            setMessage("");
+            const targetBusy: StageMap<boolean> = {};
+            batchTargets.forEach((stage) => { targetBusy[stage.stage_run_id] = true; });
+            setBusy((current) => ({ ...current, ...targetBusy }));
+            try {
+              await Promise.all(
+                batchTargets.map((stage) => {
+                  const preview = previews[stage.stage_run_id];
+                  if (!preview) throw new Error("Face price changed before confirmation.");
+                  return dispatchParticipantFace(
+                    workflow.workflow_id,
+                    stage.stage_run_id,
+                    pricingQuote(preview)
+                  );
+                })
+              );
+              if (!mounted.current) return;
+              const next = await getStudioWorkflow(workflow.workflow_id);
+              setWorkflow(next);
+              setPreviews({});
+              setPreflight(await getStudioProductionPreflight(workflow.workflow_id));
+              setMessage(`${batchTargets.length} Face jobs were submitted together. They are now being created in parallel.`);
+            } catch (error) {
+              setMessage(userFacingStudioError(error));
+              const authoritative = await getStudioWorkflow(workflow.workflow_id).catch(() => null);
+              if (authoritative && mounted.current) setWorkflow(authoritative);
+            } finally {
+              if (mounted.current) {
+                setBatchBusy(false);
+                setBusy((current) => {
+                  const copy = { ...current };
+                  batchTargets.forEach((stage) => { delete copy[stage.stage_run_id]; });
+                  return copy;
+                });
+              }
+            }
+          })(),
+        },
+      ]
+    );
+  }, [batchCredits, batchQuoted, batchTargets, previews, workflow]);
 
   const review = useCallback(async (
     stage: StudioStageView,
@@ -352,13 +458,50 @@ export default function MultiPersonFaceCohortDenseScreen({
         <StudioHero
           eyebrow="STORY FACE STUDIO"
           title={workspace?.title || "Character cast"}
-          subtitle="Reuse an identity you own or let desifaces prepare a new Face. You approve every character before anything moves forward."
+          subtitle="Reuse identities you own or create the remaining cast together. New Face jobs are submitted in parallel so one slow character does not block the rest."
           right={<ProgressLine current={approved} total={required} label="Cast" />}
         />
 
         {message ? (
           <Surface style={styles.messageBox} accent>
             <Text style={styles.messageText}>{message}</Text>
+          </Surface>
+        ) : null}
+
+        {batchTargets.length || generatingCount || reviewReadyCount ? (
+          <Surface style={styles.batchCard} accent={batchQuoted || generatingCount > 0}>
+            <View style={styles.batchHeader}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.batchTitle}>
+                  {generatingCount > 0
+                    ? `Creating ${generatingCount} Face${generatingCount === 1 ? "" : "s"} in parallel`
+                    : batchQuoted
+                      ? `${batchTargets.length} Face${batchTargets.length === 1 ? "" : "s"} ready to create together`
+                      : "Create the remaining cast together"}
+                </Text>
+                <Text style={styles.batchMeta}>
+                  {generatingCount > 0
+                    ? `${reviewReadyCount} already ready to review. You can continue working while the rest finish.`
+                    : batchQuoted
+                      ? `${batchCredits !== null ? `${batchCredits} credits total • ` : ""}one confirmed price per Face. All jobs are submitted together.`
+                      : `${batchTargets.length} eligible Face${batchTargets.length === 1 ? "" : "s"}. Check all prices at once, then confirm one parallel submission.`}
+                </Text>
+              </View>
+              {generatingCount > 0 ? <ProgressLine current={reviewReadyCount + approved} total={required} label="Ready" /> : null}
+            </View>
+            {batchTargets.length > 0 && generatingCount === 0 ? (
+              <View style={styles.batchActions}>
+                {!batchQuoted ? (
+                  <CompactButton label="Check remaining cast price" onPress={() => void checkCastPrice()} disabled={batchBusy} fill />
+                ) : (
+                  <>
+                    <CompactButton label="Create Faces in parallel" onPress={generateCast} disabled={batchBusy} tone="primary" fill />
+                    <CompactButton label="Refresh cast price" onPress={() => void checkCastPrice()} disabled={batchBusy} fill />
+                  </>
+                )}
+                {batchBusy ? <ActivityIndicator size="small" color={STUDIO.accent} /> : null}
+              </View>
+            ) : null}
           </Surface>
         ) : null}
 
@@ -458,7 +601,7 @@ export default function MultiPersonFaceCohortDenseScreen({
                     <CompactButton
                       label={stage.state === "failed" ? "Retry price" : stage.state === "rejected" ? "New version" : "Check price"}
                       onPress={() => void checkPrice(stage)}
-                      disabled={isBusy}
+                      disabled={isBusy || batchBusy}
                       fill
                     />
                   ) : null}
@@ -466,13 +609,13 @@ export default function MultiPersonFaceCohortDenseScreen({
                   {canPrice && preview ? (
                     <>
                       <CompactButton
-                        label={stage.state === "failed" ? "Retry" : stage.state === "rejected" ? "Generate" : "Generate"}
+                        label="Generate"
                         onPress={() => void generate(stage)}
-                        disabled={isBusy}
+                        disabled={isBusy || batchBusy}
                         tone="primary"
                         fill
                       />
-                      <CompactButton label="Reprice" onPress={() => void checkPrice(stage)} disabled={isBusy} fill />
+                      <CompactButton label="Reprice" onPress={() => void checkPrice(stage)} disabled={isBusy || batchBusy} fill />
                     </>
                   ) : null}
 
@@ -509,6 +652,11 @@ const styles = StyleSheet.create({
   loading: { color: STUDIO.muted, fontSize: 11, fontWeight: "700" },
   messageBox: { padding: 10 },
   messageText: { color: STUDIO.text, fontSize: 10, lineHeight: 14, fontWeight: "700" },
+  batchCard: { padding: 11, gap: 9 },
+  batchHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  batchTitle: { color: STUDIO.text, fontSize: 12, fontWeight: "900" },
+  batchMeta: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "600", marginTop: 3 },
+  batchActions: { flexDirection: "row", flexWrap: "wrap", gap: 7, alignItems: "center" },
   characterCard: { padding: 10 },
   characterRow: { flexDirection: "row", alignItems: "stretch", gap: 10 },
   mediaBox: { flexShrink: 0, borderRadius: 13, overflow: "hidden", backgroundColor: STUDIO.surfaceSoft, borderWidth: 1, borderColor: STUDIO.border },
