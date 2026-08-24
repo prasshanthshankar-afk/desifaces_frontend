@@ -150,7 +150,7 @@ function stageTone(stage: StudioStageView, preview?: AudioPricingPreview) {
 
 async function runLimited<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>) {
   if (!items.length) return [] as R[];
-  const output: Array<R | undefined> = new Array(items.length);
+  const output: (R | undefined)[] = new Array(items.length);
   let cursor = 0;
   const runners = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
     while (cursor < items.length) {
