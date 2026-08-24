@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 
+import { useAuth } from "../../core/auth/AuthContext";
 import {
   CompactButton,
   Divider,
@@ -32,7 +33,6 @@ import {
   type AudioAutoConfigureResult,
 } from "../../core/studio/productionExperience";
 import DFHeader from "../../core/ui/DFHeader";
-import { useAuth } from "../../core/auth/AuthContext";
 import {
   fetchAudioCountries,
   fetchAudioLocales,
@@ -70,7 +70,7 @@ type PlayerHandle = ReturnType<typeof createAudioPlayer>;
 type PickerKind = "locale" | "voice" | "style";
 type PickerState = { kind: PickerKind; participantId: string } | null;
 type Choice = { key: string; label: string; subtitle?: string };
-type DraftProfile = { locale: string; voiceId: string; style: string };
+type VoiceProfile = { locale: string; voiceId: string; style: string };
 
 function clean(value: unknown) {
   return String(value ?? "").trim();
@@ -149,9 +149,10 @@ function stageTone(stage: StudioStageView, preview?: AudioPricingPreview) {
 }
 
 async function runLimited<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>) {
+  if (!items.length) return [] as R[];
   const output: Array<R | undefined> = new Array(items.length);
   let cursor = 0;
-  const runners = Array.from({ length: Math.min(Math.max(1, limit), Math.max(1, items.length)) }, async () => {
+  const runners = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
     while (cursor < items.length) {
       const index = cursor++;
       output[index] = await worker(items[index]);
@@ -184,20 +185,26 @@ function ChoiceModal({
         <View style={styles.modalCard}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>{title}</Text>
-            <Pressable onPress={onClose} hitSlop={8}><Text style={styles.modalClose}>×</Text></Pressable>
+            <Pressable onPress={onClose} hitSlop={8}>
+              <Text style={styles.modalClose}>×</Text>
+            </Pressable>
           </View>
           {loading ? (
             <View style={styles.modalLoading}><ActivityIndicator color={STUDIO.accent} /></View>
           ) : (
             <FlatList
               data={choices}
-              keyExtractor={(item) => item.key || "default"}
+              keyExtractor={(item, index) => item.key || `default-${index}`}
               contentContainerStyle={styles.choiceList}
               ListEmptyComponent={<Text style={styles.empty}>No configured options are available.</Text>}
               renderItem={({ item }) => (
                 <Pressable
                   onPress={() => onSelect(item)}
-                  style={({ pressed }) => [styles.choiceRow, item.key === selected && styles.choiceSelected, pressed && styles.pressed]}
+                  style={({ pressed }) => [
+                    styles.choiceRow,
+                    item.key === selected && styles.choiceSelected,
+                    pressed && styles.pressed,
+                  ]}
                 >
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.choiceLabel}>{item.label}</Text>
@@ -220,10 +227,11 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
   const [workspace, setWorkspace] = useState<StoryWorkspaceView | null>(null);
   const [workflow, setWorkflow] = useState<StudioWorkflowView | null>(null);
   const [autoProfiles, setAutoProfiles] = useState<Record<string, AudioAutoCharacter>>({});
+  const [savedProfiles, setSavedProfiles] = useState<Record<string, VoiceProfile>>({});
+  const [draftProfiles, setDraftProfiles] = useState<Record<string, VoiceProfile>>({});
   const [locales, setLocales] = useState<UiLocale[]>([]);
   const [countries, setCountries] = useState<UiCountry[]>([]);
   const [voiceCache, setVoiceCache] = useState<Record<string, UiVoice[]>>({});
-  const [drafts, setDrafts] = useState<Record<string, DraftProfile>>({});
   const [previews, setPreviews] = useState<StageMap<AudioPricingPreview>>({});
   const [syncs, setSyncs] = useState<StageMap<AudioSyncResult>>({});
   const [picker, setPicker] = useState<PickerState>(null);
@@ -249,7 +257,6 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     () => new Map(countries.map((item) => [item.code, item])),
     [countries]
   );
-
   const localeByCode = useMemo(
     () => new Map(locales.map((item) => [item.code, item])),
     [locales]
@@ -278,19 +285,29 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     }
   }, [token, voiceCache]);
 
-  const hydrateDrafts = useCallback((nextWorkspace: StoryWorkspaceView, auto?: AudioAutoConfigureResult) => {
+  const hydrateProfiles = useCallback((
+    nextWorkspace: StoryWorkspaceView,
+    auto?: AudioAutoConfigureResult
+  ) => {
     const autoById = new Map((auto?.characters ?? []).map((item) => [item.participant_id, item]));
-    setDrafts((current) => {
-      const copy = { ...current };
-      for (const participant of nextWorkspace.participants ?? []) {
-        const id = participant.participant_id;
-        const resolved = autoById.get(id);
-        const existing = copy[id];
-        copy[id] = {
-          locale: existing?.locale || clean(resolved?.locale || participant.preferred_locale),
-          voiceId: existing?.voiceId || clean(resolved?.voice_id || participant.voice_profile_ref),
-          style: existing?.style || "",
+    const nextSaved: Record<string, VoiceProfile> = {};
+    for (const participant of nextWorkspace.participants ?? []) {
+      const resolved = autoById.get(participant.participant_id);
+      const locale = clean(resolved?.locale || participant.preferred_locale);
+      const voiceId = clean(resolved?.voice_id || participant.voice_profile_ref);
+      if (locale && voiceId) {
+        nextSaved[participant.participant_id] = {
+          locale,
+          voiceId,
+          style: clean(resolved?.style),
         };
+      }
+    }
+    setSavedProfiles(nextSaved);
+    setDraftProfiles((current) => {
+      const copy = { ...nextSaved };
+      for (const [participantId, profile] of Object.entries(current)) {
+        if (profile.locale || profile.voiceId || profile.style) copy[participantId] = profile;
       }
       return copy;
     });
@@ -342,7 +359,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
       setCountries(normalizeCountries(countryResponse));
       setWorkspace(nextWorkspace);
       setWorkflow(latestWorkflow);
-      hydrateDrafts(nextWorkspace, autoResult);
+      hydrateProfiles(nextWorkspace, autoResult);
     } catch (error) {
       if (mounted.current) setMessage(userFacingStudioError(error));
     } finally {
@@ -351,7 +368,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
         setRefreshing(false);
       }
     }
-  }, [hydrateDrafts, storyId, token]);
+  }, [hydrateProfiles, storyId, token]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -381,10 +398,10 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
 
   useEffect(() => {
     for (const speaker of speakers) {
-      const locale = clean(drafts[speaker.participant_id]?.locale);
+      const locale = clean(draftProfiles[speaker.participant_id]?.locale);
       if (locale) void loadVoices(locale);
     }
-  }, [drafts, loadVoices, speakers]);
+  }, [draftProfiles, loadVoices, speakers]);
 
   useEffect(() => {
     if (!workflow) return;
@@ -392,34 +409,42 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     if (!generating.length) return;
     const timer = setInterval(() => {
       void runLimited(generating, 4, async (stage) => {
-        const result = await syncDialogueAudio(workflow.workflow_id, stage.stage_run_id);
-        if (mounted.current) {
-          setSyncs((current) => ({ ...current, [stage.stage_run_id]: result }));
-          setWorkflow(result.workflow);
+        try {
+          const result = await syncDialogueAudio(workflow.workflow_id, stage.stage_run_id);
+          if (mounted.current) {
+            setSyncs((current) => ({ ...current, [stage.stage_run_id]: result }));
+            setWorkflow(result.workflow);
+          }
+          return result;
+        } catch {
+          return null;
         }
-        return result;
-      }).catch((error) => {
-        if (mounted.current) setMessage(userFacingStudioError(error));
       });
     }, 3000);
     return () => clearInterval(timer);
   }, [workflow]);
 
   const participantLocked = useCallback((participantId: string) =>
-    stages.some((stage) => clean(stage.participant_id) === participantId && ["generating", "awaiting_review", "approved"].includes(stage.state)),
-  [stages]);
+    stages.some((stage) =>
+      clean(stage.participant_id) === participantId &&
+      ["generating", "awaiting_review", "approved"].includes(stage.state)
+    ), [stages]);
 
-  const profileUnsaved = useCallback((participantId: string) => {
-    const draft = drafts[participantId];
-    const saved = autoProfiles[participantId];
+  const profileDirty = useCallback((participantId: string) => {
+    const draft = draftProfiles[participantId];
+    const saved = savedProfiles[participantId];
     if (!draft?.locale || !draft?.voiceId) return true;
-    if (!saved?.ready) return true;
-    return draft.locale !== clean(saved.locale) || draft.voiceId !== clean(saved.voice_id);
-  }, [autoProfiles, drafts]);
+    if (!saved?.locale || !saved?.voiceId) return true;
+    return (
+      draft.locale !== saved.locale ||
+      draft.voiceId !== saved.voiceId ||
+      draft.style !== saved.style
+    );
+  }, [draftProfiles, savedProfiles]);
 
   const saveProfile = useCallback(async (participantId: string) => {
     if (!workflow) return;
-    const draft = drafts[participantId];
+    const draft = draftProfiles[participantId];
     if (!draft?.locale || !draft?.voiceId) {
       setMessage("Choose a language and voice first.");
       return;
@@ -433,6 +458,13 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
         style: draft.style || null,
       });
       if (!mounted.current) return;
+      const saved: VoiceProfile = {
+        locale: result.voice_locale,
+        voiceId: result.voice_id,
+        style: clean(result.style),
+      };
+      setSavedProfiles((current) => ({ ...current, [participantId]: saved }));
+      setDraftProfiles((current) => ({ ...current, [participantId]: saved }));
       setAutoProfiles((current) => ({
         ...current,
         [participantId]: {
@@ -445,6 +477,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
           voice_id: result.voice_id,
           voice_display_name: result.voice_display_name,
           voice_gender: result.voice_gender,
+          style: result.style,
           message: "Voice choice saved.",
         },
       }));
@@ -455,7 +488,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     } finally {
       if (mounted.current) setSavingId("");
     }
-  }, [drafts, localeLabel, storyId, workflow]);
+  }, [draftProfiles, localeLabel, storyId, workflow]);
 
   const priceableStages = useMemo(
     () => stages.filter((stage) => ["pending", "ready", "failed", "rejected"].includes(stage.state)),
@@ -464,8 +497,8 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
 
   const checkConversationPrice = useCallback(async () => {
     if (!workflow || !priceableStages.length) return;
-    const unsaved = speakers.filter((speaker) => profileUnsaved(speaker.participant_id));
-    if (unsaved.length) {
+    const unresolved = speakers.filter((speaker) => profileDirty(speaker.participant_id));
+    if (unresolved.length) {
       setMessage("Save the highlighted voice choices before checking the Audio price.");
       return;
     }
@@ -484,15 +517,15 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     } finally {
       if (mounted.current) setBusy(false);
     }
-  }, [priceableStages, profileUnsaved, speakers, workflow]);
+  }, [priceableStages, profileDirty, speakers, workflow]);
 
   const pricedTargets = useMemo(
     () => priceableStages.filter((stage) => Boolean(previews[stage.stage_run_id])),
     [previews, priceableStages]
   );
-  const knownCredits = pricedTargets.map((stage) => quoteCredits(previews[stage.stage_run_id]));
-  const totalCredits = knownCredits.every((value) => value !== null)
-    ? (knownCredits as number[]).reduce((sum, value) => sum + value, 0)
+  const quotedCredits = pricedTargets.map((stage) => quoteCredits(previews[stage.stage_run_id]));
+  const totalCredits = quotedCredits.every((value) => value !== null)
+    ? (quotedCredits as number[]).reduce((sum, value) => sum + value, 0)
     : null;
   const allPriceableQuoted = priceableStages.length > 0 && pricedTargets.length === priceableStages.length;
 
@@ -500,7 +533,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     if (!workflow || !allPriceableQuoted) return;
     Alert.alert(
       "Create Story Audio?",
-      `${pricedTargets.length} dialogue line${pricedTargets.length === 1 ? "" : "s"} will be created using the price you just reviewed.${totalCredits !== null ? `\n\nEstimated total: ${totalCredits} credits.` : ""}`,
+      `${pricedTargets.length} dialogue line${pricedTargets.length === 1 ? "" : "s"} will be created using the prices you just reviewed.${totalCredits !== null ? `\n\nEstimated total: ${totalCredits} credits.` : ""}`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -512,7 +545,11 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
               await runLimited(pricedTargets, 3, async (stage) => {
                 const preview = previews[stage.stage_run_id];
                 if (!preview) return null;
-                return dispatchDialogueAudio(workflow.workflow_id, stage.stage_run_id, audioPricingQuote(preview));
+                return dispatchDialogueAudio(
+                  workflow.workflow_id,
+                  stage.stage_run_id,
+                  audioPricingQuote(preview)
+                );
               });
               if (!mounted.current) return;
               setWorkflow(await getStudioWorkflow(workflow.workflow_id));
@@ -600,7 +637,8 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
         currentWorkflow = await reviewStudioOutput(pending.review_item_id, "approved");
       }
       const authoritative = await getStudioWorkflow(workflow.workflow_id);
-      const allApproved = audioStages(authoritative).every((stage) => stage.state === "approved");
+      const allApproved = audioStages(authoritative).length > 0 &&
+        audioStages(authoritative).every((stage) => stage.state === "approved");
       const next = allApproved
         ? await advanceStudioWorkflow(authoritative.workflow_id).catch(() => authoritative)
         : authoritative;
@@ -612,26 +650,45 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     }
   }, [workflow]);
 
-  const pickerParticipant = picker?.participantId ? participantById.get(picker.participantId) : undefined;
-  const pickerDraft = picker?.participantId ? drafts[picker.participantId] : undefined;
+  const pickerParticipant = picker?.participantId
+    ? participantById.get(picker.participantId)
+    : undefined;
+  const pickerDraft = picker?.participantId ? draftProfiles[picker.participantId] : undefined;
   const pickerVoices = pickerDraft?.locale ? voiceCache[pickerDraft.locale] ?? [] : [];
   const selectedVoice = pickerVoices.find((item) => item.key === pickerDraft?.voiceId);
-  const stylesForVoice = voiceStyles(selectedVoice);
+  const availableStyles = voiceStyles(selectedVoice);
   const choices: Choice[] = picker?.kind === "locale"
-    ? locales.map((item) => ({ key: item.code, label: localeLabel(item.code), subtitle: clean((item.raw as any)?.native_name) || undefined }))
+    ? locales.map((item) => ({
+        key: item.code,
+        label: localeLabel(item.code),
+        subtitle: clean((item.raw as any)?.native_name) || undefined,
+      }))
     : picker?.kind === "voice"
-      ? pickerVoices.map((item) => ({ key: item.key, label: clean(item.raw?.display_name) || item.label, subtitle: [clean(item.raw?.gender), clean(item.raw?.voice_type)].filter(Boolean).join(" • ") || undefined }))
-      : stylesForVoice.map((item) => ({ key: item, label: item }));
+      ? pickerVoices.map((item) => ({
+          key: item.key,
+          label: clean(item.raw?.display_name) || item.label,
+          subtitle: [clean(item.raw?.gender), clean(item.raw?.voice_type)].filter(Boolean).join(" • ") || undefined,
+        }))
+      : [
+          { key: "", label: "Natural", subtitle: "Use the provider's natural delivery" },
+          ...availableStyles.map((item) => ({ key: item, label: item })),
+        ];
 
   const selectChoice = useCallback((choice: Choice) => {
     if (!picker) return;
     const participantId = picker.participantId;
-    setDrafts((current) => {
+    setDraftProfiles((current) => {
       const prior = current[participantId] || { locale: "", voiceId: "", style: "" };
       if (picker.kind === "locale") {
         const locale = localeByCode.get(choice.key);
-        const defaultVoice = clean((locale?.raw as any)?.default_voice);
-        return { ...current, [participantId]: { locale: choice.key, voiceId: defaultVoice, style: "" } };
+        return {
+          ...current,
+          [participantId]: {
+            locale: choice.key,
+            voiceId: clean((locale?.raw as any)?.default_voice),
+            style: "",
+          },
+        };
       }
       if (picker.kind === "voice") {
         return { ...current, [participantId]: { ...prior, voiceId: choice.key, style: "" } };
@@ -643,7 +700,10 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
   }, [loadVoices, localeByCode, picker]);
 
   const openMenu = useCallback(() => {
-    router.push({ pathname: "/(tabs)/dashboard" as any, params: { openMenu: "1", menu_nonce: `${Date.now()}`, menu_source: "story_audio" } } as any);
+    router.push({
+      pathname: "/(tabs)/dashboard" as any,
+      params: { openMenu: "1", menu_nonce: `${Date.now()}`, menu_source: "story_audio" },
+    } as any);
   }, []);
   const openPlan = useCallback(() => {
     router.push({ pathname: "/(tabs)/billing" as any, params: { intent: "manage", source: "story_audio" } } as any);
@@ -653,7 +713,10 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     return (
       <View style={styles.safe}>
         <DFHeader subtitle="Story Audio Studio" onMenuPress={openMenu} onPressMeta={openPlan} />
-        <View style={styles.center}><ActivityIndicator size="large" color={STUDIO.accent} /><Text style={styles.helper}>Preparing character voices…</Text></View>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={STUDIO.accent} />
+          <Text style={styles.helper}>Preparing character voices…</Text>
+        </View>
       </View>
     );
   }
@@ -665,61 +728,104 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     <View style={styles.safe}>
       <DFHeader subtitle="Story Audio Studio" onMenuPress={openMenu} onPressMeta={openPlan} />
       <ScrollView
-        contentContainerStyle={[styles.content, { maxWidth: viewport.contentMaxWidth, paddingHorizontal: viewport.horizontalPadding }]}
-        refreshControl={<RefreshControl refreshing={refreshing} tintColor={STUDIO.accent} onRefresh={() => { setRefreshing(true); void load(true); }} />}
+        contentContainerStyle={[
+          styles.content,
+          { maxWidth: viewport.contentMaxWidth, paddingHorizontal: viewport.horizontalPadding },
+        ]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            tintColor={STUDIO.accent}
+            onRefresh={() => { setRefreshing(true); void load(true); }}
+          />
+        }
       >
         <StudioHero
           eyebrow="STORY AUDIO STUDIO"
           title={workspace?.title || "Character voices"}
-          subtitle="desifaces prepares a compatible voice from your story. Keep the suggestion or change only what matters to you. Your dialogue stays yours."
+          subtitle="desifaces prepares compatible voices from your story. Keep the suggestion or change only what matters. Your dialogue remains yours."
           right={<ProgressLine current={approvedCount} total={stages.length} label="Dialogue" />}
         />
 
-        {message ? <Surface style={styles.messageBox} accent><Text style={styles.messageText}>{message}</Text></Surface> : null}
+        {message ? (
+          <Surface style={styles.messageBox} accent>
+            <Text style={styles.messageText}>{message}</Text>
+          </Surface>
+        ) : null}
 
         <SectionLabel title="Character voices" meta={`${speakers.length} speaker${speakers.length === 1 ? "" : "s"}`} />
         {speakers.map((speaker) => {
           const id = speaker.participant_id;
-          const draft = drafts[id] || { locale: "", voiceId: "", style: "" };
+          const draft = draftProfiles[id] || { locale: "", voiceId: "", style: "" };
           const auto = autoProfiles[id];
           const voices = draft.locale ? voiceCache[draft.locale] ?? [] : [];
           const voice = voices.find((item) => item.key === draft.voiceId);
+          const stylesForVoice = voiceStyles(voice);
           const locked = participantLocked(id);
-          const unsaved = profileUnsaved(id);
-          const availableStyles = voiceStyles(voice);
+          const dirty = profileDirty(id);
           return (
-            <Surface key={id} accent={Boolean(auto?.ready && !unsaved)} style={styles.characterCard}>
+            <Surface key={id} accent={!dirty} style={styles.characterCard}>
               <View style={styles.characterHead}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.characterName}>{speaker.display_name || "Character"}</Text>
                   <Text style={styles.characterMeta}>
-                    {auto?.status === "suggested" ? "desifaces suggestion • editable before generation" : locked ? "Voice locked for generated dialogue" : "Choose only if you want to change the suggestion"}
+                    {auto?.status === "suggested"
+                      ? "desifaces suggestion • editable before generation"
+                      : locked
+                        ? "Voice locked for generated dialogue"
+                        : "Change only if you want a different performance"}
                   </Text>
                 </View>
-                <StatusPill value={locked ? "LOCKED" : unsaved ? "SAVE CHOICE" : "READY"} tone={locked || !unsaved ? "success" : "accent"} />
+                <StatusPill
+                  value={locked ? "LOCKED" : dirty ? "SAVE CHOICE" : "READY"}
+                  tone={locked || !dirty ? "success" : "accent"}
+                />
               </View>
 
               <View style={styles.choiceGrid}>
-                <Pressable disabled={locked} onPress={() => setPicker({ kind: "locale", participantId: id })} style={({ pressed }) => [styles.choiceCard, locked && styles.disabled, pressed && !locked && styles.pressed]}>
+                <Pressable
+                  disabled={locked}
+                  onPress={() => setPicker({ kind: "locale", participantId: id })}
+                  style={({ pressed }) => [styles.choiceCard, locked && styles.disabled, pressed && !locked && styles.pressed]}
+                >
                   <Text style={styles.choiceKicker}>LANGUAGE</Text>
                   <Text style={styles.choiceValue}>{draft.locale ? localeLabel(draft.locale) : "Choose language"}</Text>
                 </Pressable>
-                <Pressable disabled={locked || !draft.locale} onPress={() => { void loadVoices(draft.locale); setPicker({ kind: "voice", participantId: id }); }} style={({ pressed }) => [styles.choiceCard, (locked || !draft.locale) && styles.disabled, pressed && !locked && styles.pressed]}>
+
+                <Pressable
+                  disabled={locked || !draft.locale}
+                  onPress={() => { void loadVoices(draft.locale); setPicker({ kind: "voice", participantId: id }); }}
+                  style={({ pressed }) => [styles.choiceCard, (locked || !draft.locale) && styles.disabled, pressed && !locked && styles.pressed]}
+                >
                   <Text style={styles.choiceKicker}>VOICE</Text>
-                  <Text style={styles.choiceValue}>{clean(voice?.raw?.display_name) || clean(auto?.voice_display_name) || draft.voiceId || "Choose voice"}</Text>
-                  {clean(voice?.raw?.gender || auto?.voice_gender) ? <Text style={styles.choiceHint}>{clean(voice?.raw?.gender || auto?.voice_gender)}</Text> : null}
+                  <Text style={styles.choiceValue}>
+                    {clean(voice?.raw?.display_name) || clean(auto?.voice_display_name) || draft.voiceId || "Choose voice"}
+                  </Text>
+                  {clean(voice?.raw?.gender || auto?.voice_gender) ? (
+                    <Text style={styles.choiceHint}>{clean(voice?.raw?.gender || auto?.voice_gender)}</Text>
+                  ) : null}
                 </Pressable>
-                <Pressable disabled={locked || !draft.voiceId || !availableStyles.length} onPress={() => setPicker({ kind: "style", participantId: id })} style={({ pressed }) => [styles.choiceCard, (locked || !draft.voiceId || !availableStyles.length) && styles.disabled, pressed && !locked && styles.pressed]}>
+
+                <Pressable
+                  disabled={locked || !draft.voiceId}
+                  onPress={() => setPicker({ kind: "style", participantId: id })}
+                  style={({ pressed }) => [styles.choiceCard, (locked || !draft.voiceId) && styles.disabled, pressed && !locked && styles.pressed]}
+                >
                   <Text style={styles.choiceKicker}>DELIVERY</Text>
                   <Text style={styles.choiceValue}>{draft.style || "Natural"}</Text>
-                  <Text style={styles.choiceHint}>{availableStyles.length ? "Optional" : "Provider default"}</Text>
+                  <Text style={styles.choiceHint}>{stylesForVoice.length ? "Optional" : "Natural provider delivery"}</Text>
                 </Pressable>
               </View>
 
-              {!locked && unsaved ? (
+              {!locked && dirty ? (
                 <View style={styles.saveRow}>
-                  <Text style={styles.saveHint}>Save once; it applies to every dialogue line for this character.</Text>
-                  <CompactButton label={savingId === id ? "Saving…" : "Save voice"} onPress={() => void saveProfile(id)} disabled={savingId === id || !draft.locale || !draft.voiceId} tone="primary" />
+                  <Text style={styles.saveHint}>Save once; this voice applies to every dialogue line for this character.</Text>
+                  <CompactButton
+                    label={savingId === id ? "Saving…" : "Save voice"}
+                    onPress={() => void saveProfile(id)}
+                    disabled={savingId === id || !draft.locale || !draft.voiceId}
+                    tone="primary"
+                  />
                 </View>
               ) : null}
             </Surface>
@@ -732,15 +838,23 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
             <Text style={styles.pricingTitle}>{allPriceableQuoted ? "Audio price ready" : "Price before creating"}</Text>
             <Text style={styles.pricingMeta}>
               {allPriceableQuoted
-                ? `${pricedTargets.length} line${pricedTargets.length === 1 ? "" : "s"}${totalCredits !== null ? ` • ${totalCredits} credits estimated` : ""}. Existing svc-audio pricing is used as-is.`
-                : "desifaces prices each dialogue line through the existing Audio pricing service. Nothing starts until you confirm."}
+                ? `${pricedTargets.length} line${pricedTargets.length === 1 ? "" : "s"}${totalCredits !== null ? ` • ${totalCredits} credits estimated` : ""}. Existing Audio pricing is used as-is.`
+                : "desifaces prices each dialogue line through the existing pricing service. Nothing starts until you confirm."}
             </Text>
           </View>
           <View style={styles.pricingActions}>
-            {!allPriceableQuoted && priceableStages.length ? <CompactButton label="Check price" onPress={() => void checkConversationPrice()} disabled={busy} /> : null}
-            {allPriceableQuoted ? <CompactButton label="Confirm & create Audio" onPress={generateConversation} disabled={busy} tone="primary" /> : null}
-            {allPriceableQuoted ? <CompactButton label="Reprice" onPress={() => void checkConversationPrice()} disabled={busy} /> : null}
-            {reviewableCount ? <CompactButton label={`Approve ready (${reviewableCount})`} onPress={() => void approveReady()} disabled={busy} tone="primary" /> : null}
+            {!allPriceableQuoted && priceableStages.length ? (
+              <CompactButton label="Check price" onPress={() => void checkConversationPrice()} disabled={busy} />
+            ) : null}
+            {allPriceableQuoted ? (
+              <CompactButton label="Confirm & create Audio" onPress={generateConversation} disabled={busy} tone="primary" />
+            ) : null}
+            {allPriceableQuoted ? (
+              <CompactButton label="Reprice" onPress={() => void checkConversationPrice()} disabled={busy} />
+            ) : null}
+            {reviewableCount ? (
+              <CompactButton label={`Approve ready (${reviewableCount})`} onPress={() => void approveReady()} disabled={busy} tone="primary" />
+            ) : null}
           </View>
         </Surface>
 
@@ -752,6 +866,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
             const sync = syncs[stage.stage_run_id];
             const canReview = stage.state === "awaiting_review" && Boolean(latestPendingReview(stage));
             const text = clean(turn?.text || turn?.script || turn?.content || turn?.utterance) || "Dialogue line";
+            const lineCredits = quoteCredits(preview);
             return (
               <Surface key={stage.stage_run_id} accent={stage.state === "approved"} style={styles.dialogueCard}>
                 <View style={styles.dialogueRow}>
@@ -762,15 +877,25 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
                       <StatusPill value={stageLabel(stage, preview)} tone={stageTone(stage, preview)} />
                     </View>
                     <Text style={styles.dialogueText} numberOfLines={3}>{text}</Text>
-                    {preview ? <Text style={styles.dialoguePrice}>{quoteCredits(preview) !== null ? `${quoteCredits(preview)} credits` : "Price ready"}</Text> : null}
+                    {preview ? (
+                      <Text style={styles.dialoguePrice}>{lineCredits !== null ? `${lineCredits} credits` : "Price ready"}</Text>
+                    ) : null}
                   </View>
                   <View style={[styles.dialogueActions, { width: viewport.actionWidth }]}>
-                    {["awaiting_review", "approved"].includes(stage.state) ? <CompactButton label="Play" onPress={() => void playStage(stage)} disabled={busy} fill /> : null}
-                    {canReview ? <CompactButton label="Approve" onPress={() => void reviewTurn(stage, "approved")} disabled={busy} tone="primary" fill /> : null}
-                    {canReview ? <CompactButton label="Revise" onPress={() => void reviewTurn(stage, "revise")} disabled={busy} fill /> : null}
+                    {["awaiting_review", "approved"].includes(stage.state) ? (
+                      <CompactButton label="Play" onPress={() => void playStage(stage)} disabled={busy} fill />
+                    ) : null}
+                    {canReview ? (
+                      <CompactButton label="Approve" onPress={() => void reviewTurn(stage, "approved")} disabled={busy} tone="primary" fill />
+                    ) : null}
+                    {canReview ? (
+                      <CompactButton label="Revise" onPress={() => void reviewTurn(stage, "revise")} disabled={busy} fill />
+                    ) : null}
                     {stage.state === "generating" ? <ActivityIndicator size="small" color={STUDIO.accent} /> : null}
                     {stage.state === "approved" ? <StatusPill value="LOCKED" tone="success" /> : null}
-                    {clean(sync?.error_message) ? <Text style={styles.lineError} numberOfLines={2}>{clean(sync?.error_message)}</Text> : null}
+                    {clean(sync?.error_message) ? (
+                      <Text style={styles.lineError} numberOfLines={2}>{clean(sync?.error_message)}</Text>
+                    ) : null}
                   </View>
                 </View>
               </Surface>
@@ -780,7 +905,9 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
 
         <Divider />
         <View style={styles.footerRow}>
-          <Text style={styles.footerTitle}>{approvedCount === stages.length && stages.length ? "Audio ready for Fusion" : "Your script remains unchanged"}</Text>
+          <Text style={styles.footerTitle}>
+            {approvedCount === stages.length && stages.length ? "Audio ready for Fusion" : "Your script remains unchanged"}
+          </Text>
           <Text style={styles.footerMeta}>{approvedCount}/{stages.length}</Text>
         </View>
       </ScrollView>
