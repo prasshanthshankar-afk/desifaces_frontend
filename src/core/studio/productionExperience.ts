@@ -65,6 +65,7 @@ export type AudioAutoCharacter = {
   voice_id?: string | null;
   voice_display_name?: string | null;
   voice_gender?: string | null;
+  style?: string | null;
   message: string;
 };
 
@@ -124,8 +125,17 @@ export function userFacingStudioError(error: any): string {
     face_explicit_gender_required: "Choose how this character should be presented before creating a new Face.",
     audio_participant_voice_profile_required: "Choose a language and voice before creating Audio.",
     fusion_scene_requires_approved_dialogue_audio: "Approve all dialogue Audio before creating the scene.",
-    fusion_external_provider_consent_required: "Confirm external processing before creating the scene.",
+    fusion_external_provider_consent_required: "Confirm secure video processing before creating the scene.",
     fusion_child_job_failed: "One scene segment could not be created. Only that segment will be retried.",
+    PRICING_INSUFFICIENT_CREDITS: "You do not have enough available credits for this generation. Add credits or choose a smaller generation, then check the price again.",
+    PRICING_CLIENT_DISABLED: "Pricing is temporarily unavailable. Nothing has been generated or charged. Please try again shortly.",
+    PRICING_UNKNOWN_OR_INACTIVE_VARIANT: "This generation option is not currently available for pricing. Nothing has been generated or charged.",
+    PRICING_VARIANT_ZERO_QTY_LINES: "The requested generation could not be priced correctly. Nothing has been generated or charged.",
+    PRICING_VARIANT_HAS_NO_LINES: "The requested generation could not be priced correctly. Nothing has been generated or charged.",
+    PRICING_RESERVATION_FAILED: "The price was shown, but credits could not be reserved. Nothing has been generated or charged. Please check the price again.",
+    pricing_confirmation_required: "Review and confirm the latest price before creating this media.",
+    quote_expired: "That price quote has expired. Check the price again before creating the media.",
+    preview_fingerprint: "The generation details changed after pricing. Check the price again before creating the media.",
   };
   for (const [needle, message] of Object.entries(known)) {
     if (code.includes(needle)) return message;
