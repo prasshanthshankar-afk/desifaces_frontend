@@ -43,8 +43,8 @@ import {
   previewSceneFusion,
   reviewStudioOutput,
   syncSceneFusion,
-  type FusionPricingChild,
   type FusionPricingPreview,
+  type FusionProgress,
   type FusionSyncResult,
   type StoryWorkspaceView,
   type StudioStageView,
@@ -67,61 +67,95 @@ function isChildSuccess(value: unknown) {
   return ["succeeded", "completed", "complete", "ready"].includes(clean(value).toLowerCase());
 }
 
-function childCredits(child: FusionPricingChild): number | null {
-  const pricing: any = child?.pricing ?? {};
-  const summary: any = child?.pricing_summary ?? {};
+function numeric(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function creditsFromParent(preview: FusionPricingPreview | undefined): number | null {
+  if (!preview) return null;
+  const parent: any = preview.parent_quote ?? {};
+  const pricing: any = parent.pricing ?? {};
+  const summary: any = parent.pricing_summary ?? {};
+  const meta: any = pricing.meta ?? {};
   const candidates = [
+    meta.total_credits,
+    pricing.total_credits,
     pricing.estimated_credits,
     pricing.credits,
-    pricing.total_credits,
+    pricing?.summary?.total_credits,
     pricing?.summary?.estimated_credits,
-    pricing?.summary?.credits,
+    summary.total_credits,
     summary.estimated_credits,
     summary.credits,
-    summary.total_credits,
   ];
   for (const value of candidates) {
-    const number = Number(value);
-    if (Number.isFinite(number) && number >= 0) return number;
+    const parsed = numeric(value);
+    if (parsed !== null && parsed >= 0) return parsed;
   }
   const text = clean(
-    summary.estimated_credits_label ||
-      summary.display_total ||
-      pricing?.summary?.estimated_credits_label ||
+    summary.display_total ||
+      summary.estimated_credits_label ||
       pricing?.summary?.display_total ||
+      pricing?.summary?.estimated_credits_label ||
       pricing.display_total
   );
   const match = text.match(/([0-9]+(?:\.[0-9]+)?)/);
   return match ? Number(match[1]) : null;
 }
 
-function childPriceLabel(child: FusionPricingChild) {
-  const credits = childCredits(child);
-  if (credits !== null) return `${credits} credit${credits === 1 ? "" : "s"}`;
-  const pricing: any = child?.pricing ?? {};
-  const summary: any = child?.pricing_summary ?? {};
-  return clean(
-    summary.display_total ||
-      summary.estimated_credits_label ||
-      pricing?.summary?.display_total ||
-      pricing?.summary?.estimated_credits_label ||
-      pricing.display_total ||
-      child.message ||
-      "Price ready"
-  );
+function scenePrice(preview: FusionPricingPreview | undefined) {
+  if (!preview) return { known: false, credits: 0, label: "", minutes: null as number | null };
+  const credits = creditsFromParent(preview);
+  const minutes = numeric(preview.parent_quote?.billable_minutes);
+  return {
+    known: credits !== null,
+    credits: credits ?? 0,
+    label: credits === null ? "Scene price ready" : `${credits} credit${credits === 1 ? "" : "s"}`,
+    minutes,
+  };
 }
 
-function scenePrice(preview: FusionPricingPreview | undefined) {
-  if (!preview) return { known: false, credits: 0, label: "" };
-  if (!preview.children.length) {
-    return { known: true, credits: 0, label: "No new segment charge" };
+function formatDuration(seconds: number | null | undefined) {
+  if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds))) return "";
+  const value = Math.max(0, Math.round(Number(seconds)));
+  if (value < 60) return value <= 10 ? "a few seconds" : `about ${value} sec`;
+  const minutes = Math.max(1, Math.round(value / 60));
+  return `about ${minutes} min`;
+}
+
+function progressCopy(progress: FusionProgress | null | undefined, fallbackTotal: number, fallbackDone: number) {
+  const total = Math.max(0, Number(progress?.total_jobs ?? fallbackTotal ?? 0));
+  const completed = Math.max(0, Number(progress?.completed_jobs ?? fallbackDone ?? 0));
+  const processing = Math.max(0, Number(progress?.processing_jobs ?? 0));
+  const queued = Math.max(0, Number(progress?.queued_jobs ?? Math.max(0, total - completed - processing)));
+  const reused = Math.max(0, Number(progress?.reused_jobs ?? 0));
+  const phase = clean(progress?.phase || "video_generation").toLowerCase();
+  const eta = formatDuration(progress?.estimated_remaining_seconds);
+  const confidence = clean(progress?.estimated_completion_confidence).toLowerCase();
+
+  if (phase === "ready_for_review") {
+    return {
+      title: "Your scene is ready for review",
+      meta: `${completed || total}/${total || completed} clips ready${reused ? ` • ${reused} reused` : ""}.`,
+      eta: "",
+    };
   }
-  const values = preview.children.map(childCredits);
-  if (values.some((value) => value === null)) {
-    return { known: false, credits: 0, label: "Scene price ready" };
+  if (phase === "scene_stitch") {
+    return {
+      title: "All clips are ready — assembling your scene",
+      meta: `${completed || total}/${total || completed} clips complete${reused ? ` • ${reused} reused` : ""}. desifaces is joining them in story order.`,
+      eta: eta ? `${confidence === "low" ? "Early estimate: " : ""}${eta} remaining` : "Assembly is the final step.",
+    };
   }
-  const credits = (values as number[]).reduce((sum, value) => sum + value, 0);
-  return { known: true, credits, label: `${credits} credit${credits === 1 ? "" : "s"}` };
+  return {
+    title: `Creating ${total || fallbackTotal} dialogue clips in parallel`,
+    meta: `${completed} ready • ${processing} processing • ${queued} queued${reused ? ` • ${reused} reused` : ""}. Completed clips are preserved.`,
+    eta: eta
+      ? `${confidence === "low" ? "Early estimate: " : "Estimated: "}${eta} remaining`
+      : "Timing will become more accurate as clips finish.",
+  };
 }
 
 function FinalVideoPlayer({ uri }: { uri: string }) {
@@ -280,7 +314,7 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
     setBusy((current) => ({ ...current, [stage.stage_run_id]: true }));
     setMessage("");
     try {
-      if (stage.state === "failed" && preview.children.length === 0) {
+      if (stage.state === "failed" && preview.required_child_count === 0) {
         await retryFusionStitch(workflow.workflow_id, stage.stage_run_id);
       } else {
         const confirmations = fusionPricingConfirmations(preview);
@@ -375,7 +409,7 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
         <StudioHero
           eyebrow="STORY FUSION STUDIO"
           title={workspace?.title || "Create your scene"}
-          subtitle="Bring the approved cast, voices and dialogue together into the final talking-video scene. Nothing upstream is regenerated."
+          subtitle="Bring the approved cast, voices and dialogue together into the final talking-video scene. Independent clips are created in parallel, then assembled in story order."
           right={<ProgressLine current={approvedScenes} total={stages.length} label="Scenes" />}
         />
 
@@ -428,21 +462,24 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
           const scene = sceneById.get(clean(stage.scene_id));
           const preview = previews[stage.stage_run_id];
           const sync = syncs[stage.stage_run_id];
+          const progress = sync?.progress;
           const isBusy = Boolean(busy[stage.stage_run_id]);
           const canReview = stage.state === "awaiting_review" && Boolean(latestPendingReview(stage));
           const canPrice = ["pending", "ready", "failed", "rejected"].includes(stage.state) && readyForScene;
           const videoUrl = clean(sync?.video_url);
           const children = sync?.children ?? [];
           const sceneTitle = clean(scene?.title || scene?.name) || `Scene ${index + 1}`;
-          const turnCount = Number(preview?.turn_count || scene?.dialogue?.length || children.length || 0);
-          const childSuccess = children.filter((child: any) => isChildSuccess(child?.status) && clean(child?.video_url)).length;
-          const childFailed = children.filter((child: any) => clean(child?.status).toLowerCase() === "failed").length;
+          const turnCount = Number(preview?.turn_count || progress?.total_jobs || scene?.dialogue?.length || children.length || 0);
+          const childSuccess = Number(progress?.completed_jobs ?? children.filter((child: any) => isChildSuccess(child?.status) && clean(child?.video_url)).length);
           const allChildrenRendered = turnCount > 0 && childSuccess >= turnCount;
-          const stitching = stage.state === "generating" && allChildrenRendered && !videoUrl;
+          const stitching = stage.state === "generating" && (clean(progress?.phase) === "scene_stitch" || (allChildrenRendered && !videoUrl));
           const price = scenePrice(preview);
-          const retrySubset = Boolean(preview && preview.children.length > 0 && preview.children.length < preview.turn_count);
-          const stitchOnly = Boolean(preview && stage.state === "failed" && preview.children.length === 0);
+          const preservedCount = Number(preview?.preserved_child_count || 0);
+          const requiredCount = Number(preview?.required_child_count ?? preview?.children?.length ?? 0);
+          const retrySubset = Boolean(preview && preservedCount > 0 && requiredCount > 0);
+          const stitchOnly = Boolean(preview && stage.state === "failed" && requiredCount === 0);
           const expanded = Boolean(expandedPrices[stage.stage_run_id]);
+          const live = progressCopy(progress, turnCount, childSuccess);
 
           return (
             <Surface key={stage.stage_run_id} accent={stage.state === "approved"} style={styles.sceneCard}>
@@ -451,7 +488,7 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.sceneTitle} numberOfLines={2}>{sceneTitle}</Text>
                   <Text style={styles.sceneMeta}>
-                    {turnCount} dialogue segment{turnCount === 1 ? "" : "s"} • approved Face and Audio reused
+                    {turnCount} dialogue clip{turnCount === 1 ? "" : "s"} • approved Face and Audio reused • one scene price
                   </Text>
                 </View>
                 <StatusPill
@@ -461,14 +498,20 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
               </View>
 
               {stage.state === "generating" ? (
-                <View style={styles.productionProgress}>
+                <View
+                  style={styles.productionProgress}
+                  accessible
+                  accessibilityRole="progressbar"
+                  accessibilityLabel={live.title}
+                  accessibilityValue={{ min: 0, max: Math.max(1, turnCount), now: Math.min(turnCount, childSuccess) }}
+                >
                   <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.progressTitle}>{stitching ? "Assembling your scene…" : "Creating dialogue video segments…"}</Text>
-                    <Text style={styles.progressMeta}>
-                      {stitching ? "All dialogue videos are ready. desifaces is joining them in story order." : `${childSuccess}/${turnCount} rendered${childFailed ? ` • ${childFailed} needs attention` : ""}. Completed segments stay preserved.`}
-                    </Text>
+                    <Text style={styles.progressTitle}>{live.title}</Text>
+                    <Text style={styles.progressMeta}>{live.meta}</Text>
+                    <Text style={styles.progressEta}>{live.eta}</Text>
+                    <Text style={styles.progressReassurance}>You can continue working. Completed clips are kept and will not be regenerated.</Text>
                   </View>
-                  <ProgressLine current={childSuccess} total={turnCount} label="Segments" />
+                  <ProgressLine current={childSuccess} total={turnCount} label="Clips" />
                 </View>
               ) : null}
 
@@ -476,19 +519,20 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
                 <View style={styles.priceCard}>
                   <View style={styles.priceHeader}>
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.priceKicker}>{stitchOnly ? "ASSEMBLY RETRY" : retrySubset ? "RETRY PRICE" : "SCENE PRICE"}</Text>
+                      <Text style={styles.priceKicker}>{stitchOnly ? "ASSEMBLY RECOVERY" : retrySubset ? "SCENE RETRY PRICE" : "SCENE PRICE"}</Text>
                       <Text style={styles.priceTotal}>{price.label}</Text>
                       <Text style={styles.priceExplain}>
                         {stitchOnly
-                          ? "All dialogue videos are already complete. Retry only scene assembly; there is no new child-render charge."
+                          ? "All dialogue clips are already complete. Retry only scene assembly; no new video generation is required."
                           : retrySubset
-                            ? `${preview.turn_count - preview.children.length} completed segment${preview.turn_count - preview.children.length === 1 ? " is" : "s are"} preserved. Only ${preview.children.length} unfinished segment${preview.children.length === 1 ? " is" : "s are"} repriced.`
-                            : `${preview.children.length} dialogue segment${preview.children.length === 1 ? "" : "s"} included. Nothing starts until you confirm.`}
+                            ? `${preservedCount} completed clip${preservedCount === 1 ? " is" : "s are"} reused and ${requiredCount} clip${requiredCount === 1 ? " is" : "s are"} generated. Pricing remains one logical scene quote — child clips are never charged separately.`
+                            : `${requiredCount} dialogue clip${requiredCount === 1 ? "" : "s"} will be created in parallel and assembled into one scene. Child clips are included in this scene price and have no separate charge.`}
                       </Text>
+                      {price.minutes ? <Text style={styles.priceBillingBasis}>{price.minutes} billable minute{price.minutes === 1 ? "" : "s"} • provider-neutral customer price</Text> : null}
                     </View>
-                    {!stitchOnly && preview.children.length > 0 ? (
+                    {preview.children.length > 0 ? (
                       <Pressable onPress={() => setExpandedPrices((current) => ({ ...current, [stage.stage_run_id]: !expanded }))}>
-                        <Text style={styles.detailsToggle}>{expanded ? "Hide details" : "See details"}</Text>
+                        <Text style={styles.detailsToggle}>{expanded ? "Hide clips" : "See clips"}</Text>
                       </Pressable>
                     ) : null}
                   </View>
@@ -500,7 +544,7 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
                         .map((child) => (
                           <View key={child.dialogue_turn_id} style={styles.priceDetailRow}>
                             <Text style={styles.priceDetailName} numberOfLines={1}>{child.display_name || "Dialogue"}</Text>
-                            <Text style={styles.priceDetailValue}>{childPriceLabel(child)}</Text>
+                            <Text style={styles.priceDetailValue}>Included • no separate charge</Text>
                           </View>
                         ))}
                     </View>
@@ -524,7 +568,7 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
                 {canPrice && preview ? (
                   <>
                     <CompactButton
-                      label={stitchOnly ? "Retry assembly" : retrySubset ? "Retry unfinished segments" : stage.state === "rejected" ? "Create new scene version" : "Create scene"}
+                      label={stitchOnly ? "Retry assembly" : retrySubset ? "Retry scene" : stage.state === "rejected" ? "Create new scene version" : "Create scene"}
                       onPress={() => setConfirmation({ stage, preview })}
                       disabled={isBusy || !processingConsent}
                       tone="primary"
@@ -541,7 +585,7 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
                       label="Revise scene"
                       onPress={() => Alert.alert(
                         "Create a new scene version?",
-                        "Your approved Face identities and Audio stay locked and are reused. Only this scene video is regenerated and repriced.",
+                        "Your approved Face identities and Audio stay locked and are reused. The replacement scene is a new priced scene attempt.",
                         [
                           { text: "Keep current", style: "cancel" },
                           { text: "Revise scene", onPress: () => void review(stage, "revise") },
@@ -570,24 +614,26 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
           <View style={styles.confirmationCard}>
             {confirmation ? (() => {
               const price = scenePrice(confirmation.preview);
-              const stitchOnly = confirmation.stage.state === "failed" && confirmation.preview.children.length === 0;
-              const retrySubset = confirmation.preview.children.length > 0 && confirmation.preview.children.length < confirmation.preview.turn_count;
+              const preserved = Number(confirmation.preview.preserved_child_count || 0);
+              const required = Number(confirmation.preview.required_child_count ?? confirmation.preview.children.length);
+              const stitchOnly = confirmation.stage.state === "failed" && required === 0;
+              const retrySubset = preserved > 0 && required > 0;
               return (
                 <>
-                  <Text style={styles.confirmationEyebrow}>{stitchOnly ? "ASSEMBLY RECOVERY" : retrySubset ? "UNFINISHED SEGMENTS ONLY" : "READY TO CREATE"}</Text>
+                  <Text style={styles.confirmationEyebrow}>{stitchOnly ? "ASSEMBLY RECOVERY" : retrySubset ? "SCENE RETRY" : "READY TO CREATE"}</Text>
                   <Text style={styles.confirmationTitle}>{stitchOnly ? "Retry scene assembly?" : "Create this scene?"}</Text>
                   <Text style={styles.confirmationPrice}>{price.label}</Text>
                   <Text style={styles.confirmationMeta}>
                     {stitchOnly
-                      ? "All dialogue videos are already complete. This retries assembly without a new child-render charge."
+                      ? "All dialogue clips are already complete. This retries only assembly."
                       : retrySubset
-                        ? `Only ${confirmation.preview.children.length} unfinished segment${confirmation.preview.children.length === 1 ? "" : "s"} will be generated. Completed segments stay untouched.`
-                        : `${confirmation.preview.children.length} ordered dialogue segment${confirmation.preview.children.length === 1 ? "" : "s"} will be created and assembled into one scene.`}
+                        ? `${preserved} completed clip${preserved === 1 ? " will" : "s will"} be reused and ${required} unfinished clip${required === 1 ? " will" : "s will"} be generated in parallel. This is one logical scene price.`
+                        : `${required} ordered dialogue clip${required === 1 ? "" : "s"} will be created in parallel and assembled into one scene. There are no separate child charges.`}
                   </Text>
                   <Text style={styles.confirmationGuarantee}>Approved Face and Audio are reused. Nothing upstream is regenerated.</Text>
                   <View style={styles.confirmationActions}>
                     <CompactButton label="Cancel" onPress={() => setConfirmation(null)} fill />
-                    <CompactButton label={stitchOnly ? "Retry assembly" : retrySubset ? "Retry unfinished" : "Confirm & create"} onPress={() => void confirmRender(confirmation.stage, confirmation.preview)} tone="primary" fill />
+                    <CompactButton label={stitchOnly ? "Retry assembly" : "Confirm & create"} onPress={() => void confirmRender(confirmation.stage, confirmation.preview)} tone="primary" fill />
                   </View>
                 </>
               );
@@ -630,14 +676,17 @@ const styles = StyleSheet.create({
   sceneNumberText: { color: STUDIO.accentText, fontSize: 13, fontWeight: "900" },
   sceneTitle: { color: STUDIO.text, fontSize: 15, lineHeight: 18, fontWeight: "900", letterSpacing: -0.15 },
   sceneMeta: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "600", marginTop: 2 },
-  productionProgress: { flexDirection: "row", alignItems: "center", gap: 10, padding: 9, borderRadius: 10, backgroundColor: STUDIO.surfaceSoft, borderWidth: 1, borderColor: STUDIO.border },
-  progressTitle: { color: STUDIO.text, fontSize: 10, fontWeight: "900" },
-  progressMeta: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "600", marginTop: 2 },
+  productionProgress: { flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: 12, backgroundColor: STUDIO.surfaceSoft, borderWidth: 1, borderColor: STUDIO.accentBorder },
+  progressTitle: { color: STUDIO.text, fontSize: 11, fontWeight: "900" },
+  progressMeta: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "700", marginTop: 3 },
+  progressEta: { color: STUDIO.accentText, fontSize: 8, lineHeight: 12, fontWeight: "900", marginTop: 3 },
+  progressReassurance: { color: STUDIO.faint, fontSize: 7, lineHeight: 11, fontWeight: "600", marginTop: 3 },
   priceCard: { borderRadius: 11, borderWidth: 1, borderColor: STUDIO.accentBorder, backgroundColor: STUDIO.accentFill, padding: 10, gap: 8 },
   priceHeader: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   priceKicker: { color: STUDIO.accentText, fontSize: 7, fontWeight: "900", letterSpacing: 0.55 },
   priceTotal: { color: STUDIO.text, fontSize: 17, lineHeight: 21, fontWeight: "900", marginTop: 2 },
   priceExplain: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "600", marginTop: 2 },
+  priceBillingBasis: { color: STUDIO.accentText, fontSize: 7, lineHeight: 11, fontWeight: "800", marginTop: 4 },
   detailsToggle: { color: STUDIO.accentText, fontSize: 8, fontWeight: "900", paddingVertical: 3 },
   priceDetails: { gap: 5, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: STUDIO.border, paddingTop: 7 },
   priceDetailRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
