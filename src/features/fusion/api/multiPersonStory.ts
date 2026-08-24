@@ -62,6 +62,7 @@ export type FusionParentConfirmation = {
 export type FusionConfirmationBundle = {
   parent_confirmation: FusionParentConfirmation;
   child_confirmations: FusionChildConfirmation[];
+  length: number;
 };
 
 export type FusionDispatchResult = {
@@ -200,5 +201,6 @@ export function fusionPricingConfirmations(preview: FusionPricingPreview): Fusio
       preview_fingerprint: previewFingerprint,
     },
     child_confirmations: childConfirmations,
+    length: childConfirmations.length,
   };
 }
