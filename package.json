@@ -41,43 +41,44 @@
     "expo-image": "~55.0.11",
     "expo-image-picker": "~55.0.22",
     "expo-linear-gradient": "~55.0.16",
-    "expo-linking": "~55.0.8",
-    "expo-localization": "~17.0.8",
-    "expo-notifications": "~0.32.12",
-    "expo-router": "~6.0.21",
-    "expo-secure-store": "~15.0.8",
-    "expo-sharing": "~14.0.8",
-    "expo-splash-screen": "~0.30.10",
-    "expo-status-bar": "~2.2.3",
-    "expo-symbols": "~0.4.5",
-    "expo-system-ui": "~5.0.10",
-    "expo-video": "~2.2.2",
-    "expo-web-browser": "~14.2.0",
+    "expo-linking": "~55.0.17",
+    "expo-localization": "~55.0.17",
+    "expo-notifications": "~55.0.25",
+    "expo-router": "~55.0.17",
+    "expo-secure-store": "~55.0.16",
+    "expo-sharing": "~55.0.22",
+    "expo-splash-screen": "~55.0.23",
+    "expo-status-bar": "~55.0.5",
+    "expo-symbols": "~55.0.9",
+    "expo-system-ui": "~55.0.20",
+    "expo-video": "~55.0.19",
+    "expo-web-browser": "~55.0.18",
     "i18next": "^25.8.0",
     "js-tokens": "^10.0.0",
     "lottie-react": "^2.4.1",
-    "react": "19.0.0",
-    "react-dom": "19.0.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
     "react-i18next": "^16.5.3",
-    "react-native": "0.79.6",
-    "react-native-gesture-handler": "~2.24.0",
-    "react-native-reanimated": "~3.17.4",
-    "react-native-safe-area-context": "5.4.0",
-    "react-native-screens": "~4.11.1",
-    "react-native-svg": "15.11.2",
-    "react-native-web": "^0.20.0",
-    "react-native-worklets": "^0.5.1"
+    "react-native": "0.83.10",
+    "react-native-gesture-handler": "~2.30.0",
+    "react-native-reanimated": "4.2.1",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.23.0",
+    "react-native-svg": "15.15.3",
+    "react-native-web": "~0.21.0",
+    "react-native-worklets": "0.7.4",
+    "tamagui": "^1.135.4"
   },
   "devDependencies": {
     "@babel/plugin-proposal-export-namespace-from": "^7.18.9",
     "@tamagui/babel-plugin": "^1.135.4",
-    "@types/node": "^22.15.21",
-    "@types/react": "~19.0.10",
+    "@types/node": "^25.5.0",
+    "@types/react": "~19.2.10",
     "babel-plugin-module-resolver": "^5.0.2",
-    "babel-preset-expo": "~13.2.0",
+    "babel-preset-expo": "^55.0.22",
     "eslint": "^9.25.0",
-    "eslint-config-expo": "~9.2.0",
-    "typescript": "~5.8.3"
+    "eslint-config-expo": "~55.0.0",
+    "typescript": "~5.9.2"
   },
   "expo": {
     "doctor": {
@@ -94,6 +95,11 @@
     }
   },
   "overrides": {
-    "expo-glass-effect": "file:./vendor/expo-glass-effect"
+    "expo-glass-effect": "file:./vendor/expo-glass-effect",
+    "expo-router": {
+      "expo-glass-effect": "file:./vendor/expo-glass-effect"
+    },
+    "react-native-reanimated": "4.2.1",
+    "react-native-worklets": "0.7.4"
   }
 }
