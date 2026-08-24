@@ -61,9 +61,11 @@ export default function StoryStudioRoute() {
     void refreshCanonicalStage().catch((reason) => {
       if (activeRef.current) setError(String(reason?.message || "Unable to load Story Studio."));
     });
+    // Child Studio screens already poll their active generation work. This route
+    // only needs to discover canonical stage transitions, so keep the cadence light.
     const timer = setInterval(() => {
       void refreshCanonicalStage().catch(() => {});
-    }, 2500);
+    }, 4000);
     return () => {
       activeRef.current = false;
       clearInterval(timer);
@@ -88,7 +90,7 @@ export default function StoryStudioRoute() {
         openMenu: "1",
         menu_nonce: `${Date.now()}`,
         menu_source: "story_face",
-      } as any,
+      },
     } as any);
   }, []);
 
