@@ -4,8 +4,9 @@ on:
   push:
     branches:
       - feature/v3-multiperson-ui-20260818
+      - release/v3-studio-completion-20260824
     paths:
-      - 'src/app/(tabs)/face/story/**'
+      - 'src/app/(tabs)/face/**'
       - 'src/core/studio/**'
       - 'src/features/face/**'
       - 'src/features/audio/**'
@@ -37,10 +38,13 @@ jobs:
       - name: Lint V3 Story surfaces
         run: >-
           npx eslint
+          'src/app/(tabs)/face/multi-person.tsx'
           'src/app/(tabs)/face/story/[storyId].tsx'
           src/core/studio/DenseStudioUI.tsx
           src/core/studio/productionExperience.ts
           src/core/studio/multiPersonWorkflow.ts
+          src/features/face/FaceCreationModeSwitch.tsx
+          src/features/face/MultiPersonFaceDirectorScreen.tsx
           src/features/face/MultiPersonFaceSavedWorkScreen.tsx
           src/features/face/MultiPersonFaceCohortDenseScreen.tsx
           src/features/audio/MultiPersonAudioWorkspaceScreen.tsx
