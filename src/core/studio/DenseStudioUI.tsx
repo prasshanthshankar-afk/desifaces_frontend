@@ -221,10 +221,10 @@ const styles = StyleSheet.create({
   },
   title: {
     color: STUDIO.text,
-    fontSize: 21,
-    lineHeight: 26,
+    fontSize: 18,
+    lineHeight: 23,
     fontWeight: "900",
-    letterSpacing: -0.35,
+    letterSpacing: -0.25,
   },
   subtitle: {
     color: STUDIO.muted,
