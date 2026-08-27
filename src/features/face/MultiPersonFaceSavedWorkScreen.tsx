@@ -196,7 +196,7 @@ export default function MultiPersonFaceSavedWorkScreen({ storyId }: Props) {
         <View style={[styles.reuseWrap, { maxWidth: viewport.contentMaxWidth, paddingHorizontal: viewport.horizontalPadding }]}>
           <Surface style={styles.reuseBar} accent>
             <View style={styles.reuseIntro}>
-              <Text style={styles.reuseTitle}>Saved Work first</Text>
+              <Text style={styles.reuseTitle}>Saved Work</Text>
               <Text style={styles.reuseMeta}>
                 Reuse a Face you already own. It is immediate, keeps identity continuity and adds no new Face-generation charge.
               </Text>
@@ -212,9 +212,9 @@ export default function MultiPersonFaceSavedWorkScreen({ storyId }: Props) {
                       {participant.display_name || "Character"}
                     </Text>
                     {locked ? (
-                      <StatusPill value="LOCKED" tone="success" />
+                      <StatusPill value="Locked" tone="success" />
                     ) : generating ? (
-                      <StatusPill value="CREATING" tone="accent" />
+                      <StatusPill value="Creating" tone="accent" />
                     ) : (
                       <CompactButton label="Use saved Face" onPress={() => openSavedFaces(participant.participant_id)} />
                     )}
@@ -299,21 +299,21 @@ const styles = StyleSheet.create({
   reuseWrap: { width: "100%", alignSelf: "center", paddingTop: 8 },
   reuseBar: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 10, padding: 10 },
   reuseIntro: { flex: 1, minWidth: 170 },
-  reuseTitle: { color: STUDIO.text, fontSize: 11, fontWeight: "900" },
-  reuseMeta: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "600", marginTop: 2 },
+  reuseTitle: { color: STUDIO.text, fontSize: 13, lineHeight: 18, fontWeight: "900" },
+  reuseMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700", marginTop: 2 },
   participantActions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 },
   participantAction: { minWidth: 118, gap: 5, alignItems: "stretch" },
-  participantName: { maxWidth: 160, color: STUDIO.accentText, fontSize: 10, lineHeight: 13, fontWeight: "900" },
-  messageText: { color: "#FFC0C6", fontSize: 9, lineHeight: 13, fontWeight: "700", paddingHorizontal: 4, paddingTop: 4 },
+  participantName: { maxWidth: 180, color: STUDIO.accentText, fontSize: 12, lineHeight: 16, fontWeight: "900" },
+  messageText: { color: "#FFC0C6", fontSize: 11, lineHeight: 16, fontWeight: "700", paddingHorizontal: 4, paddingTop: 4 },
   studioBody: { flex: 1, minHeight: 0 },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.76)", justifyContent: "center", padding: 16 },
   modalCard: { width: "100%", maxWidth: 620, maxHeight: "84%", alignSelf: "center", borderRadius: 18, borderWidth: 1, borderColor: STUDIO.border, backgroundColor: STUDIO.raised, padding: 12 },
   modalHeader: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 10 },
   modalTitle: { color: STUDIO.text, fontSize: 15, fontWeight: "900" },
-  modalMeta: { color: STUDIO.muted, fontSize: 9, lineHeight: 13, fontWeight: "600", marginTop: 3 },
+  modalMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700", marginTop: 3 },
   modalClose: { color: STUDIO.muted, fontSize: 24, lineHeight: 28 },
   loadingBox: { minHeight: 180, alignItems: "center", justifyContent: "center", gap: 8 },
-  loadingText: { color: STUDIO.muted, fontSize: 10, fontWeight: "700" },
+  loadingText: { color: STUDIO.muted, fontSize: 12, lineHeight: 16, fontWeight: "700" },
   faceList: { paddingBottom: 8 },
   faceRow: { gap: 9 },
   faceCard: { flex: 1, minWidth: 0, marginBottom: 9, borderRadius: 13, borderWidth: 1, borderColor: STUDIO.border, backgroundColor: STUDIO.surface, padding: 8 },
@@ -321,11 +321,11 @@ const styles = StyleSheet.create({
   faceImage: { width: "100%", height: "100%" },
   facePlaceholder: { flex: 1, alignItems: "center", justifyContent: "center" },
   facePlaceholderText: { color: STUDIO.faint, fontSize: 12, fontWeight: "900" },
-  faceTitle: { color: STUDIO.text, fontSize: 10, lineHeight: 13, fontWeight: "900", marginTop: 7 },
-  faceAction: { color: STUDIO.accentText, fontSize: 8, lineHeight: 11, fontWeight: "700", marginTop: 2 },
+  faceTitle: { color: STUDIO.text, fontSize: 12, lineHeight: 16, fontWeight: "900", marginTop: 7 },
+  faceAction: { color: STUDIO.accentText, fontSize: 10, lineHeight: 14, fontWeight: "700", marginTop: 2 },
   emptyBox: { padding: 28, alignItems: "center", gap: 5 },
   emptyTitle: { color: STUDIO.text, fontSize: 12, fontWeight: "900" },
-  emptyMeta: { color: STUDIO.muted, fontSize: 9, lineHeight: 14, textAlign: "center" },
+  emptyMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, textAlign: "center" },
   pressed: { opacity: 0.76 },
   disabled: { opacity: 0.45 },
 });

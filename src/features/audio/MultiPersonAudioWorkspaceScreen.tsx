@@ -716,7 +716,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
   if (loading && !workflow) {
     return (
       <View style={styles.safe}>
-        <DFHeader subtitle="Story Audio Studio" onMenuPress={openMenu} onPressMeta={openPlan} />
+        <DFHeader subtitle="Audio Studio" onMenuPress={openMenu} onPressMeta={openPlan} />
         <View style={styles.center}>
           <ActivityIndicator size="large" color={STUDIO.accent} />
           <Text style={styles.helper}>Preparing character voices…</Text>
@@ -731,7 +731,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
 
   return (
     <View style={styles.safe}>
-      <DFHeader subtitle="Story Audio Studio" onMenuPress={openMenu} onPressMeta={openPlan} />
+      <DFHeader subtitle="Audio Studio" onMenuPress={openMenu} onPressMeta={openPlan} />
       <ScrollView
         contentContainerStyle={[
           styles.content,
@@ -746,7 +746,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
         }
       >
         <StudioHero
-          eyebrow="STORY AUDIO STUDIO"
+          eyebrow="STORY • AUDIO"
           title={workspace?.title || "Character voices"}
           subtitle="desifaces prepares compatible voices from your story. Once confirmed, all independent dialogue lines are submitted together and generated in parallel."
           right={<ProgressLine current={approvedCount} total={stages.length} label="Dialogue" />}
@@ -782,7 +782,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
                   </Text>
                 </View>
                 <StatusPill
-                  value={locked ? "LOCKED" : dirty ? "SAVE CHOICE" : "READY"}
+                  value={locked ? "Locked" : dirty ? "Save choice" : "Ready"}
                   tone={locked || !dirty ? "success" : "accent"}
                 />
               </View>
@@ -793,7 +793,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
                   onPress={() => setPicker({ kind: "locale", participantId: id })}
                   style={({ pressed }) => [styles.choiceCard, locked && styles.disabled, pressed && !locked && styles.pressed]}
                 >
-                  <Text style={styles.choiceKicker}>LANGUAGE</Text>
+                  <Text style={styles.choiceKicker}>Language</Text>
                   <Text style={styles.choiceValue}>{draft.locale ? localeLabel(draft.locale) : "Choose language"}</Text>
                 </Pressable>
 
@@ -802,7 +802,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
                   onPress={() => { void loadVoices(draft.locale); setPicker({ kind: "voice", participantId: id }); }}
                   style={({ pressed }) => [styles.choiceCard, (locked || !draft.locale) && styles.disabled, pressed && !locked && styles.pressed]}
                 >
-                  <Text style={styles.choiceKicker}>VOICE</Text>
+                  <Text style={styles.choiceKicker}>Voice</Text>
                   <Text style={styles.choiceValue}>
                     {clean(voice?.raw?.display_name) || clean(auto?.voice_display_name) || draft.voiceId || "Choose voice"}
                   </Text>
@@ -816,7 +816,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
                   onPress={() => setPicker({ kind: "style", participantId: id })}
                   style={({ pressed }) => [styles.choiceCard, (locked || !draft.voiceId) && styles.disabled, pressed && !locked && styles.pressed]}
                 >
-                  <Text style={styles.choiceKicker}>DELIVERY</Text>
+                  <Text style={styles.choiceKicker}>Delivery</Text>
                   <Text style={styles.choiceValue}>{draft.style || "Natural"}</Text>
                   <Text style={styles.choiceHint}>{stylesForVoice.length ? "Optional" : "Natural provider delivery"}</Text>
                 </Pressable>
@@ -905,7 +905,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
                       <CompactButton label="Revise" onPress={() => void reviewTurn(stage, "revise")} disabled={busy} fill />
                     ) : null}
                     {stage.state === "generating" ? <ActivityIndicator size="small" color={STUDIO.accent} /> : null}
-                    {stage.state === "approved" ? <StatusPill value="LOCKED" tone="success" /> : null}
+                    {stage.state === "approved" ? <StatusPill value="Locked" tone="success" /> : null}
                     {clean(sync?.error_message) ? (
                       <Text style={styles.lineError} numberOfLines={2}>{clean(sync?.error_message)}</Text>
                     ) : null}
@@ -942,36 +942,36 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: STUDIO.bg },
   content: { width: "100%", alignSelf: "center", paddingTop: 10, paddingBottom: 120, gap: 10 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
-  helper: { color: STUDIO.muted, fontSize: 11, fontWeight: "700" },
+  helper: { color: STUDIO.muted, fontSize: 12, lineHeight: 16, fontWeight: "700" },
   messageBox: { padding: 10 },
-  messageText: { color: "#FFE6B2", fontSize: 10, lineHeight: 15, fontWeight: "700" },
+  messageText: { color: "#FFE6B2", fontSize: 11, lineHeight: 16, fontWeight: "700" },
   characterCard: { gap: 10, padding: 10 },
   characterHead: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   characterName: { color: STUDIO.text, fontSize: 14, lineHeight: 18, fontWeight: "900" },
-  characterMeta: { color: STUDIO.muted, fontSize: 9, lineHeight: 13, fontWeight: "600", marginTop: 2 },
+  characterMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700", marginTop: 2 },
   choiceGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   choiceCard: { flex: 1, minWidth: 145, borderRadius: 12, borderWidth: 1, borderColor: STUDIO.border, backgroundColor: STUDIO.surfaceSoft, padding: 9, minHeight: 67 },
-  choiceKicker: { color: STUDIO.faint, fontSize: 8, fontWeight: "900", letterSpacing: 0.65 },
-  choiceValue: { color: STUDIO.text, fontSize: 10, lineHeight: 14, fontWeight: "900", marginTop: 4 },
-  choiceHint: { color: STUDIO.muted, fontSize: 8, lineHeight: 11, fontWeight: "600", marginTop: 2 },
+  choiceKicker: { color: STUDIO.faint, fontSize: 10, lineHeight: 14, fontWeight: "900", letterSpacing: 0.2 },
+  choiceValue: { color: STUDIO.text, fontSize: 12, lineHeight: 16, fontWeight: "900", marginTop: 4 },
+  choiceHint: { color: STUDIO.muted, fontSize: 10, lineHeight: 14, fontWeight: "700", marginTop: 2 },
   saveRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  saveHint: { flex: 1, color: STUDIO.muted, fontSize: 9, lineHeight: 13, fontWeight: "600" },
+  saveHint: { flex: 1, color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700" },
   pricingBar: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 10, padding: 10 },
-  pricingTitle: { color: STUDIO.text, fontSize: 11, fontWeight: "900" },
-  pricingMeta: { color: STUDIO.muted, fontSize: 9, lineHeight: 13, fontWeight: "600", marginTop: 2 },
+  pricingTitle: { color: STUDIO.text, fontSize: 13, lineHeight: 18, fontWeight: "900" },
+  pricingMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700", marginTop: 2 },
   pricingActions: { flexDirection: "row", flexWrap: "wrap", gap: 7, justifyContent: "flex-end" },
   dialogueList: { gap: 7 },
   dialogueCard: { padding: 9 },
   dialogueRow: { flexDirection: "row", alignItems: "stretch", gap: 9 },
   dialogueIndex: { width: 30, height: 30, borderRadius: 10, borderWidth: 1, borderColor: STUDIO.border, backgroundColor: STUDIO.surfaceSoft, alignItems: "center", justifyContent: "center" },
-  dialogueIndexText: { color: STUDIO.accentText, fontSize: 10, fontWeight: "900" },
+  dialogueIndexText: { color: STUDIO.accentText, fontSize: 11, lineHeight: 15, fontWeight: "900" },
   dialogueBody: { flex: 1, minWidth: 0, gap: 4 },
   dialogueHead: { flexDirection: "row", alignItems: "center", gap: 7 },
-  dialogueSpeaker: { flex: 1, color: STUDIO.text, fontSize: 10, fontWeight: "900" },
-  dialogueText: { color: "rgba(255,255,255,0.84)", fontSize: 10, lineHeight: 15, fontWeight: "600" },
-  dialoguePrice: { color: STUDIO.accentText, fontSize: 8, fontWeight: "800" },
+  dialogueSpeaker: { flex: 1, color: STUDIO.text, fontSize: 12, lineHeight: 16, fontWeight: "900" },
+  dialogueText: { color: "rgba(255,255,255,0.84)", fontSize: 12, lineHeight: 17, fontWeight: "700" },
+  dialoguePrice: { color: STUDIO.accentText, fontSize: 10, lineHeight: 14, fontWeight: "800" },
   dialogueActions: { flexShrink: 0, justifyContent: "center", gap: 5 },
-  lineError: { color: "#FFC0C6", fontSize: 8, lineHeight: 11, fontWeight: "700" },
+  lineError: { color: "#FFC0C6", fontSize: 10, lineHeight: 14, fontWeight: "700" },
   footerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, paddingHorizontal: 2 },
   footerTitle: { color: STUDIO.text, fontSize: 11, fontWeight: "900" },
   footerMeta: { color: STUDIO.muted, fontSize: 10, fontWeight: "800" },
@@ -984,8 +984,8 @@ const styles = StyleSheet.create({
   choiceList: { gap: 6, paddingBottom: 8 },
   choiceRow: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 11, borderWidth: 1, borderColor: STUDIO.border, backgroundColor: STUDIO.surface, paddingHorizontal: 10, paddingVertical: 8 },
   choiceSelected: { borderColor: STUDIO.accentBorder, backgroundColor: STUDIO.accentFill },
-  choiceLabel: { color: STUDIO.text, fontSize: 10, lineHeight: 14, fontWeight: "900" },
-  choiceSubtitle: { color: STUDIO.muted, fontSize: 8, lineHeight: 11, fontWeight: "600", marginTop: 1 },
+  choiceLabel: { color: STUDIO.text, fontSize: 12, lineHeight: 16, fontWeight: "900" },
+  choiceSubtitle: { color: STUDIO.muted, fontSize: 10, lineHeight: 14, fontWeight: "700", marginTop: 1 },
   check: { color: STUDIO.accent, fontSize: 13, fontWeight: "900" },
   empty: { color: STUDIO.muted, fontSize: 10, lineHeight: 15, textAlign: "center", padding: 28 },
   pressed: { opacity: 0.76 },

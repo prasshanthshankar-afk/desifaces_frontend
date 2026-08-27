@@ -89,16 +89,16 @@ function finalMediaId(
 function stageLabel(value: unknown) {
   const state = clean(value).toLowerCase();
 
-  if (state === "awaiting_review") return "READY TO REVIEW";
-  if (state === "generating") return "ASSEMBLING";
-  if (state === "approved") return "APPROVED";
-  if (state === "failed") return "NEEDS RETRY";
-  if (state === "rejected") return "NEEDS ATTENTION";
-  if (state === "ready" || state === "pending") return "READY";
+  if (state === "awaiting_review") return "Ready to review";
+  if (state === "generating") return "Assembling";
+  if (state === "approved") return "Approved";
+  if (state === "failed") return "Needs retry";
+  if (state === "rejected") return "Needs attention";
+  if (state === "ready" || state === "pending") return "Ready";
 
   return state
-    ? state.replace(/_/g, " ").toUpperCase()
-    : "WAITING";
+    ? state.replace(/_/g, " ").replace(/\b\w/g, (match) => match.toUpperCase())
+    : "Waiting";
 }
 
 export default function MultiPersonStoryFinalScreen({
@@ -227,7 +227,7 @@ export default function MultiPersonStoryFinalScreen({
   const stageState = clean(finalStage?.state).toLowerCase();
 
   const allScenesApproved =
-    sceneTotal > 1 && approvedScenes === sceneTotal;
+    sceneTotal > 0 && approvedScenes === sceneTotal;
 
   const canAssemble =
     Boolean(finalStage) &&
@@ -410,7 +410,7 @@ export default function MultiPersonStoryFinalScreen({
     return (
       <View style={styles.safe}>
         <DFHeader
-          subtitle="Story Final"
+          subtitle="Fusion Studio"
           onMenuPress={openMenu}
           onPressMeta={openPlan}
         />
@@ -430,7 +430,7 @@ export default function MultiPersonStoryFinalScreen({
   return (
     <View style={styles.safe}>
       <DFHeader
-        subtitle="Story Final"
+        subtitle="Fusion Studio"
         onMenuPress={openMenu}
         onPressMeta={openPlan}
       />
@@ -456,7 +456,7 @@ export default function MultiPersonStoryFinalScreen({
         }
       >
         <StudioHero
-          eyebrow="STORY FINAL"
+          eyebrow="STORY • FINAL"
           title={
             workspace?.title ||
             "Your final Story"
@@ -508,7 +508,7 @@ export default function MultiPersonStoryFinalScreen({
             <StatusPill
               value={
                 complete
-                  ? "COMPLETE"
+                  ? "Complete"
                   : stageLabel(
                       finalStage?.state
                     )
@@ -553,6 +553,21 @@ export default function MultiPersonStoryFinalScreen({
             </Text>
 
             <FinalStoryPlayer uri={videoUrl} />
+
+            <CompactButton
+              label="Open in Viewer"
+              onPress={() => router.push({
+                pathname: "/(tabs)/media/viewer" as any,
+                params: {
+                  type: "video",
+                  stage: "video_done",
+                  video_url: videoUrl,
+                  title: workspace?.title || "Story Video",
+                  subtitle: "Final Story",
+                },
+              } as any)}
+              fill
+            />
 
             <Text style={styles.videoMeta}>
               {complete
@@ -676,7 +691,8 @@ const styles = StyleSheet.create({
   },
   helper: {
     color: STUDIO.muted,
-    fontSize: 10,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: "700",
   },
   messageBox: {
@@ -684,8 +700,8 @@ const styles = StyleSheet.create({
   },
   messageText: {
     color: STUDIO.text,
-    fontSize: 10,
-    lineHeight: 15,
+    fontSize: 11,
+    lineHeight: 16,
     fontWeight: "700",
   },
   summaryCard: {
@@ -709,9 +725,9 @@ const styles = StyleSheet.create({
   },
   summaryMeta: {
     color: STUDIO.muted,
-    fontSize: 9,
-    lineHeight: 14,
-    fontWeight: "600",
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: "700",
     marginTop: 3,
   },
   sceneSummary: {
@@ -729,16 +745,15 @@ const styles = StyleSheet.create({
   },
   sceneSummaryLabel: {
     color: STUDIO.muted,
-    fontSize: 8,
+    fontSize: 11,
+    lineHeight: 15,
     fontWeight: "800",
     marginTop: 2,
-    textTransform: "uppercase",
-    letterSpacing: 0.45,
   },
   warning: {
     color: "#FFB4BD",
-    fontSize: 9,
-    lineHeight: 14,
+    fontSize: 11,
+    lineHeight: 16,
     fontWeight: "700",
   },
   videoCard: {
@@ -758,8 +773,8 @@ const styles = StyleSheet.create({
   },
   videoMeta: {
     color: STUDIO.muted,
-    fontSize: 9,
-    lineHeight: 14,
+    fontSize: 11,
+    lineHeight: 16,
     fontWeight: "600",
   },
   actionCard: {
@@ -773,8 +788,8 @@ const styles = StyleSheet.create({
   },
   auditNote: {
     color: STUDIO.faint,
-    fontSize: 8,
-    lineHeight: 13,
+    fontSize: 10,
+    lineHeight: 15,
     fontWeight: "600",
   },
   footerRow: {
@@ -786,12 +801,14 @@ const styles = StyleSheet.create({
   },
   footerTitle: {
     color: STUDIO.text,
-    fontSize: 11,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: "900",
   },
   footerMeta: {
     color: STUDIO.muted,
-    fontSize: 9,
+    fontSize: 11,
+    lineHeight: 15,
     fontWeight: "800",
   },
 });

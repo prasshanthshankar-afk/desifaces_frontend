@@ -385,7 +385,7 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
   if (loading && !workflow) {
     return (
       <View style={styles.safe}>
-        <DFHeader subtitle="Story Fusion Studio" onMenuPress={openMenu} onPressMeta={openPlan} />
+        <DFHeader subtitle="Fusion Studio" onMenuPress={openMenu} onPressMeta={openPlan} />
         <View style={styles.center}><ActivityIndicator size="large" color={STUDIO.accent} /><Text style={styles.helper}>Preparing your scene…</Text></View>
       </View>
     );
@@ -401,13 +401,13 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
 
   return (
     <View style={styles.safe}>
-      <DFHeader subtitle="Story Fusion Studio" onMenuPress={openMenu} onPressMeta={openPlan} />
+      <DFHeader subtitle="Fusion Studio" onMenuPress={openMenu} onPressMeta={openPlan} />
       <ScrollView
         contentContainerStyle={[styles.content, { maxWidth: viewport.contentMaxWidth, paddingHorizontal: viewport.horizontalPadding }]}
         refreshControl={<RefreshControl refreshing={refreshing} tintColor={STUDIO.accent} onRefresh={() => { setRefreshing(true); void load(true); }} />}
       >
         <StudioHero
-          eyebrow="STORY FUSION STUDIO"
+          eyebrow="STORY • FUSION"
           title={workspace?.title || "Create your scene"}
           subtitle="Bring the approved cast, voices and dialogue together into the final talking-video scene. Independent clips are created in parallel, then assembled in story order."
           right={<ProgressLine current={approvedScenes} total={stages.length} label="Scenes" />}
@@ -556,6 +556,19 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
                 <View style={styles.finalMedia}>
                   <Text style={styles.finalMediaTitle}>Your scene is ready</Text>
                   <FinalVideoPlayer uri={videoUrl} />
+                  <CompactButton
+                    label="Open in Viewer"
+                    onPress={() => router.push({
+                      pathname: "/(tabs)/media/viewer" as any,
+                      params: {
+                        type: "video",
+                        stage: "video_done",
+                        video_url: videoUrl,
+                        title: "Fusion Video",
+                        subtitle: workspace?.title || "Story scene",
+                      },
+                    } as any)}
+                  />
                   <Text style={styles.finalMediaMeta}>Review the complete scene before approval. Your Face and Audio remain locked if you choose Revise Scene.</Text>
                 </View>
               ) : null}
@@ -651,62 +664,62 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
   helper: { color: STUDIO.muted, fontSize: 11, fontWeight: "700" },
   messageBox: { padding: 10 },
-  messageText: { color: STUDIO.text, fontSize: 10, lineHeight: 14, fontWeight: "700" },
+  messageText: { color: STUDIO.text, fontSize: 11, lineHeight: 16, fontWeight: "700" },
   readinessCard: { padding: 11, gap: 10 },
   readinessHeader: { flexDirection: "row", alignItems: "flex-start", gap: 9 },
   readinessTitle: { color: STUDIO.text, fontSize: 13, fontWeight: "900" },
-  readinessMeta: { color: STUDIO.muted, fontSize: 9, lineHeight: 13, fontWeight: "600", marginTop: 2 },
+  readinessMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700", marginTop: 2 },
   readinessGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   readinessItem: { minWidth: "46%", flexGrow: 1, flexBasis: 150, flexDirection: "row", alignItems: "center", gap: 8, padding: 8, borderRadius: 10, borderWidth: 1, borderColor: STUDIO.border, backgroundColor: STUDIO.surfaceSoft },
   readinessDot: { width: 20, height: 20, borderRadius: 10, borderWidth: 1, borderColor: STUDIO.border, alignItems: "center", justifyContent: "center" },
   readinessDotReady: { borderColor: "#3B9B68", backgroundColor: "rgba(59,155,104,0.16)" },
   readinessCheck: { color: "#8CE0AE", fontSize: 10, fontWeight: "900" },
-  readinessLabel: { color: STUDIO.faint, fontSize: 7, fontWeight: "900", letterSpacing: 0.45, textTransform: "uppercase" },
-  readinessValue: { color: STUDIO.text, fontSize: 9, lineHeight: 12, fontWeight: "800", marginTop: 1 },
+  readinessLabel: { color: STUDIO.faint, fontSize: 10, lineHeight: 14, fontWeight: "900", letterSpacing: 0.2 },
+  readinessValue: { color: STUDIO.text, fontSize: 11, lineHeight: 15, fontWeight: "800", marginTop: 1 },
   consentCard: { padding: 10 },
   consent: { flexDirection: "row", alignItems: "flex-start", gap: 9 },
   checkbox: { width: 23, height: 23, borderRadius: 7, borderWidth: 1, borderColor: STUDIO.border, alignItems: "center", justifyContent: "center", marginTop: 1 },
   checkboxActive: { backgroundColor: STUDIO.accentFill, borderColor: STUDIO.accentBorder },
   checkmark: { color: STUDIO.accent, fontSize: 12, fontWeight: "900" },
-  consentTitle: { color: STUDIO.text, fontSize: 11, fontWeight: "900" },
-  consentMeta: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "600", marginTop: 2 },
+  consentTitle: { color: STUDIO.text, fontSize: 13, lineHeight: 18, fontWeight: "900" },
+  consentMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700", marginTop: 2 },
   sceneCard: { padding: 11, gap: 10 },
   sceneHeader: { flexDirection: "row", alignItems: "flex-start", gap: 9 },
   sceneNumber: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, borderColor: STUDIO.border, backgroundColor: STUDIO.surfaceSoft, alignItems: "center", justifyContent: "center" },
   sceneNumberText: { color: STUDIO.accentText, fontSize: 13, fontWeight: "900" },
   sceneTitle: { color: STUDIO.text, fontSize: 15, lineHeight: 18, fontWeight: "900", letterSpacing: -0.15 },
-  sceneMeta: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "600", marginTop: 2 },
+  sceneMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700", marginTop: 2 },
   productionProgress: { flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: 12, backgroundColor: STUDIO.surfaceSoft, borderWidth: 1, borderColor: STUDIO.accentBorder },
-  progressTitle: { color: STUDIO.text, fontSize: 11, fontWeight: "900" },
-  progressMeta: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "700", marginTop: 3 },
-  progressEta: { color: STUDIO.accentText, fontSize: 8, lineHeight: 12, fontWeight: "900", marginTop: 3 },
-  progressReassurance: { color: STUDIO.faint, fontSize: 7, lineHeight: 11, fontWeight: "600", marginTop: 3 },
+  progressTitle: { color: STUDIO.text, fontSize: 13, lineHeight: 18, fontWeight: "900" },
+  progressMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700", marginTop: 3 },
+  progressEta: { color: STUDIO.accentText, fontSize: 11, lineHeight: 16, fontWeight: "900", marginTop: 3 },
+  progressReassurance: { color: STUDIO.faint, fontSize: 10, lineHeight: 14, fontWeight: "700", marginTop: 3 },
   priceCard: { borderRadius: 11, borderWidth: 1, borderColor: STUDIO.accentBorder, backgroundColor: STUDIO.accentFill, padding: 10, gap: 8 },
   priceHeader: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
-  priceKicker: { color: STUDIO.accentText, fontSize: 7, fontWeight: "900", letterSpacing: 0.55 },
+  priceKicker: { color: STUDIO.accentText, fontSize: 10, lineHeight: 14, fontWeight: "900", letterSpacing: 0.2 },
   priceTotal: { color: STUDIO.text, fontSize: 17, lineHeight: 21, fontWeight: "900", marginTop: 2 },
-  priceExplain: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "600", marginTop: 2 },
-  priceBillingBasis: { color: STUDIO.accentText, fontSize: 7, lineHeight: 11, fontWeight: "800", marginTop: 4 },
-  detailsToggle: { color: STUDIO.accentText, fontSize: 8, fontWeight: "900", paddingVertical: 3 },
+  priceExplain: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700", marginTop: 2 },
+  priceBillingBasis: { color: STUDIO.accentText, fontSize: 10, lineHeight: 14, fontWeight: "800", marginTop: 4 },
+  detailsToggle: { color: STUDIO.accentText, fontSize: 11, lineHeight: 15, fontWeight: "900", paddingVertical: 4 },
   priceDetails: { gap: 5, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: STUDIO.border, paddingTop: 7 },
   priceDetailRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  priceDetailName: { flex: 1, color: STUDIO.text, fontSize: 8, fontWeight: "700" },
-  priceDetailValue: { color: STUDIO.accentText, fontSize: 8, fontWeight: "900" },
+  priceDetailName: { flex: 1, color: STUDIO.text, fontSize: 11, lineHeight: 15, fontWeight: "700" },
+  priceDetailValue: { color: STUDIO.accentText, fontSize: 11, lineHeight: 15, fontWeight: "900" },
   finalMedia: { gap: 7 },
   finalMediaTitle: { color: STUDIO.text, fontSize: 12, fontWeight: "900" },
   video: { width: "100%", aspectRatio: 16 / 9, borderRadius: 12, backgroundColor: "#000" },
-  finalMediaMeta: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "600" },
+  finalMediaMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700" },
   actions: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 7 },
   footerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, paddingHorizontal: 2 },
   footerTitle: { color: STUDIO.text, fontSize: 11, fontWeight: "900" },
   footerMeta: { color: STUDIO.muted, fontSize: 10, fontWeight: "800" },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.78)", justifyContent: "center", padding: 18 },
   confirmationCard: { width: "100%", maxWidth: 520, alignSelf: "center", borderRadius: 18, borderWidth: 1, borderColor: STUDIO.accentBorder, backgroundColor: STUDIO.raised, padding: 16, gap: 9 },
-  confirmationEyebrow: { color: STUDIO.accentText, fontSize: 8, fontWeight: "900", letterSpacing: 0.7 },
-  confirmationTitle: { color: STUDIO.text, fontSize: 18, lineHeight: 22, fontWeight: "900" },
-  confirmationPrice: { color: STUDIO.accentText, fontSize: 23, lineHeight: 27, fontWeight: "900" },
-  confirmationMeta: { color: STUDIO.muted, fontSize: 10, lineHeight: 15, fontWeight: "600" },
-  confirmationGuarantee: { color: STUDIO.text, fontSize: 9, lineHeight: 13, fontWeight: "800" },
+  confirmationEyebrow: { color: STUDIO.accentText, fontSize: 10, lineHeight: 14, fontWeight: "900", letterSpacing: 0.2 },
+  confirmationTitle: { color: STUDIO.text, fontSize: 15, lineHeight: 20, fontWeight: "900" },
+  confirmationPrice: { color: STUDIO.accentText, fontSize: 20, lineHeight: 25, fontWeight: "900" },
+  confirmationMeta: { color: STUDIO.muted, fontSize: 12, lineHeight: 17, fontWeight: "700" },
+  confirmationGuarantee: { color: STUDIO.text, fontSize: 11, lineHeight: 16, fontWeight: "800" },
   confirmationActions: { flexDirection: "row", gap: 8, marginTop: 4 },
   pressed: { opacity: 0.76 },
 });

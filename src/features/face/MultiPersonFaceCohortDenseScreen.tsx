@@ -456,7 +456,7 @@ export default function MultiPersonFaceCohortDenseScreen({
         }
       >
         <StudioHero
-          eyebrow="STORY FACE STUDIO"
+          eyebrow="STORY • FACE"
           title={workspace?.title || "Character cast"}
           subtitle="Reuse identities you own or create the remaining cast together. New Face jobs are submitted in parallel so one slow character does not block the rest."
           right={<ProgressLine current={approved} total={required} label="Cast" />}
@@ -628,7 +628,7 @@ export default function MultiPersonFaceCohortDenseScreen({
                   ) : null}
 
                   {stage.state === "generating" ? <CompactButton label="Refresh" onPress={() => void syncStage(stage)} disabled={isBusy} fill /> : null}
-                  {stage.state === "approved" ? <StatusPill value="LOCKED" tone="success" /> : null}
+                  {stage.state === "approved" ? <StatusPill value="Locked" tone="success" /> : null}
                 </View>
               </View>
             </Surface>
@@ -651,11 +651,11 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
   loading: { color: STUDIO.muted, fontSize: 11, fontWeight: "700" },
   messageBox: { padding: 10 },
-  messageText: { color: STUDIO.text, fontSize: 10, lineHeight: 14, fontWeight: "700" },
+  messageText: { color: STUDIO.text, fontSize: 11, lineHeight: 16, fontWeight: "700" },
   batchCard: { padding: 11, gap: 9 },
   batchHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   batchTitle: { color: STUDIO.text, fontSize: 12, fontWeight: "900" },
-  batchMeta: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "600", marginTop: 3 },
+  batchMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700", marginTop: 3 },
   batchActions: { flexDirection: "row", flexWrap: "wrap", gap: 7, alignItems: "center" },
   characterCard: { padding: 10 },
   characterRow: { flexDirection: "row", alignItems: "stretch", gap: 10 },
@@ -666,24 +666,24 @@ const styles = StyleSheet.create({
   details: { flex: 1, minWidth: 0, justifyContent: "center", gap: 5 },
   nameRow: { flexDirection: "row", alignItems: "flex-start", gap: 7 },
   name: { color: STUDIO.text, fontSize: 15, lineHeight: 18, fontWeight: "900", letterSpacing: -0.15 },
-  meta: { color: STUDIO.accentText, fontSize: 9, lineHeight: 12, fontWeight: "800", marginTop: 1 },
-  status: { color: STUDIO.muted, fontSize: 9, lineHeight: 13, fontWeight: "700" },
+  meta: { color: STUDIO.accentText, fontSize: 11, lineHeight: 15, fontWeight: "800", marginTop: 1 },
+  status: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700" },
   choiceBox: { borderWidth: 1, borderColor: STUDIO.accentBorder, backgroundColor: STUDIO.accentFill, borderRadius: 10, padding: 8, gap: 5 },
-  choiceTitle: { color: STUDIO.text, fontSize: 9, fontWeight: "900" },
-  choiceMeta: { color: STUDIO.muted, fontSize: 8, lineHeight: 11, fontWeight: "600" },
+  choiceTitle: { color: STUDIO.text, fontSize: 12, lineHeight: 16, fontWeight: "900" },
+  choiceMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 15, fontWeight: "700" },
   choiceRow: { flexDirection: "row", gap: 6 },
-  choiceButton: { flex: 1, minHeight: 30, borderWidth: 1, borderColor: STUDIO.border, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: STUDIO.surface },
-  choiceButtonText: { color: STUDIO.text, fontSize: 9, fontWeight: "900" },
+  choiceButton: { flex: 1, minHeight: 38, borderWidth: 1, borderColor: STUDIO.border, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: STUDIO.surface },
+  choiceButtonText: { color: STUDIO.text, fontSize: 12, lineHeight: 16, fontWeight: "900" },
   priceLine: { flexDirection: "row", alignItems: "center", gap: 6 },
-  priceLabel: { color: STUDIO.faint, fontSize: 8, fontWeight: "900", textTransform: "uppercase" },
-  priceValue: { color: STUDIO.accentText, fontSize: 10, fontWeight: "900" },
+  priceLabel: { color: STUDIO.faint, fontSize: 10, lineHeight: 14, fontWeight: "900" },
+  priceValue: { color: STUDIO.accentText, fontSize: 12, lineHeight: 16, fontWeight: "900" },
   promptLine: { gap: 1 },
-  promptLabel: { color: STUDIO.faint, fontSize: 7, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.4 },
-  promptText: { color: STUDIO.muted, fontSize: 8, lineHeight: 12, fontWeight: "600" },
-  attempt: { color: STUDIO.faint, fontSize: 8, fontWeight: "700" },
+  promptLabel: { color: STUDIO.faint, fontSize: 10, lineHeight: 14, fontWeight: "900", letterSpacing: 0.2 },
+  promptText: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700" },
+  attempt: { color: STUDIO.faint, fontSize: 10, lineHeight: 14, fontWeight: "700" },
   actionRail: { flexShrink: 0, justifyContent: "center", gap: 6 },
   footerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, paddingHorizontal: 2 },
-  footerTitle: { color: STUDIO.text, fontSize: 11, fontWeight: "900" },
-  footerMeta: { color: STUDIO.muted, fontSize: 10, fontWeight: "800" },
+  footerTitle: { color: STUDIO.text, fontSize: 12, lineHeight: 16, fontWeight: "900" },
+  footerMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 15, fontWeight: "800" },
   pressed: { opacity: 0.75 },
 });
