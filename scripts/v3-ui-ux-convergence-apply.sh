@@ -17,8 +17,8 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-python3 -m py_compile scripts/v3-ui-ux-convergence.py
-python3 scripts/v3-ui-ux-convergence.py --typecheck
+python3 -m py_compile scripts/v3-ui-ux-convergence-atomic.py
+python3 scripts/v3-ui-ux-convergence-atomic.py --typecheck
 
 git diff --check
 
