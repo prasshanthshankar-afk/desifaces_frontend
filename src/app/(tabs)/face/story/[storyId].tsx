@@ -119,7 +119,7 @@ export default function StoryStudioRoute() {
         ) : (
           <>
             <ActivityIndicator size="large" color="#F8B848" />
-            <Text style={styles.loading}>Opening Story Studio…</Text>
+            <Text style={styles.loading}>Opening Story…</Text>
           </>
         )}
       </View>
@@ -139,7 +139,7 @@ export default function StoryStudioRoute() {
 
   return (
     <View style={styles.safe}>
-      <DFHeader subtitle="Story Face Studio" onMenuPress={openHamburgerMenu} onPressMeta={openPlanScreen} />
+      <DFHeader subtitle="Face Studio" onMenuPress={openHamburgerMenu} onPressMeta={openPlanScreen} />
       <View style={styles.body}>
         <MultiPersonFaceSavedWorkScreen storyId={storyId} />
       </View>
