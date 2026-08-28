@@ -19,6 +19,13 @@ type Extra = {
   VIDEO_ANDROID?: string;
   VIDEO?: string;
 
+  // Fusion can be routed independently from any legacy VIDEO base. V3 dev
+  // publishes this through EXPO_PUBLIC_FUSION_BASE_URL in app.config.ts.
+  // Keep VIDEO as a compatibility fallback for existing production builds.
+  FUSION_IOS?: string;
+  FUSION_ANDROID?: string;
+  FUSION?: string;
+
   DASH_IOS?: string;
   DASH_ANDROID?: string;
   DASH?: string;
@@ -113,10 +120,23 @@ export const AUDIO_BASE = pick(
 );
 
 export const VIDEO_BASE = pick(
-  "VIDEO/FUSION",
+  "VIDEO",
   extra.VIDEO_IOS,
   extra.VIDEO_ANDROID,
   extra.VIDEO,
+  PRODUCTION_DEFAULTS.VIDEO
+);
+
+// IMPORTANT: direct/single-face Fusion must honor the dedicated Fusion base
+// supplied by app.config.ts. Prior code aliased FUSION_BASE = VIDEO_BASE and
+// therefore silently ignored EXPO_PUBLIC_FUSION_BASE_URL. Prefer FUSION when
+// present, then fall back to VIDEO for existing deployments that intentionally
+// share the same gateway route.
+export const FUSION_BASE = pick(
+  "FUSION",
+  extra.FUSION_IOS || extra.VIDEO_IOS,
+  extra.FUSION_ANDROID || extra.VIDEO_ANDROID,
+  extra.FUSION || extra.VIDEO,
   PRODUCTION_DEFAULTS.VIDEO
 );
 
@@ -157,7 +177,6 @@ export const LONGFORM_BASE = FUSION_EXTENSION_BASE;
 export const FUSION_LONGFORM_BASE = FUSION_EXTENSION_BASE;
 export const SVC_FUSION_EXTENSION_BASE = FUSION_EXTENSION_BASE;
 export const DASHBOARD_BASE = DASH_BASE;
-export const FUSION_BASE = VIDEO_BASE;
 
 console.log("DF BASES", {
   CORE_BASE,
