@@ -12,6 +12,7 @@ on:
       - 'src/features/audio/**'
       - 'src/features/fusion/**'
       - 'src/features/story/**'
+      - 'scripts/v3-single-face-fusion-route-certify.py'
       - 'package.json'
       - 'tsconfig.json'
       - '.github/workflows/v3-story-static.yml'
@@ -25,6 +26,7 @@ on:
       - 'src/features/audio/**'
       - 'src/features/fusion/**'
       - 'src/features/story/**'
+      - 'scripts/v3-single-face-fusion-route-certify.py'
       - 'package.json'
       - 'tsconfig.json'
       - '.github/workflows/v3-story-static.yml'
@@ -48,6 +50,9 @@ jobs:
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Enforce single-face Fusion routing boundary
+        run: python3 scripts/v3-single-face-fusion-route-certify.py
 
       - name: Lint V3 Story surfaces
         run: >-
