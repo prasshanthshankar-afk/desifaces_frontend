@@ -17,7 +17,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "../../core/auth/AuthContext";
-import { ASSISTANT_BASE } from "../../core/config/env";
 import { useAssistantContext } from "./AssistantContext";
 import {
   type AssistantAction,
@@ -149,7 +148,9 @@ export default function AssistantOverlay() {
       setError(
         code === "AUTH_REQUIRED"
           ? "Your session needs to be refreshed. Please sign in again."
-          : "Assistant is temporarily unavailable. Your current Studio work is unaffected."
+          : code === "ASSISTANT_BASE_NOT_SET"
+            ? "Assistant service is not connected to this development build yet."
+            : "Assistant is temporarily unavailable. Your current Studio work is unaffected."
       );
     } finally {
       setSending(false);
@@ -160,10 +161,9 @@ export default function AssistantOverlay() {
     void Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=desifaces%20support`);
   }, []);
 
-  const available = Boolean(ASSISTANT_BASE);
   const hideForRoute =
     pathname.startsWith("/(auth)") || pathname.includes("/login") || pathname === "/";
-  if (!isReady || !isAuthed || hideForRoute || !available) return null;
+  if (!isReady || !isAuthed || hideForRoute) return null;
 
   return (
     <>
