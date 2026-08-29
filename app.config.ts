@@ -1,4 +1,3 @@
-
 import type { ExpoConfig } from "expo/config";
 
 /**
@@ -128,6 +127,10 @@ const config: ExpoConfig = {
     DIRECTOR:
       process.env.EXPO_PUBLIC_DIRECTOR_BASE_URL ??
       process.env.EXPO_PUBLIC_DIRECTOR_URL,
+
+    ASSISTANT:
+      process.env.EXPO_PUBLIC_ASSISTANT_BASE_URL ??
+      process.env.EXPO_PUBLIC_ASSISTANT_URL,
 
     FUSION:
       process.env.EXPO_PUBLIC_FUSION_BASE_URL ??

@@ -6,6 +6,7 @@ import { ensureStoryStudioWorkflow } from "../../../../core/studio/multiPersonWo
 import { DF } from "../../../../core/theme/colors";
 import DFHeader from "../../../../core/ui/DFHeader";
 import MultiPersonAudioWorkspaceScreen from "../../../../features/audio/MultiPersonAudioWorkspaceScreen";
+import { useAssistantContextOverride } from "../../../../features/assistant/AssistantContext";
 import MultiPersonFaceSavedWorkScreen from "../../../../features/face/MultiPersonFaceSavedWorkScreen";
 import MultiPersonFusionDenseScreen from "../../../../features/fusion/MultiPersonFusionDenseScreen";
 
@@ -38,6 +39,15 @@ export default function StoryStudioRoute() {
   const [error, setError] = useState("");
   const activeRef = useRef(true);
 
+  useAssistantContextOverride(
+    storyId
+      ? {
+          screen: resolvedStage ? `story_${resolvedStage}` : "story",
+          storyId,
+        }
+      : null
+  );
+
   const refreshCanonicalStage = useCallback(async () => {
     if (!storyId) return;
     const workflow = await ensureStoryStudioWorkflow(storyId);
@@ -61,8 +71,6 @@ export default function StoryStudioRoute() {
     void refreshCanonicalStage().catch((reason) => {
       if (activeRef.current) setError(String(reason?.message || "Unable to load Story Studio."));
     });
-    // Child Studio screens already poll their active generation work. This route
-    // only needs to discover canonical stage transitions, so keep the cadence light.
     const timer = setInterval(() => {
       void refreshCanonicalStage().catch(() => {});
     }, 4000);
