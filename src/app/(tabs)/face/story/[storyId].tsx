@@ -6,6 +6,7 @@ import { ensureStoryStudioWorkflow } from "../../../../core/studio/multiPersonWo
 import { DF } from "../../../../core/theme/colors";
 import DFHeader from "../../../../core/ui/DFHeader";
 import MultiPersonAudioWorkspaceScreen from "../../../../features/audio/MultiPersonAudioWorkspaceScreen";
+import { useAssistantContextOverride } from "../../../../features/assistant/AssistantContext";
 import MultiPersonFaceSavedWorkScreen from "../../../../features/face/MultiPersonFaceSavedWorkScreen";
 import MultiPersonFusionDenseScreen from "../../../../features/fusion/MultiPersonFusionDenseScreen";
 import MultiPersonStoryFinalScreen from "../../../../features/story/MultiPersonStoryFinalScreen";
@@ -44,6 +45,15 @@ export default function StoryStudioRoute() {
   const [resolvedStage, setResolvedStage] = useState<StoryStage | null>(explicitStage);
   const [error, setError] = useState("");
   const activeRef = useRef(true);
+
+  useAssistantContextOverride(
+    storyId
+      ? {
+          screen: resolvedStage ? `story_${resolvedStage}` : "story",
+          storyId,
+        }
+      : null
+  );
 
   const refreshCanonicalStage = useCallback(async () => {
     if (!storyId) return;

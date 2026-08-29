@@ -38,6 +38,10 @@ type Extra = {
   DIRECTOR_ANDROID?: string;
   DIRECTOR?: string;
 
+  ASSISTANT_IOS?: string;
+  ASSISTANT_ANDROID?: string;
+  ASSISTANT?: string;
+
   FUSION_EXTENSION_IOS?: string;
   FUSION_EXTENSION_ANDROID?: string;
   FUSION_EXTENSION?: string;
@@ -57,6 +61,7 @@ const PRODUCTION_DEFAULTS = {
   DASH: "https://api.desifaces.ai/dashboard",
   PRICING: "https://api.desifaces.ai/pricing",
   DIRECTOR: "https://api.desifaces.ai/director",
+  ASSISTANT: "https://api.desifaces.ai/assistant",
   FUSION_EXTENSION: "https://api.desifaces.ai/fusion-extension",
 } as const;
 
@@ -93,6 +98,17 @@ function pick(
   }
 
   return normalizeBase(productionDefault || PRODUCTION_DEFAULTS.CORE);
+}
+
+function pickOptional(
+  ios?: string,
+  android?: string,
+  fallback?: string,
+  productionDefault?: string
+) {
+  const configured = (Platform.OS === "ios" ? ios : android) || fallback;
+  if (configured) return normalizeBase(configured);
+  return DEV_APP ? "" : normalizeBase(productionDefault || "");
 }
 
 export const CORE_BASE = pick(
@@ -164,6 +180,13 @@ export const DIRECTOR_BASE = pick(
   PRODUCTION_DEFAULTS.DIRECTOR
 );
 
+export const ASSISTANT_BASE = pickOptional(
+  extra.ASSISTANT_IOS,
+  extra.ASSISTANT_ANDROID,
+  extra.ASSISTANT,
+  PRODUCTION_DEFAULTS.ASSISTANT
+);
+
 export const FUSION_EXTENSION_BASE = pick(
   "FUSION_EXTENSION",
   extra.FUSION_EXTENSION_IOS || extra.LONGFORM_IOS,
@@ -188,4 +211,5 @@ console.log("DF BASES", {
   DASH_BASE,
   PRICING_BASE,
   DIRECTOR_BASE,
+  ASSISTANT_BASE,
 });
