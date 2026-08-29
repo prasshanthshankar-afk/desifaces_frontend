@@ -1,0 +1,37 @@
+name: V3 Mobile Piku Static Certification
+
+on:
+  pull_request:
+    branches:
+      - feature/v3-assistant-integrated-multiperson-20260829
+    paths:
+      - 'src/features/assistant/**'
+      - '.github/workflows/mobile-assistant-static.yml'
+      - 'package.json'
+      - 'tsconfig.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-certification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout frontend
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Lint Piku Assistant
+        run: npx eslint src/features/assistant/AssistantOverlay.tsx src/features/assistant/pikuAvatar.ts --max-warnings=5
+
+      - name: TypeScript compile gate
+        run: npx tsc --noEmit --pretty false

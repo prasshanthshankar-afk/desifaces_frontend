@@ -24,6 +24,7 @@ import {
   type AssistantContextLocator,
   sendAssistantMessage,
 } from "./api/assistant";
+import { PIKU_AVATAR_DATA_URI } from "./pikuAvatar";
 
 type ChatMessage = {
   id: string;
@@ -34,7 +35,7 @@ type ChatMessage = {
 };
 
 const SUPPORT_EMAIL = "support@desifaces.ai";
-const PIKU_AVATAR = require("../../../assets/piku-avatar.jpg");
+const PIKU_AVATAR = { uri: PIKU_AVATAR_DATA_URI };
 const C = {
   bg: "#090A0D",
   surface: "#17181D",
@@ -225,7 +226,7 @@ export default function AssistantOverlay() {
                 <View style={styles.emptyCard}>
                   <Text style={styles.emptyTitle}>Hi, I’m Piku. What can I help with?</Text>
                   <Text style={styles.emptyText}>
-                    Ask about this screen, your current workflow status, credits, pricing or the safest next step. I use only authorized desifaces context.
+                    Ask across desifaces—not just this screen. I can use your authorized account context for workflows, credits, pricing, recent generations and saved work.
                   </Text>
                 </View>
               ) : null}
@@ -266,7 +267,7 @@ export default function AssistantOverlay() {
                 <View style={styles.thinking}>
                   <ActivityIndicator size="small" color={C.brand} />
                   <Text style={styles.thinkingText}>
-                    Piku is using current {labelForScreen(screen)} context…
+                    Piku is checking your authorized desifaces context…
                   </Text>
                 </View>
               ) : null}
@@ -277,7 +278,7 @@ export default function AssistantOverlay() {
               <TextInput
                 value={draft}
                 onChangeText={setDraft}
-                placeholder="Ask Piku about this screen…"
+                placeholder="Ask Piku about desifaces…"
                 placeholderTextColor={C.muted}
                 multiline
                 maxLength={8000}
