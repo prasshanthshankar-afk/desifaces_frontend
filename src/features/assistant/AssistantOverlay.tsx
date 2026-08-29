@@ -3,6 +3,7 @@ import { useGlobalSearchParams, usePathname } from "expo-router";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -33,6 +34,7 @@ type ChatMessage = {
 };
 
 const SUPPORT_EMAIL = "support@desifaces.ai";
+const PIKU_AVATAR = require("../../../assets/piku-avatar.jpg");
 const C = {
   bg: "#090A0D",
   surface: "#17181D",
@@ -149,8 +151,8 @@ export default function AssistantOverlay() {
         code === "AUTH_REQUIRED"
           ? "Your session needs to be refreshed. Please sign in again."
           : code === "ASSISTANT_BASE_NOT_SET"
-            ? "Assistant service is not connected to this development build yet."
-            : "Assistant is temporarily unavailable. Your current Studio work is unaffected."
+            ? "Piku is not connected to this development build yet."
+            : "Piku is temporarily unavailable. Your current Studio work is unaffected."
       );
     } finally {
       setSending(false);
@@ -169,11 +171,11 @@ export default function AssistantOverlay() {
     <>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Open desifaces Assistant"
+        accessibilityLabel="Open Piku"
         onPress={() => setOpen(true)}
         style={[styles.launcher, { bottom: Math.max(insets.bottom + 76, 92) }]}
       >
-        <Ionicons name="sparkles" size={22} color="#111" />
+        <Image source={PIKU_AVATAR} style={styles.launcherAvatar} resizeMode="cover" />
       </Pressable>
 
       <Modal visible={open} animationType="slide" transparent onRequestClose={() => setOpen(false)}>
@@ -185,14 +187,22 @@ export default function AssistantOverlay() {
           <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 14) }]}>
             <View style={styles.handle} />
             <View style={styles.header}>
-              <View style={{ flex: 1 }}>
-                <View style={styles.titleRow}>
-                  <Ionicons name="sparkles" size={17} color={C.brand} />
-                  <Text style={styles.title}>Assistant</Text>
+              <View style={styles.identityRow}>
+                <Image source={PIKU_AVATAR} style={styles.headerAvatar} resizeMode="cover" />
+                <View style={{ flex: 1 }}>
+                  <View style={styles.titleRow}>
+                    <Text style={styles.title}>Piku</Text>
+                    <Ionicons name="sparkles" size={14} color={C.brand} />
+                  </View>
+                  <Text style={styles.contextLabel}>Context: {labelForScreen(screen)}</Text>
                 </View>
-                <Text style={styles.contextLabel}>Context: {labelForScreen(screen)}</Text>
               </View>
-              <Pressable onPress={() => setOpen(false)} style={styles.close}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close Piku"
+                onPress={() => setOpen(false)}
+                style={styles.close}
+              >
                 <Ionicons name="close" size={22} color={C.text} />
               </Pressable>
             </View>
@@ -213,9 +223,9 @@ export default function AssistantOverlay() {
             >
               {messages.length === 0 ? (
                 <View style={styles.emptyCard}>
-                  <Text style={styles.emptyTitle}>Ask about what you're doing now</Text>
+                  <Text style={styles.emptyTitle}>Hi, I’m Piku. What can I help with?</Text>
                   <Text style={styles.emptyText}>
-                    I can explain this screen, workflow status, pricing guidance and the safest next step using only authorized context.
+                    Ask about this screen, your current workflow status, credits, pricing or the safest next step. I use only authorized desifaces context.
                   </Text>
                 </View>
               ) : null}
@@ -256,7 +266,7 @@ export default function AssistantOverlay() {
                 <View style={styles.thinking}>
                   <ActivityIndicator size="small" color={C.brand} />
                   <Text style={styles.thinkingText}>
-                    Using current {labelForScreen(screen)} context…
+                    Piku is using current {labelForScreen(screen)} context…
                   </Text>
                 </View>
               ) : null}
@@ -267,7 +277,7 @@ export default function AssistantOverlay() {
               <TextInput
                 value={draft}
                 onChangeText={setDraft}
-                placeholder="Ask about this screen…"
+                placeholder="Ask Piku about this screen…"
                 placeholderTextColor={C.muted}
                 multiline
                 maxLength={8000}
@@ -276,7 +286,7 @@ export default function AssistantOverlay() {
               />
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Send message"
+                accessibilityLabel="Send message to Piku"
                 disabled={!draft.trim() || sending}
                 onPress={() => void send()}
                 style={[styles.send, (!draft.trim() || sending) && styles.sendDisabled]}
@@ -296,20 +306,22 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 18,
     zIndex: 100,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: C.brand,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.32)",
+    backgroundColor: "#080808",
+    borderWidth: 2,
+    borderColor: C.brand,
     shadowColor: "#000",
-    shadowOpacity: 0.4,
+    shadowOpacity: 0.42,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 7 },
     elevation: 12,
+    overflow: "hidden",
   },
+  launcherAvatar: { width: 52, height: 52, borderRadius: 26 },
   modalRoot: { flex: 1, justifyContent: "flex-end" },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.65)" },
   sheet: {
@@ -337,8 +349,16 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 8,
   },
+  identityRow: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
+  headerAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1.5,
+    borderColor: C.brand,
+  },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 7 },
-  title: { color: C.text, fontSize: 18, fontWeight: "800" },
+  title: { color: C.text, fontSize: 19, fontWeight: "800" },
   contextLabel: { color: C.muted, fontSize: 12, fontWeight: "700", marginTop: 3 },
   close: {
     width: 38,
@@ -347,6 +367,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: C.surface2,
+    marginLeft: 10,
   },
   privacyNotice: {
     flexDirection: "row",
