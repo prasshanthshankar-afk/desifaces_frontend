@@ -15,9 +15,9 @@ const BRAND_LOGO = "./assets/brand/desifaces-logo-softblend.png";
 const SPLASH_IMAGE = "./assets/brand/desifaces-logo-softblend.png";
 
 const config: ExpoConfig = {
-  name: "desifaces.ai Dev",
+  name: "desifaces.ai",
   slug: "desifaces-mobile",
-  scheme: "desifaces-dev",
+  scheme: "desifaces",
   version: "2.1.0",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
@@ -69,7 +69,7 @@ const config: ExpoConfig = {
   ],
 
   ios: {
-    bundleIdentifier: "ai.desifaces.app.dev",
+    bundleIdentifier: "ai.desifaces.app",
     supportsTablet: false,
     icon: BRAND_LOGO,
     config: {
@@ -81,7 +81,7 @@ const config: ExpoConfig = {
   },
 
   android: {
-    package: "ai.desifaces.app.dev",
+    package: "ai.desifaces.app",
     adaptiveIcon: {
       foregroundImage: BRAND_LOGO,
       backgroundColor: SPLASH_BG,
