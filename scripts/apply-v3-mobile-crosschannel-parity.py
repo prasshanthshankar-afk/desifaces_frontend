@@ -17,10 +17,8 @@ for rel, placement in [
 ]:
     p=Path(rel); s=p.read_text()
     if "SPENDING_SUMMARY_MOBILE_V1" not in s:
-        if rel.endswith("ClassicDashboard.tsx"):
-            import_anchor='import { useResolvedPricingDisplay } from "../../core/pricing/resolvePricingDisplay";\n'
-        else:
-            import_anchor='import { resolvePricingDisplay, useResolvedPricingDisplay } from "../../core/pricing/resolvePricingDisplay";\n'
+        # Both current dashboard skins share the canonical pricing resolver import.
+        import_anchor='import { resolvePricingDisplay, useResolvedPricingDisplay } from "../../core/pricing/resolvePricingDisplay";\n'
         s=once(s,import_anchor,import_anchor+'import SpendingSummaryCard from "../../components/pricing/SpendingSummaryCard"; // SPENDING_SUMMARY_MOBILE_V1\n',f"{rel} spending import")
         s=once(s,placement,'        <SpendingSummaryCard token={token} />\n\n'+placement,f"{rel} spending placement")
     p.write_text(s)
