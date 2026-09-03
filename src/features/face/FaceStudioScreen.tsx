@@ -59,6 +59,7 @@ import StudioTipsRail, {
 import { JobPricingTimeline } from "../../components/pricing/JobPricingTimeline";
 import { PricingTopBar } from "../../components/pricing/PricingTopBar";
 import { RunReceiptCard } from "../../components/pricing/RunReceiptCard";
+import GenerationProgressCard from "../../components/jobs/GenerationProgressCard";
 
 type Mode = "text-to-image" | "image-to-image";
 type Opt = { code: string; label: string };
@@ -1496,6 +1497,7 @@ export default function FaceStudioScreen() {
   const [uiLocked, setUiLocked] = useState(false);
 
   const [inlineStatus, setInlineStatus] = useState<string | null>(null);
+  const [generationProgress, setGenerationProgress] = useState<any | null>(null);
 
   const [variants, setVariants] = useState<FaceVariant[]>([]);
 
@@ -1524,6 +1526,7 @@ export default function FaceStudioScreen() {
     setImageSafetyState("idle");
     setImageSafetyReason(null);
     setInlineStatus(null);
+    setGenerationProgress(null);
     setUploadingSource(false);
     setCreatingJob(false);
     setFinalPricingLabel(null);
@@ -2311,6 +2314,7 @@ export default function FaceStudioScreen() {
           let last: any;
           try {
             last = await apiGetFaceJobStatus(jobId);
+            setGenerationProgress(last?.progress ?? null);
             consecutivePollingErrors = 0;
           } catch {
             consecutivePollingErrors += 1;
@@ -3531,6 +3535,14 @@ const liveBillingValueLabel =
               </Text>
             )}
           </Pressable>
+
+          {!!generationProgress && (
+            <GenerationProgressCard
+              kind="face"
+              status={String(generationProgress?.stage || "running")}
+              progress={generationProgress}
+            />
+          )}
 
           {!!inlineStatus && (
             <GlassCard style={{ padding: 12 }}>

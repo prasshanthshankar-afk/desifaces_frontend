@@ -49,6 +49,7 @@ import { PricingBreakdownSheet } from "../../components/pricing/PricingBreakdown
 import { RunReceiptCard } from "../../components/pricing/RunReceiptCard";
 import { JobPricingTimeline } from "../../components/pricing/JobPricingTimeline";
 import GlobalJobsTray, { type StudioJobItem } from "../jobs/components/GlobalJobsTray";
+import GenerationProgressCard from "../../components/jobs/GenerationProgressCard";
 
 type VideoMode = "TALKING_VIDEO" | "CINEMATIC_VIDEO_DIRECTION";
 type CameraAngle = "eye_level" | "low_angle" | "high_angle";
@@ -3683,6 +3684,14 @@ const liveBillingValueLabel =
             >
               <Text style={{ color: DF.text, fontWeight: "900" }}>View Summary</Text>
             </Pressable>
+
+            {!!latestFusionJobStatus?.progress && (
+              <GenerationProgressCard
+                kind="video"
+                status={String(latestFusionJobStatus?.status || "running")}
+                progress={latestFusionJobStatus.progress}
+              />
+            )}
 
             <RunReceiptCard
               pricing={
