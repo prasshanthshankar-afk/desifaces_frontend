@@ -5,6 +5,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DF } from "../../core/theme/colors";
+import { useAuth } from "../../core/auth/AuthContext";
+import SpendingSummaryCard from "../../components/pricing/SpendingSummaryCard";
 
 type RouteTarget =
   | "/(tabs)/face/multi-person"
@@ -114,6 +116,8 @@ function Section({ title, items }: { title: string; items: WorkspaceItem[] }) {
 
 export default function MoreScreen() {
   const insets = useSafeAreaInsets();
+  const auth = useAuth() as any;
+  const token = String(auth?.token || "").trim();
 
   return (
     <View style={styles.root}>
@@ -130,6 +134,10 @@ export default function MoreScreen() {
           <Text style={styles.subtitle}>
             The same desifaces capabilities as web, organized for a smaller screen.
           </Text>
+        </View>
+
+        <View style={styles.spendingWrap}>
+          <SpendingSummaryCard token={token} />
         </View>
 
         <Section title="Create" items={createItems} />
@@ -149,10 +157,11 @@ export default function MoreScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: DF.bg },
   content: { paddingHorizontal: 16 },
-  header: { marginBottom: 22 },
+  header: { marginBottom: 10 },
   kicker: { color: DF.brandStrong, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   title: { color: DF.textStrong, fontSize: 28, fontWeight: "900", marginTop: 5 },
   subtitle: { color: DF.textSoft, fontSize: 12, lineHeight: 18, marginTop: 7, maxWidth: 380 },
+  spendingWrap: { marginHorizontal: -16, marginBottom: 14 },
   section: { marginTop: 8, marginBottom: 18 },
   sectionTitle: { color: DF.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.1, textTransform: "uppercase", marginBottom: 9 },
   sectionBody: { gap: 8 },
