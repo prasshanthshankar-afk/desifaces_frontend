@@ -117,6 +117,12 @@ export default function DashboardScreen() {
     router.push({ pathname: "/pricing/compare" });
   }, [closeMenu]);
 
+  // SPENDING_HISTORY_MENU_V1
+  const goSpendingHistory = React.useCallback(() => {
+    closeMenu();
+    router.push("/pricing/spending-history" as any);
+  }, [closeMenu]);
+
   const goUpgradePlan = React.useCallback(() => {
     closeMenu();
     router.push({ pathname: "/pricing/upgrade-confirm" });
@@ -125,6 +131,12 @@ export default function DashboardScreen() {
   const goNotifications = React.useCallback(() => {
     closeMenu();
     router.push("/notifications" as any);
+  }, [closeMenu]);
+
+  // MOBILE_SETTINGS_MENU_V1
+  const goSettings = React.useCallback(() => {
+    closeMenu();
+    router.push("/(tabs)/settings" as any);
   }, [closeMenu]);
 
   const goHelp = React.useCallback(() => {
@@ -197,8 +209,10 @@ export default function DashboardScreen() {
         onGoModern={goModern}
         onGoPlanBilling={goPlanBilling}
         onGoComparePlans={goComparePlans}
+        onGoSpendingHistory={goSpendingHistory}
         onGoUpgradePlan={goUpgradePlan}
         onGoNotifications={goNotifications}
+        onGoSettings={goSettings}
         onGoHelp={goHelp}
         onGoFaq={goFaq}
         onGoContactUs={goContactUs}
@@ -261,8 +275,10 @@ function GlobalMenuSheet({
   onGoModern,
   onGoPlanBilling,
   onGoComparePlans,
+  onGoSpendingHistory,
   onGoUpgradePlan,
   onGoNotifications,
+  onGoSettings,
   onGoHelp,
   onGoFaq,
   onGoContactUs,
@@ -280,8 +296,10 @@ function GlobalMenuSheet({
   onGoModern: () => void;
   onGoPlanBilling: () => void;
   onGoComparePlans: () => void;
+  onGoSpendingHistory: () => void;
   onGoUpgradePlan: () => void;
   onGoNotifications: () => void;
+  onGoSettings: () => void;
   onGoHelp: () => void;
   onGoFaq: () => void;
   onGoContactUs: () => void;
@@ -331,6 +349,7 @@ function GlobalMenuSheet({
             <MenuSection title="Plan & Billing">
               <MenuItem label="Plan & Billing" onPress={onGoPlanBilling} />
               <MenuItem label="Compare Plans" onPress={onGoComparePlans} />
+              <MenuItem label="Spending & transactions" onPress={onGoSpendingHistory} />
               <MenuItem label="Upgrade Plan" onPress={onGoUpgradePlan} />
             </MenuSection>
 
@@ -343,9 +362,7 @@ function GlobalMenuSheet({
             </MenuSection>
 
             <MenuSection title="Account">
-              <MenuItem label="Settings" disabled hint="Soon" />
-              <MenuItem label="Preferences" disabled hint="Soon" />
-              <MenuItem label="Security & MFA" disabled hint="Soon" />
+              <MenuItem label="Settings" onPress={onGoSettings} />
             </MenuSection>
 
             <MenuSection title="Help">

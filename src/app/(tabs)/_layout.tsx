@@ -33,16 +33,16 @@ export default function TabsLayout() {
         tabBarHideOnKeyboard: true,
         tabBarAllowFontScaling: false,
         tabBarLabelStyle: {
-          fontSize: 10,
+          fontSize: 9.5,
           fontWeight: "800",
           letterSpacing: 0.1,
           marginTop: 2,
         },
         tabBarItemStyle: {
-          minWidth: 74,
-          maxWidth: 92,
-          marginHorizontal: 6,
-          paddingHorizontal: 4,
+          minWidth: 56,
+          maxWidth: 72,
+          marginHorizontal: 2,
+          paddingHorizontal: 2,
         },
         tabBarStyle: {
           backgroundColor: DF.night,
@@ -51,7 +51,7 @@ export default function TabsLayout() {
           height: 72,
           paddingTop: 8,
           paddingBottom: 10,
-          paddingHorizontal: 16,
+          paddingHorizontal: 8,
         },
         tabBarIconStyle: {
           marginTop: 1,
@@ -81,7 +81,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="audio"
         options={{
-          title: "Audio",
+          title: "Voice",
           tabBarIcon: ({ focused, color }) => (
             <TabIcon focused={focused} color={color} name="mic-outline" />
           ),
@@ -91,9 +91,19 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="fusion"
         options={{
-          title: "Fusion",
+          title: "Video",
           tabBarIcon: ({ focused, color }) => (
             <TabIcon focused={focused} color={color} name="videocam-outline" />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="more"
+        options={{
+          title: "More",
+          tabBarIcon: ({ focused, color }) => (
+            <TabIcon focused={focused} color={color} name="grid-outline" />
           ),
         }}
       />
@@ -102,7 +112,6 @@ export default function TabsLayout() {
         name="settings"
         options={{
           href: null,
-          
           tabBarItemStyle: { display: "none" },
         }}
       />
@@ -111,7 +120,6 @@ export default function TabsLayout() {
         name="billing"
         options={{
           href: null,
-          
           tabBarItemStyle: { display: "none" },
         }}
       />
@@ -120,7 +128,22 @@ export default function TabsLayout() {
         name="media"
         options={{
           href: null,
-          
+          tabBarItemStyle: { display: "none" },
+        }}
+      />
+
+      <Tabs.Screen
+        name="music"
+        options={{
+          href: null,
+          tabBarItemStyle: { display: "none" },
+        }}
+      />
+
+      <Tabs.Screen
+        name="retail"
+        options={{
+          href: null,
           tabBarItemStyle: { display: "none" },
         }}
       />

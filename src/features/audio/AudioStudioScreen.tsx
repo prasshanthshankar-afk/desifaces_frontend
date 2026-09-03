@@ -1911,21 +1911,26 @@ export default function AudioStudioScreen() {
   const voicesErr = (voicesQ.error as any)?.message ? String((voicesQ.error as any).message) : null;
   const uiVoices: UiVoice[] = useMemo(() => normalizeVoices(voicesQ.data as any), [voicesQ.data]);
 
+  // MOBILE_FACE_VOICE_BINDING_V2: the selected Face filters the native voice chooser.
+  const faceCompatibleVoices: UiVoice[] = useMemo(() => {
+    const wanted = normalizeAudioGender(effectiveFaceGender);
+    if (wanted === "unspecified") return uiVoices;
+    const matched = uiVoices.filter((v) => {
+      const gender = readVoiceGender(v);
+      return gender === "unspecified" || gender === wanted;
+    });
+    return matched.length ? matched : uiVoices;
+  }, [uiVoices, effectiveFaceGender]);
+
   useEffect(() => {
-    if (voice) return;
-    if (!uiVoices.length) return;
-
-    const wantedGender = effectiveFaceGender.toLowerCase();
-    const genderMatched =
-      wantedGender === "male"
-        ? uiVoices.find((v) => readVoiceGender(v) === "male")
-        : wantedGender === "female"
-          ? uiVoices.find((v) => readVoiceGender(v) === "female")
-          : null;
-
-    const def = genderMatched || uiVoices.find((v) => (v as any)?.raw?.is_default) || uiVoices[0];
-    setVoice(def.key);
-  }, [uiVoices, voice, effectiveFaceGender]);
+    if (!faceCompatibleVoices.length) { if (voice) setVoice(null); return; }
+    const current = faceCompatibleVoices.find((v) => v.key === voice);
+    if (current) return;
+    const wantedGender = normalizeAudioGender(effectiveFaceGender);
+    const exact = wantedGender === "unspecified" ? null : faceCompatibleVoices.find((v) => readVoiceGender(v) === wantedGender);
+    const def = exact || faceCompatibleVoices.find((v) => (v as any)?.raw?.is_default) || faceCompatibleVoices[0];
+    setVoice(def?.key || null);
+  }, [faceCompatibleVoices, voice, effectiveFaceGender]);
 
   const selectedTargetLocale = filteredLocales.find((x) => x.code === targetLocale) ?? null;
   const localeLabel = selectedTargetLocale?.label ?? targetLocale;
@@ -1933,7 +1938,7 @@ export default function AudioStudioScreen() {
   const sourceLabel = "English";
   const targetLanguageCode = cleanParam(selectedTargetLocale?.languageCode).toLowerCase();
   const translate = !!targetLocale && targetLanguageCode !== "en";
-  const selectedVoice = uiVoices.find((x) => x.key === voice) ?? null;
+  const selectedVoice = faceCompatibleVoices.find((x) => x.key === voice) ?? null;
   const voiceLabel = selectedVoice?.label ?? (voice ?? "Select");
   const faceSpeakerGender = normalizeAudioGender(effectiveFaceGender);
   const selectedVoiceGender = readVoiceGender(selectedVoice);
@@ -1951,7 +1956,7 @@ export default function AudioStudioScreen() {
     () => filteredLocales.map((l) => ({ code: l.code, label: `${l.label} (${l.code})` })),
     [filteredLocales]
   );
-  const voiceOptions: Opt[] = useMemo(() => uiVoices.map((v) => ({ code: v.key, label: v.label })), [uiVoices]);
+  const voiceOptions: Opt[] = useMemo(() => faceCompatibleVoices.map((v) => ({ code: v.key, label: v.label })), [faceCompatibleVoices]);
 
   const pricingPreviewPayload = useMemo<
     Omit<TTSCreateRequest, "pricing_confirmation">
@@ -1965,7 +1970,7 @@ export default function AudioStudioScreen() {
       voice_id: voice || undefined,
       voice_locale: targetLocale || undefined,
       speaker_gender: speakerGender,
-      voice_gender: selectedVoiceGender,
+      voice_gender: speakerGender,
       translation_tone: translationTone,
       context: debouncedContext || undefined,
     }),
@@ -2130,7 +2135,7 @@ export default function AudioStudioScreen() {
     voice_label: voiceLabel,
     voice_locale: targetLocale,
     speaker_gender: speakerGender,
-    voice_gender: selectedVoiceGender,
+    voice_gender: speakerGender,
     translation_tone: translationTone,
     translate,
     source_language: sourceLanguage ?? undefined,
@@ -2727,7 +2732,7 @@ useEffect(() => {
         voice_id: voice,
         voice_locale: targetLocale,
         speaker_gender: speakerGender,
-        voice_gender: selectedVoiceGender,
+        voice_gender: speakerGender,
         translation_tone: translationTone,
         context: context?.trim() || null,
       };

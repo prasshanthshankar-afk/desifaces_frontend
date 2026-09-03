@@ -1,0 +1,59 @@
+name: V3 Mobile Capability Parity
+
+on:
+  pull_request:
+    branches:
+      - desifaces-v3
+    paths:
+      - 'app.config.ts'
+      - 'eas.json'
+      - 'src/app/(tabs)/_layout.tsx'
+      - 'src/app/(tabs)/more.tsx'
+      - 'src/app/pricing/spending-history.tsx'
+      - 'src/components/pricing/SpendingSummaryCard.tsx'
+      - 'src/core/pricing/spendingApi.ts'
+      - 'scripts/test-v3-mobile-capability-parity.py'
+      - '.github/workflows/v3-mobile-capability-parity.yml'
+      - 'package.json'
+      - 'tsconfig.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capability-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout V3 frontend
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Capability and launch source gate
+        run: python3 scripts/test-v3-mobile-capability-parity.py
+
+      - name: Lint parity surfaces
+        run: >-
+          npx eslint
+          'src/app/(tabs)/_layout.tsx'
+          'src/app/(tabs)/more.tsx'
+          'src/app/pricing/spending-history.tsx'
+          'src/components/pricing/SpendingSummaryCard.tsx'
+          'src/core/pricing/spendingApi.ts'
+          --max-warnings=5
+
+      - name: TypeScript compile gate
+        run: npx tsc --noEmit --pretty false

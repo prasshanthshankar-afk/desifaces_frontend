@@ -1,0 +1,85 @@
+name: desifaces Mobile Production Release 2026-09-03
+
+on:
+  push:
+    branches:
+      - release/mobile-production-20260903
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout production release
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Production identity and capability gate
+        run: python3 scripts/test-v3-mobile-capability-parity.py
+
+      - name: Resolve Expo production config
+        run: |
+          npx expo config --type public > /tmp/desifaces-expo-config.txt
+          grep -q 'ai.desifaces.app' /tmp/desifaces-expo-config.txt
+          grep -q 'desifaces.ai' /tmp/desifaces-expo-config.txt
+
+      - name: TypeScript compile gate
+        run: npx tsc --noEmit --pretty false
+
+  ios-release:
+    needs: certify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Checkout production release
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Require Expo release token
+        run: test -n "$EXPO_TOKEN"
+
+      - name: Queue iOS App Store build and submission
+        run: npx --yes eas-cli@latest build --platform ios --profile production --auto-submit --non-interactive --no-wait
+
+  android-release:
+    needs: certify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Checkout production release
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Require Expo release token
+        run: test -n "$EXPO_TOKEN"
+
+      - name: Queue Android Play Store build and submission
+        run: npx --yes eas-cli@latest build --platform android --profile production --auto-submit --non-interactive --no-wait

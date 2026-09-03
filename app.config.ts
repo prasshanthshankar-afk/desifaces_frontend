@@ -15,9 +15,9 @@ const BRAND_LOGO = "./assets/brand/desifaces-logo-softblend.png";
 const SPLASH_IMAGE = "./assets/brand/desifaces-logo-softblend.png";
 
 const config: ExpoConfig = {
-  name: "desifaces.ai Dev",
+  name: "desifaces.ai",
   slug: "desifaces-mobile",
-  scheme: "desifaces-dev",
+  scheme: "desifaces",
   version: "2.1.0",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
@@ -60,6 +60,7 @@ const config: ExpoConfig = {
       },
     ],
     "expo-audio",
+    "expo-iap",
     "expo-sharing",
     "expo-localization",
     "expo-secure-store",
@@ -68,37 +69,23 @@ const config: ExpoConfig = {
   ],
 
   ios: {
-    bundleIdentifier: "ai.desifaces.app.dev",
-
-    // desifaces.ai v1.0 is iPhone-only.
-    // This prevents App Store Connect from requiring iPad screenshots.
+    bundleIdentifier: "ai.desifaces.app",
     supportsTablet: false,
-
     icon: BRAND_LOGO,
-
     config: {
-      // The app uses standard platform/network encryption only.
-      // Expo writes ITSAppUsesNonExemptEncryption=false to Info.plist.
       usesNonExemptEncryption: false,
     },
-
     infoPlist: {
-      // Preserve the current production UI behavior for this release.
       UIDesignRequiresCompatibility: true,
     },
   },
 
   android: {
-    package: "ai.desifaces.app.dev",
-
-    // Android versionCode is intentionally omitted.
-    // EAS remote versioning and auto-increment must remain the source of truth.
-
+    package: "ai.desifaces.app",
     adaptiveIcon: {
       foregroundImage: BRAND_LOGO,
       backgroundColor: SPLASH_BG,
     },
-
     permissions: [
       "android.permission.RECORD_AUDIO",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -114,7 +101,6 @@ const config: ExpoConfig = {
   },
 
   extra: {
-    // Canonical production API bases consumed by src/core/config/env.ts.
     CORE:
       process.env.EXPO_PUBLIC_CORE_BASE_URL ??
       process.env.EXPO_PUBLIC_CORE_URL,
@@ -139,6 +125,14 @@ const config: ExpoConfig = {
       process.env.EXPO_PUBLIC_PRICING_BASE_URL ??
       process.env.EXPO_PUBLIC_PRICING_URL,
 
+    DIRECTOR:
+      process.env.EXPO_PUBLIC_DIRECTOR_BASE_URL ??
+      process.env.EXPO_PUBLIC_DIRECTOR_URL,
+
+    ASSISTANT:
+      process.env.EXPO_PUBLIC_ASSISTANT_BASE_URL ??
+      process.env.EXPO_PUBLIC_ASSISTANT_URL,
+
     FUSION:
       process.env.EXPO_PUBLIC_FUSION_BASE_URL ??
       process.env.EXPO_PUBLIC_FUSION_URL,
@@ -147,7 +141,6 @@ const config: ExpoConfig = {
       process.env.EXPO_PUBLIC_FUSION_EXTENSION_BASE_URL ??
       process.env.EXPO_PUBLIC_FUSION_EXTENSION_BASE,
 
-    // Backward-compatible names already used by the application.
     pricingBaseUrl: process.env.EXPO_PUBLIC_PRICING_BASE_URL,
     billingReturnUrlBase:
       process.env.EXPO_PUBLIC_BILLING_RETURN_URL_BASE,

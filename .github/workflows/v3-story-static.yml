@@ -1,0 +1,73 @@
+name: V3 Story Studio Static Certification
+
+on:
+  push:
+    branches:
+      - feature/v3-multiperson-ui-20260818
+      - release/v3-studio-completion-20260824
+    paths:
+      - 'src/app/(tabs)/face/**'
+      - 'src/core/studio/**'
+      - 'src/features/face/**'
+      - 'src/features/audio/**'
+      - 'src/features/fusion/**'
+      - 'src/features/story/**'
+      - 'package.json'
+      - 'tsconfig.json'
+      - '.github/workflows/v3-story-static.yml'
+  pull_request:
+    branches:
+      - feature/v3-multiperson-ui-20260818
+    paths:
+      - 'src/app/(tabs)/face/**'
+      - 'src/core/studio/**'
+      - 'src/features/face/**'
+      - 'src/features/audio/**'
+      - 'src/features/fusion/**'
+      - 'src/features/story/**'
+      - 'package.json'
+      - 'tsconfig.json'
+      - '.github/workflows/v3-story-static.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-certification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout V3 frontend
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Lint V3 Story surfaces
+        run: >-
+          npx eslint
+          'src/app/(tabs)/face/multi-person.tsx'
+          'src/app/(tabs)/face/story/[storyId].tsx'
+          src/core/studio/DenseStudioUI.tsx
+          src/core/studio/productionExperience.ts
+          src/core/studio/multiPersonWorkflow.ts
+          src/features/face/FaceCreationModeSwitch.tsx
+          src/features/face/MultiPersonFaceDirectorScreen.tsx
+          src/features/face/MultiPersonFaceSavedWorkScreen.tsx
+          src/features/face/MultiPersonFaceCohortDenseScreen.tsx
+          src/features/audio/MultiPersonAudioWorkspaceScreen.tsx
+          src/features/audio/api/multiPersonStory.ts
+          src/features/audio/api/masterdataAudio.ts
+          src/features/fusion/MultiPersonFusionDenseScreen.tsx
+          src/features/fusion/api/multiPersonStory.ts
+          src/features/story/MultiPersonStoryFinalScreen.tsx
+          --max-warnings=5
+
+      - name: TypeScript compile gate
+        run: npx tsc --noEmit --pretty false

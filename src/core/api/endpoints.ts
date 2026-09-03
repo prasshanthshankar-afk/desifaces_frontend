@@ -31,90 +31,54 @@ export const endpoints = {
   face: {
     root: "/",
     health: "/api/health",
-
-    assets: {
-      upload: "/api/face/assets/upload",
-    },
-
+    assets: { upload: "/api/face/assets/upload" },
     generateLegacy: "/api/face/generate",
     jobsLegacy: {
       list: (limit = 20) => `/api/face/jobs?limit=${limit}`,
       byId: (jobId: string) => `/api/face/jobs/${encodeURIComponent(jobId)}`,
     },
-
     creator: {
       pricingPreview: "/api/face/creator/pricing/preview",
       pricingPreviewCandidates: ["/api/face/creator/pricing/preview"],
-
       generate: "/api/face/creator/generate",
-
-      i2i: {
-        contentSafetyCheck: "/api/face/creator/i2i/content-safety/check",
-      },
-
+      i2i: { contentSafetyCheck: "/api/face/creator/i2i/content-safety/check" },
       jobs: {
         list: (limit = 20) => `/api/face/creator/jobs?limit=${limit}`,
-        status: (jobId: string) =>
-          `/api/face/creator/jobs/${encodeURIComponent(jobId)}/status`,
+        status: (jobId: string) => `/api/face/creator/jobs/${encodeURIComponent(jobId)}/status`,
       },
     },
-
     profiles: (limit = 50) => `/api/face/profiles?limit=${limit}`,
-
     config: {
-      regions: (language = "en") =>
-        `/api/face/config/regions?language=${encodeURIComponent(language)}`,
-      countries: (language = "en") =>
-        `/api/face/config/countries?language=${encodeURIComponent(language)}`,
-      subdivisions: (countryCode: string, language = "en") =>
-        `/api/face/config/subdivisions?country_code=${encodeURIComponent(countryCode)}&language=${encodeURIComponent(language)}`,
+      regions: (language = "en") => `/api/face/config/regions?language=${encodeURIComponent(language)}`,
+      countries: (language = "en") => `/api/face/config/countries?language=${encodeURIComponent(language)}`,
+      subdivisions: (countryCode: string, language = "en") => `/api/face/config/subdivisions?country_code=${encodeURIComponent(countryCode)}&language=${encodeURIComponent(language)}`,
       contexts: "/api/face/config/contexts",
     },
   },
 
   audio: {
     root: "/",
-    health: {
-      v1: "/api/health/",
-      plain: "/api/health",
-      ready: "/api/health/ready",
-    },
-
+    health: { v1: "/api/health/", plain: "/api/health", ready: "/api/health/ready" },
     tts: "/api/audio/tts",
     pricingPreview: "/api/audio/tts/pricing/preview",
     pricingPreviewCandidates: ["/api/audio/tts/pricing/preview"],
-
-    jobs: {
-      status: (jobId: string) =>
-        `/api/audio/jobs/${encodeURIComponent(jobId)}/status`,
-    },
-
+    jobs: { status: (jobId: string) => `/api/audio/jobs/${encodeURIComponent(jobId)}/status` },
     catalog: {
-      locales: (endToEndOnly = true, enabledOnly = true) =>
-        `/api/audio/catalog/locales?end_to_end_only=${endToEndOnly}&enabled_only=${enabledOnly}`,
+      locales: (endToEndOnly = true, enabledOnly = true) => `/api/audio/catalog/locales?end_to_end_only=${endToEndOnly}&enabled_only=${enabledOnly}`,
       countries: "/api/audio/catalog/countries",
-      targetLanguages: (countryCode: string) =>
-        `/api/audio/catalog/target-languages?country_code=${encodeURIComponent(countryCode)}`,
-      voices: (locale: string) =>
-        `/api/audio/catalog/voices?locale=${encodeURIComponent(locale)}`,
+      targetLanguages: (countryCode: string) => `/api/audio/catalog/target-languages?country_code=${encodeURIComponent(countryCode)}`,
+      voices: (locale: string) => `/api/audio/catalog/voices?locale=${encodeURIComponent(locale)}`,
       sync: "/api/audio/catalog/sync",
     },
   },
 
   fusion: {
     root: "/",
-    health: {
-      v1: "/api/health/",
-      plain: "/api/health",
-      ready: "/api/health/ready",
-    },
-
+    health: { v1: "/api/health/", plain: "/api/health", ready: "/api/health/ready" },
     jobs: {
       pricingPreview: "/jobs/pricing/preview",
       pricingPreviewCandidates: ["/jobs/pricing/preview"],
-
       create: "/jobs",
-
       byId: (jobId: string) => `/jobs/${encodeURIComponent(jobId)}`,
       status: (jobId: string) => `/jobs/${encodeURIComponent(jobId)}`,
     },
@@ -122,25 +86,17 @@ export const endpoints = {
 
   fusionExtension: {
     root: "/",
-    health: {
-      v1: "/api/health/",
-      plain: "/api/health",
-      ready: "/api/health/ready",
-    },
+    health: { v1: "/api/health/", plain: "/api/health", ready: "/api/health/ready" },
     longform: {
       pricingPreview: "/api/longform/pricing/preview",
       create: "/api/longform/jobs",
       jobs: {
         create: "/api/longform/jobs",
-        status: (jobId: string) =>
-          `/api/longform/jobs/${encodeURIComponent(jobId)}`,
-        segments: (jobId: string) =>
-          `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
+        status: (jobId: string) => `/api/longform/jobs/${encodeURIComponent(jobId)}`,
+        segments: (jobId: string) => `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
       },
-      byId: (jobId: string) =>
-        `/api/longform/jobs/${encodeURIComponent(jobId)}`,
-      segments: (jobId: string) =>
-        `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
+      byId: (jobId: string) => `/api/longform/jobs/${encodeURIComponent(jobId)}`,
+      segments: (jobId: string) => `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
     },
   },
 
@@ -150,61 +106,46 @@ export const endpoints = {
     create: "/api/longform/jobs",
     jobs: {
       create: "/api/longform/jobs",
-      status: (jobId: string) =>
-        `/api/longform/jobs/${encodeURIComponent(jobId)}`,
-      segments: (jobId: string) =>
-        `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
+      status: (jobId: string) => `/api/longform/jobs/${encodeURIComponent(jobId)}`,
+      segments: (jobId: string) => `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
     },
     byId: (jobId: string) => `/api/longform/jobs/${encodeURIComponent(jobId)}`,
-    segments: (jobId: string) =>
-      `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
+    segments: (jobId: string) => `/api/longform/jobs/${encodeURIComponent(jobId)}/segments`,
   },
 
   pricing: {
     root: "/",
     quote: "/api/pricing/quote",
-
+    spending: {
+      summary: (period: "month" | "quarter" | "year" | "yoy" = "month") => `/api/pricing/me/spending/summary?period=${encodeURIComponent(period)}`,
+      transactions: (period: "month" | "quarter" | "year" | "yoy" = "year", kind = "all", limit = 50, offset = 0) => `/api/pricing/me/spending/transactions?period=${encodeURIComponent(period)}&kind=${encodeURIComponent(kind)}&limit=${limit}&offset=${offset}`,
+    },
     reservations: {
       preview: "/api/pricing/reservations/preview",
       reserve: "/api/pricing/reservations/reserve",
       commit: "/api/pricing/reservations/commit",
       release: "/api/pricing/reservations/release",
-      byId: (reservationId: string) =>
-        `/api/pricing/reservations/${encodeURIComponent(reservationId)}`,
+      byId: (reservationId: string) => `/api/pricing/reservations/${encodeURIComponent(reservationId)}`,
     },
-
     payments: {
       methods: "/api/payments/payment-methods",
       plansCatalog: "/api/payments/plans/catalog",
       currentSubscription: "/api/payments/subscriptions/current",
-      createSubscriptionCheckoutSession:
-        "/api/payments/subscriptions/create-checkout-session",
-      createCustomerPortalSession:
-        "/api/payments/customer-portal/create-session",
+      createSubscriptionCheckoutSession: "/api/payments/subscriptions/create-checkout-session",
+      createCustomerPortalSession: "/api/payments/customer-portal/create-session",
       changeSubscription: "/api/payments/subscriptions/change",
       cancelSubscription: "/api/payments/subscriptions/cancel",
       reactivateSubscription: "/api/payments/subscriptions/reactivate",
     },
-
-    planSummaryCandidates: [
-      "/api/pricing/plan-summary",
-      "/api/pricing/account-summary",
-      "/api/pricing/summary",
-    ],
-
-    usageSummaryCandidates: [
-      "/api/pricing/usage-summary",
-      "/api/pricing/usage",
-      "/api/pricing/account-summary",
-    ],
+    planSummaryCandidates: ["/api/pricing/plan-summary", "/api/pricing/account-summary", "/api/pricing/summary"],
+    usageSummaryCandidates: ["/api/pricing/usage-summary", "/api/pricing/usage", "/api/pricing/account-summary"],
   },
 
   notifications: {
     root: "/",
     list: "/api/notifications",
     unreadCount: "/api/notifications/unread-count",
-    markRead: (id: string) =>
-      `/api/notifications/${encodeURIComponent(id)}/read`,
+    markRead: (id: string) => `/api/notifications/${encodeURIComponent(id)}/read`,
     markAllRead: "/api/notifications/read-all",
     preferences: "/api/notifications/preferences",
     registerDevice: "/api/notifications/devices/register",
@@ -215,15 +156,13 @@ export const endpoints = {
     contact: "/api/support/contact",
     requests: "/api/support/requests",
     byId: (id: string) => `/api/support/requests/${encodeURIComponent(id)}`,
-    reply: (id: string) =>
-      `/api/support/requests/${encodeURIComponent(id)}/reply`,
+    reply: (id: string) => `/api/support/requests/${encodeURIComponent(id)}/reply`,
   },
 
   help: {
     root: "/",
     faq: "/api/help/faq",
     categories: "/api/help/categories",
-    articleBySlug: (slug: string) =>
-      `/api/help/articles/${encodeURIComponent(slug)}`,
+    articleBySlug: (slug: string) => `/api/help/articles/${encodeURIComponent(slug)}`,
   },
 } as const;

@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, Pressable } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { router } from "expo-router";
 
 function loadFaceStudioScreen() {
@@ -23,7 +23,14 @@ function FaceUnavailable() {
         justifyContent: "center",
       }}
     >
-      <Text style={{ color: "rgba(255,255,255,0.95)", fontSize: 22, fontWeight: "900", textAlign: "center" }}>
+      <Text
+        style={{
+          color: "rgba(255,255,255,0.95)",
+          fontSize: 22,
+          fontWeight: "900",
+          textAlign: "center",
+        }}
+      >
         Face Studio temporarily unavailable
       </Text>
 

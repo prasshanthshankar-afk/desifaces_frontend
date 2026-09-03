@@ -9,6 +9,9 @@ import {
   AUDIO_BASE,
   DASH_BASE,
   VIDEO_BASE,
+  PRICING_BASE,
+  DIRECTOR_BASE,
+  FUSION_EXTENSION_BASE,
 } from "../core/config/env";
 
 const APP_BOOT_BG = "#010001";
@@ -42,6 +45,9 @@ export default function Index() {
         AUDIO_BASE,
         VIDEO_BASE,
         DASH_BASE,
+        PRICING_BASE,
+        DIRECTOR_BASE,
+        FUSION_EXTENSION_BASE,
       });
 
       const checks = await Promise.all([
