@@ -40,6 +40,35 @@ if "SPENDING_HISTORY_MENU_V1" not in s:
     s=once(s,'              <MenuItem label="Compare Plans" onPress={onGoComparePlans} />\n','              <MenuItem label="Compare Plans" onPress={onGoComparePlans} />\n              <MenuItem label="Spending & transactions" onPress={onGoSpendingHistory} />\n',"dashboard spending menu item")
 p.write_text(s)
 
+# Dashboard account menu: Settings is already implemented, so never advertise it
+# as a future capability. Keep unimplemented preference/security detail out of the
+# compact customer menu until those surfaces actually exist.
+p=Path("src/screens/DashboardScreen.tsx"); s=p.read_text()
+if "MOBILE_SETTINGS_MENU_V1" not in s:
+    notifications_handler='''  const goNotifications = React.useCallback(() => {\n    closeMenu();\n    router.push("/notifications" as any);\n  }, [closeMenu]);\n'''
+    s=once(s,notifications_handler,notifications_handler+'''\n  // MOBILE_SETTINGS_MENU_V1\n  const goSettings = React.useCallback(() => {\n    closeMenu();\n    router.push("/(tabs)/settings" as any);\n  }, [closeMenu]);\n''',"dashboard settings handler")
+    s=once(s,'        onGoNotifications={goNotifications}\n','        onGoNotifications={goNotifications}\n        onGoSettings={goSettings}\n',"dashboard settings prop")
+    s=once(s,'  onGoNotifications,\n  onGoHelp,\n','  onGoNotifications,\n  onGoSettings,\n  onGoHelp,\n',"dashboard settings destructure")
+    s=once(s,'  onGoNotifications: () => void;\n  onGoHelp: () => void;\n','  onGoNotifications: () => void;\n  onGoSettings: () => void;\n  onGoHelp: () => void;\n',"dashboard settings type")
+    old_account='''            <MenuSection title="Account">\n              <MenuItem label="Settings" disabled hint="Soon" />\n              <MenuItem label="Preferences" disabled hint="Soon" />\n              <MenuItem label="Security & MFA" disabled hint="Soon" />\n            </MenuSection>\n'''
+    new_account='''            <MenuSection title="Account">\n              <MenuItem label="Settings" onPress={onGoSettings} />\n            </MenuSection>\n'''
+    s=once(s,old_account,new_account,"dashboard compact account menu")
+p.write_text(s)
+
+# Settings copy follows the same user-facing vocabulary as web while preserving
+# internal route names and existing billing/session implementation.
+p=Path("src/app/(tabs)/settings.tsx"); s=p.read_text()
+if "MOBILE_SETTINGS_PARITY_V1" not in s:
+    s=once(s,'export default function SettingsScreen() {','// MOBILE_SETTINGS_PARITY_V1\nexport default function SettingsScreen() {',"settings parity marker")
+    s=s.replace('Dashboard, Face, Audio, Fusion, and Billing.','Dashboard, Face, Voice, Video, and Plans & Usage.')
+    s=s.replace('Fusion access depends on your current plan','Video access depends on your current plan')
+    s=s.replace('>Fusion access</Text>','>Video access</Text>')
+    s=s.replace('Premium creator workflows for Face, Audio, Fusion, Retail, Music, and Billing.','Premium creator workflows for Face, Voice, Video, Multi-Person, Saved Work, and Plans & Usage.')
+    s=s.replace('label="Open Billing"','label="Open Plans & Usage"')
+    s=s.replace('label="Go to Audio Studio"','label="Go to Voice"')
+    s=s.replace('label="Go to Fusion Studio"','label="Go to Video"')
+p.write_text(s)
+
 # -----------------------------------------------------------------------------
 # Voice: selected Face gender owns the visible voice catalog and all relevant
 # preview/enhancer/create payloads.
@@ -69,22 +98,15 @@ if "MOBILE_VIDEO_DIRECTION_V1" not in s:
     state_new=state_anchor+'''\n  const [performanceStyle, setPerformanceStyle] = useState<MobilePerformanceStyle>((cleanParam(safeFlow?.fusionPerformanceStyle) || "natural") as MobilePerformanceStyle);\n  const [emotionStyle, setEmotionStyle] = useState<MobileEmotionStyle>((cleanParam(safeFlow?.fusionEmotionStyle) || "auto") as MobileEmotionStyle);\n  const [movementStyle, setMovementStyle] = useState<MobileMovementStyle>((cleanParam(safeFlow?.fusionMovementStyle) || "auto") as MobileMovementStyle);\n  const [sceneMotionStyle, setSceneMotionStyle] = useState<MobileSceneMotionStyle>((cleanParam(safeFlow?.fusionSceneMotionStyle) || "auto") as MobileSceneMotionStyle);\n'''
     s=once(s,state_anchor,state_new,"mobile video direction state")
     s=once(s,'      fusionBackgroundMode: talkingBackgroundMode,\n','      fusionBackgroundMode: talkingBackgroundMode,\n      fusionPerformanceStyle: performanceStyle,\n      fusionEmotionStyle: emotionStyle,\n      fusionMovementStyle: movementStyle,\n      fusionSceneMotionStyle: sceneMotionStyle,\n',"mobile video direction flow settings")
-
-    # The same dependency pair appears in three distinct hooks. All three need
-    # the direction state so saved flow, preview payload and pricing request stay aligned.
     dependency_anchor='''    talkingBackgroundMode,\n    normalizedCinematicIntent,'''
     dependency_replacement='''    talkingBackgroundMode,\n    performanceStyle,\n    emotionStyle,\n    movementStyle,\n    sceneMotionStyle,\n    normalizedCinematicIntent,'''
     s=exact_count_replace(s,dependency_anchor,dependency_replacement,3,"mobile video direction hook dependencies")
-
     tags_anchor='''        background_mode: !isCinematic ? talkingBackgroundMode : "movement_based",\n        intent: isCinematic ? normalizedCinematicIntent : goalText,\n'''
     tags_new='''        background_mode: !isCinematic ? talkingBackgroundMode : "movement_based",\n        video_direction: {\n          performance_style: performanceStyle,\n          emotion: emotionStyle,\n          scene_motion: sceneMotionStyle,\n          hand_motion: movementStyle,\n          body_motion: movementStyle,\n          camera_motion: "auto",\n          delivery_energy: performanceStyle === "calm" ? "calm" : performanceStyle === "energetic" ? "energetic" : "normal",\n        },\n        intent: isCinematic ? normalizedCinematicIntent : goalText,\n'''
     s=once(s,tags_anchor,tags_new,"mobile video direction payload")
-
-    # React Query must treat a direction change as a new quote identity.
     query_key_anchor='''      "fusion-pricing-estimate",\n      authSessionKey,'''
     query_key_new='''      "fusion-pricing-estimate",\n      performanceStyle,\n      emotionStyle,\n      movementStyle,\n      sceneMotionStyle,\n      authSessionKey,'''
     s=once(s,query_key_anchor,query_key_new,"mobile video pricing query identity")
-
     ui_anchor='''        <GlassCard style={{ marginTop: 12 }}>\n          <Text style={{ color: DF.text, fontWeight: "900", fontSize: 14 }}>Aspect ratio</Text>\n'''
     ui_new='''        {videoMode === "TALKING_VIDEO" ? (\n          <MobileVideoDirectionControls\n            performance={performanceStyle}\n            emotion={emotionStyle}\n            movement={movementStyle}\n            sceneMotion={sceneMotionStyle}\n            onPerformance={setPerformanceStyle}\n            onEmotion={setEmotionStyle}\n            onMovement={setMovementStyle}\n            onSceneMotion={setSceneMotionStyle}\n          />\n        ) : null}\n\n'''+ui_anchor
     s=once(s,ui_anchor,ui_new,"mobile video direction UI")
