@@ -5,6 +5,8 @@ on:
     branches:
       - desifaces-v3
     paths:
+      - 'app.config.ts'
+      - 'eas.json'
       - 'src/app/(tabs)/_layout.tsx'
       - 'src/app/(tabs)/more.tsx'
       - 'src/app/pricing/spending-history.tsx'
@@ -40,7 +42,7 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps --no-audit --no-fund
 
-      - name: Capability parity source gate
+      - name: Capability and launch source gate
         run: python3 scripts/test-v3-mobile-capability-parity.py
 
       - name: Lint parity surfaces
