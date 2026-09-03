@@ -40,6 +40,8 @@ jobs:
           grep -q 'SPENDING_SUMMARY_MOBILE_V1' src/features/dashboard/ClassicDashboard.tsx
           grep -q 'SPENDING_SUMMARY_MOBILE_V1' src/features/dashboard/TeslaDashboard.tsx
           grep -q 'SPENDING_HISTORY_MENU_V1' src/screens/DashboardScreen.tsx
+          grep -q 'MOBILE_SETTINGS_MENU_V1' src/screens/DashboardScreen.tsx
+          grep -q 'MOBILE_SETTINGS_PARITY_V1' 'src/app/(tabs)/settings.tsx'
           grep -q 'MOBILE_FACE_VOICE_BINDING_V2' src/features/audio/AudioStudioScreen.tsx
           grep -q 'MOBILE_VIDEO_DIRECTION_V1' src/features/fusion/FusionStudioScreen.tsx
 
@@ -64,6 +66,7 @@ jobs:
             src/features/dashboard/ClassicDashboard.tsx \
             src/features/dashboard/TeslaDashboard.tsx \
             src/screens/DashboardScreen.tsx \
+            'src/app/(tabs)/settings.tsx' \
             src/features/audio/AudioStudioScreen.tsx \
             src/features/fusion/FusionStudioScreen.tsx
           git commit -m 'feat(mobile): apply certified cross-channel parity controls'
