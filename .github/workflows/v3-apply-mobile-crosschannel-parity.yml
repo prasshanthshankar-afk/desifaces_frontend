@@ -1,0 +1,69 @@
+name: V3 Apply Mobile Cross-Channel Parity
+
+on:
+  push:
+    branches:
+      - feature/v3-spending-crosschannel-parity-20260903
+    paths:
+      - '.github/workflows/v3-apply-mobile-crosschannel-parity.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout parity branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/v3-spending-crosschannel-parity-20260903
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply prepared parity patch atomically
+        run: python3 scripts/apply-v3-mobile-crosschannel-parity.py
+
+      - name: Verify intended source markers
+        run: |
+          grep -q 'SPENDING_SUMMARY_MOBILE_V1' src/features/dashboard/ClassicDashboard.tsx
+          grep -q 'SPENDING_SUMMARY_MOBILE_V1' src/features/dashboard/TeslaDashboard.tsx
+          grep -q 'SPENDING_HISTORY_MENU_V1' src/screens/DashboardScreen.tsx
+          grep -q 'MOBILE_FACE_VOICE_BINDING_V2' src/features/audio/AudioStudioScreen.tsx
+          grep -q 'MOBILE_VIDEO_DIRECTION_V1' src/features/fusion/FusionStudioScreen.tsx
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: TypeScript compile gate
+        run: npx tsc --noEmit --pretty false
+
+      - name: Capability parity source gate
+        run: python3 scripts/test-v3-mobile-capability-parity.py
+
+      - name: Commit certified source changes
+        run: |
+          if git diff --quiet; then
+            echo 'No source changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            src/features/dashboard/ClassicDashboard.tsx \
+            src/features/dashboard/TeslaDashboard.tsx \
+            src/screens/DashboardScreen.tsx \
+            src/features/audio/AudioStudioScreen.tsx \
+            src/features/fusion/FusionStudioScreen.tsx
+          git commit -m 'feat(mobile): apply certified cross-channel parity controls'
+          git push origin HEAD:feature/v3-spending-crosschannel-parity-20260903
