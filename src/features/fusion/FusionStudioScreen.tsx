@@ -3693,6 +3693,14 @@ const liveBillingValueLabel =
               />
             )}
 
+            {!!latestFusionJobStatus?.progress && (
+              <GenerationProgressCard
+                kind="video"
+                status={String(latestFusionJobStatus?.status || "running")}
+                progress={latestFusionJobStatus.progress}
+              />
+            )}
+
             <RunReceiptCard
               pricing={
                 runReceiptViews.pricing
