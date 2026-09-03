@@ -88,6 +88,7 @@ function ActionButton({
   );
 }
 
+// MOBILE_SETTINGS_PARITY_V1
 export default function SettingsScreen() {
   const auth = useAuth() as any;
   const snapshot = useAccountPricingSnapshot();
@@ -152,7 +153,7 @@ const fusionAccess =
     hasCinematicVideoDirection ? "Cinematic Video Direction" : null,
   ]
     .filter(Boolean)
-    .join(" • ") || "Fusion access depends on your current plan";
+    .join(" • ") || "Video access depends on your current plan";
 
 const entitlementSource =
   snapshotAny.entitlementSource ||
@@ -193,13 +194,13 @@ const entitlementSource =
             <Row
               label="Credits"
               value={creditsSummary}
-              helper="Available, used, and reserved values stay aligned with Dashboard, Face, Audio, Fusion, and Billing."
+              helper="Available, used, and reserved values stay aligned with Dashboard, Face, Voice, Video, and Plans & Usage."
             />
           </View>
         </GlassCard>
 
         <GlassCard>
-          <Text style={{ color: DF.text, fontWeight: "900", fontSize: 15 }}>Fusion access</Text>
+          <Text style={{ color: DF.text, fontWeight: "900", fontSize: 15 }}>Video access</Text>
           <View style={{ gap: 10, marginTop: 12 }}>
             <Row
               label="Enabled video features"
@@ -225,7 +226,7 @@ const entitlementSource =
             <Row
               label="About"
               value="desifaces.ai Mobile"
-              helper="Premium creator workflows for Face, Audio, Fusion, Retail, Music, and Billing."
+              helper="Premium creator workflows for Face, Voice, Video, Multi-Person, Saved Work, and Plans & Usage."
             />
           </View>
         </GlassCard>
@@ -233,11 +234,11 @@ const entitlementSource =
         <GlassCard>
           <Text style={{ color: DF.text, fontWeight: "900", fontSize: 15 }}>Quick actions</Text>
           <View style={{ gap: 10, marginTop: 12 }}>
-            <ActionButton label="Open Billing" tone="primary" onPress={() => router.push("/pricing/plan-billing" as any)} />
+            <ActionButton label="Open Plans & Usage" tone="primary" onPress={() => router.push("/pricing/plan-billing" as any)} />
             <ActionButton label="Open Dashboard" onPress={() => router.push("/(tabs)/dashboard" as any)} />
             <ActionButton label="Go to Face Studio" onPress={() => router.push("/(tabs)/face" as any)} />
-            <ActionButton label="Go to Audio Studio" onPress={() => router.push("/(tabs)/audio" as any)} />
-            <ActionButton label="Go to Fusion Studio" onPress={() => router.push("/(tabs)/fusion" as any)} />
+            <ActionButton label="Go to Voice" onPress={() => router.push("/(tabs)/audio" as any)} />
+            <ActionButton label="Go to Video" onPress={() => router.push("/(tabs)/fusion" as any)} />
           </View>
         </GlassCard>
       </ScrollView>

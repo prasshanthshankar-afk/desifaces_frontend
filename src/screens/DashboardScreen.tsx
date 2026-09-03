@@ -133,6 +133,12 @@ export default function DashboardScreen() {
     router.push("/notifications" as any);
   }, [closeMenu]);
 
+  // MOBILE_SETTINGS_MENU_V1
+  const goSettings = React.useCallback(() => {
+    closeMenu();
+    router.push("/(tabs)/settings" as any);
+  }, [closeMenu]);
+
   const goHelp = React.useCallback(() => {
     closeMenu();
     router.push("/help" as any);
@@ -206,6 +212,7 @@ export default function DashboardScreen() {
         onGoSpendingHistory={goSpendingHistory}
         onGoUpgradePlan={goUpgradePlan}
         onGoNotifications={goNotifications}
+        onGoSettings={goSettings}
         onGoHelp={goHelp}
         onGoFaq={goFaq}
         onGoContactUs={goContactUs}
@@ -271,6 +278,7 @@ function GlobalMenuSheet({
   onGoSpendingHistory,
   onGoUpgradePlan,
   onGoNotifications,
+  onGoSettings,
   onGoHelp,
   onGoFaq,
   onGoContactUs,
@@ -291,6 +299,7 @@ function GlobalMenuSheet({
   onGoSpendingHistory: () => void;
   onGoUpgradePlan: () => void;
   onGoNotifications: () => void;
+  onGoSettings: () => void;
   onGoHelp: () => void;
   onGoFaq: () => void;
   onGoContactUs: () => void;
@@ -353,9 +362,7 @@ function GlobalMenuSheet({
             </MenuSection>
 
             <MenuSection title="Account">
-              <MenuItem label="Settings" disabled hint="Soon" />
-              <MenuItem label="Preferences" disabled hint="Soon" />
-              <MenuItem label="Security & MFA" disabled hint="Soon" />
+              <MenuItem label="Settings" onPress={onGoSettings} />
             </MenuSection>
 
             <MenuSection title="Help">
