@@ -6,6 +6,7 @@ on:
       - feature/v3-spending-crosschannel-parity-20260903
     paths:
       - '.github/workflows/v3-apply-mobile-crosschannel-parity.yml'
+      - 'scripts/apply-v3-mobile-crosschannel-parity.py'
 
 permissions:
   contents: write
