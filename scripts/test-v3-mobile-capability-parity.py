@@ -6,6 +6,8 @@ layout = (root / "src/app/(tabs)/_layout.tsx").read_text()
 more = (root / "src/app/(tabs)/more.tsx").read_text()
 spending = (root / "src/app/pricing/spending-history.tsx").read_text()
 spending_card = (root / "src/components/pricing/SpendingSummaryCard.tsx").read_text()
+app_config = (root / "app.config.ts").read_text()
+eas_config = (root / "eas.json").read_text()
 
 for marker in ('title: "Home"', 'title: "Face"', 'title: "Voice"', 'title: "Video"', 'title: "More"'):
     assert marker in layout, marker
@@ -32,6 +34,21 @@ for marker in ('Spending & transactions', 'Money paid', 'Credits purchased', 'TR
 
 for marker in ('credits used', 'money paid', 'Money paid and credits used are shown separately.'):
     assert marker in spending_card, marker
+
+# Production store identity is a launch gate. Development bundle/package IDs
+# must never ship through the production EAS profile.
+for marker in (
+    'name: "desifaces.ai"',
+    'scheme: "desifaces"',
+    'bundleIdentifier: "ai.desifaces.app"',
+    'package: "ai.desifaces.app"',
+    '"production"',
+    '"distribution": "store"',
+    '"environment": "production"',
+):
+    assert marker in (app_config + eas_config), marker
+for forbidden in ('desifaces.ai Dev', 'desifaces-dev', 'ai.desifaces.app.dev'):
+    assert forbidden not in app_config, forbidden
 
 # Mobile must not create a parallel pricing model or expose provider-specific policy.
 for forbidden in ('credits_per_second', 'UPDATE pricing_', 'INSERT INTO pricing_', 'stripe_price_id'):
