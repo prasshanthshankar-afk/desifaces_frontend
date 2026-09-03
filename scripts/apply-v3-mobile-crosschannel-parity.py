@@ -8,6 +8,13 @@ def once(text:str,old:str,new:str,label:str)->str:
         raise SystemExit(f"{label}: expected exactly one anchor, found {n}")
     return text.replace(old,new,1)
 
+
+def exact_count_replace(text:str,old:str,new:str,expected:int,label:str)->str:
+    n=text.count(old)
+    if n!=expected:
+        raise SystemExit(f"{label}: expected exactly {expected} anchors, found {n}")
+    return text.replace(old,new)
+
 # -----------------------------------------------------------------------------
 # Both dashboard skins: same spending capability, compact mobile presentation.
 # -----------------------------------------------------------------------------
@@ -35,7 +42,8 @@ if "SPENDING_HISTORY_MENU_V1" not in s:
 p.write_text(s)
 
 # -----------------------------------------------------------------------------
-# Voice: selected Face gender owns the visible voice catalog and payload.
+# Voice: selected Face gender owns the visible voice catalog and all relevant
+# preview/enhancer/create payloads.
 # -----------------------------------------------------------------------------
 p=Path("src/features/audio/AudioStudioScreen.tsx"); s=p.read_text()
 if "MOBILE_FACE_VOICE_BINDING_V2" not in s:
@@ -47,9 +55,13 @@ if "MOBILE_FACE_VOICE_BINDING_V2" not in s:
     s=once(s,old_effect,new_effect,"mobile voice auto resolution")
     s=once(s,'  const selectedVoice = uiVoices.find((x) => x.key === voice) ?? null;\n','  const selectedVoice = faceCompatibleVoices.find((x) => x.key === voice) ?? null;\n',"mobile selected voice source")
     s=once(s,'  const voiceOptions: Opt[] = useMemo(() => uiVoices.map((v) => ({ code: v.key, label: v.label })), [uiVoices]);\n','  const voiceOptions: Opt[] = useMemo(() => faceCompatibleVoices.map((v) => ({ code: v.key, label: v.label })), [faceCompatibleVoices]);\n',"mobile visible voice options")
-    s=once(s,'      voice_gender: selectedVoiceGender,\n','      voice_gender: speakerGender,\n',"mobile voice pricing gender")
-    # The enhancer context should use the same authoritative gender contract.
-    s=once(s,'    voice_gender: selectedVoiceGender,\n    translation_tone: translationTone,\n','    voice_gender: speakerGender,\n    translation_tone: translationTone,\n',"mobile enhancer gender")
+    s=exact_count_replace(
+        s,
+        'voice_gender: selectedVoiceGender,',
+        'voice_gender: speakerGender,',
+        3,
+        "mobile authoritative voice gender payloads",
+    )
 p.write_text(s)
 
 # -----------------------------------------------------------------------------
