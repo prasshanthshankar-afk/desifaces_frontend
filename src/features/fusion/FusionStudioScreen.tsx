@@ -50,6 +50,12 @@ import { RunReceiptCard } from "../../components/pricing/RunReceiptCard";
 import { JobPricingTimeline } from "../../components/pricing/JobPricingTimeline";
 import GlobalJobsTray, { type StudioJobItem } from "../jobs/components/GlobalJobsTray";
 import GenerationProgressCard from "../../components/jobs/GenerationProgressCard";
+import MobileVideoDirectionControls, {
+  type MobilePerformanceStyle,
+  type MobileEmotionStyle,
+  type MobileMovementStyle,
+  type MobileSceneMotionStyle,
+} from "../../components/video/MobileVideoDirectionControls"; // MOBILE_VIDEO_DIRECTION_V1
 
 type VideoMode = "TALKING_VIDEO" | "CINEMATIC_VIDEO_DIRECTION";
 type CameraAngle = "eye_level" | "low_angle" | "high_angle";
@@ -1077,6 +1083,11 @@ export default function FusionStudioScreen() {
       "fixed") as TalkingBackgroundMode
   );
 
+  const [performanceStyle, setPerformanceStyle] = useState<MobilePerformanceStyle>((cleanParam(safeFlow?.fusionPerformanceStyle) || "natural") as MobilePerformanceStyle);
+  const [emotionStyle, setEmotionStyle] = useState<MobileEmotionStyle>((cleanParam(safeFlow?.fusionEmotionStyle) || "auto") as MobileEmotionStyle);
+  const [movementStyle, setMovementStyle] = useState<MobileMovementStyle>((cleanParam(safeFlow?.fusionMovementStyle) || "auto") as MobileMovementStyle);
+  const [sceneMotionStyle, setSceneMotionStyle] = useState<MobileSceneMotionStyle>((cleanParam(safeFlow?.fusionSceneMotionStyle) || "auto") as MobileSceneMotionStyle);
+
   const [cinematicIntent, setCinematicIntent] = useState<string>(
     normalizePromptText((params as any).intent ?? safeFlow?.fusionIntent ?? "")
   );
@@ -1435,6 +1446,10 @@ export default function FusionStudioScreen() {
       fusionCameraFraming: cameraFraming,
       fusionCameraMotionStyle: cameraMotionStyle,
       fusionBackgroundMode: talkingBackgroundMode,
+      fusionPerformanceStyle: performanceStyle,
+      fusionEmotionStyle: emotionStyle,
+      fusionMovementStyle: movementStyle,
+      fusionSceneMotionStyle: sceneMotionStyle,
       fusionIntent: normalizedCinematicIntent || undefined,
       fusionVideoType: cinematicVideoType,
       fusionOutputProfile: cinematicOutputProfile,
@@ -1455,6 +1470,10 @@ export default function FusionStudioScreen() {
     cameraFraming,
     cameraMotionStyle,
     talkingBackgroundMode,
+    performanceStyle,
+    emotionStyle,
+    movementStyle,
+    sceneMotionStyle,
     normalizedCinematicIntent,
     cinematicVideoType,
     cinematicOutputProfile,
@@ -1654,6 +1673,15 @@ export default function FusionStudioScreen() {
         provider_hint: providerHint,
         scenario_name: scenarioName,
         background_mode: !isCinematic ? talkingBackgroundMode : "movement_based",
+        video_direction: {
+          performance_style: performanceStyle,
+          emotion: emotionStyle,
+          scene_motion: sceneMotionStyle,
+          hand_motion: movementStyle,
+          body_motion: movementStyle,
+          camera_motion: "auto",
+          delivery_energy: performanceStyle === "calm" ? "calm" : performanceStyle === "energetic" ? "energetic" : "normal",
+        },
         intent: isCinematic ? normalizedCinematicIntent : goalText,
         video_type: isCinematic ? cinematicVideoType : undefined,
         prompt_preview: promptText ? promptText.slice(0, 160) : undefined,
@@ -1691,6 +1719,10 @@ export default function FusionStudioScreen() {
     faceGender,
     effectiveVideoPrompt,
     talkingBackgroundMode,
+    performanceStyle,
+    emotionStyle,
+    movementStyle,
+    sceneMotionStyle,
     normalizedCinematicIntent,
     cinematicVideoType,
     cinematicOutputProfile,
@@ -1777,12 +1809,20 @@ export default function FusionStudioScreen() {
     isCinematic,
     cinematicOutputProfile,
     talkingBackgroundMode,
+    performanceStyle,
+    emotionStyle,
+    movementStyle,
+    sceneMotionStyle,
     normalizedCinematicIntent,
   ]);
 
   const pricingQ = useQuery<EstimateResult>({
     queryKey: [
       "fusion-pricing-estimate",
+      performanceStyle,
+      emotionStyle,
+      movementStyle,
+      sceneMotionStyle,
       authSessionKey,
       pricingAccountFingerprint,
       canonicalPricingTierCode,
@@ -2995,6 +3035,19 @@ const liveBillingValueLabel =
             </View>
           </GlassCard>
         )}
+
+        {videoMode === "TALKING_VIDEO" ? (
+          <MobileVideoDirectionControls
+            performance={performanceStyle}
+            emotion={emotionStyle}
+            movement={movementStyle}
+            sceneMotion={sceneMotionStyle}
+            onPerformance={setPerformanceStyle}
+            onEmotion={setEmotionStyle}
+            onMovement={setMovementStyle}
+            onSceneMotion={setSceneMotionStyle}
+          />
+        ) : null}
 
         <GlassCard style={{ marginTop: 12 }}>
           <Text style={{ color: DF.text, fontWeight: "900", fontSize: 14 }}>Aspect ratio</Text>

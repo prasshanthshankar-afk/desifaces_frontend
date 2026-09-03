@@ -23,6 +23,7 @@ import { useCreatorFlow } from "../../core/flow/creatorFlowStore";
 import { saveCreateFlowContext } from "../../core/media/createFlow";
 import { useAccountPricingSnapshot } from "../../core/pricing/useAccountPricingSnapshot";
 import { resolvePricingDisplay, useResolvedPricingDisplay } from "../../core/pricing/resolvePricingDisplay";
+import SpendingSummaryCard from "../../components/pricing/SpendingSummaryCard"; // SPENDING_SUMMARY_MOBILE_V1
 
 import FaceCard from "./carousels/FaceCard";
 
@@ -1462,6 +1463,8 @@ export default function TeslaDashboard({
             ))}
           </View>
         </View>
+
+        <SpendingSummaryCard token={token} />
 
         <View style={styles.vaultCard}>
           <View style={styles.vaultTopRow}>

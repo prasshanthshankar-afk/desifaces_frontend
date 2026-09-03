@@ -117,6 +117,12 @@ export default function DashboardScreen() {
     router.push({ pathname: "/pricing/compare" });
   }, [closeMenu]);
 
+  // SPENDING_HISTORY_MENU_V1
+  const goSpendingHistory = React.useCallback(() => {
+    closeMenu();
+    router.push("/pricing/spending-history" as any);
+  }, [closeMenu]);
+
   const goUpgradePlan = React.useCallback(() => {
     closeMenu();
     router.push({ pathname: "/pricing/upgrade-confirm" });
@@ -197,6 +203,7 @@ export default function DashboardScreen() {
         onGoModern={goModern}
         onGoPlanBilling={goPlanBilling}
         onGoComparePlans={goComparePlans}
+        onGoSpendingHistory={goSpendingHistory}
         onGoUpgradePlan={goUpgradePlan}
         onGoNotifications={goNotifications}
         onGoHelp={goHelp}
@@ -261,6 +268,7 @@ function GlobalMenuSheet({
   onGoModern,
   onGoPlanBilling,
   onGoComparePlans,
+  onGoSpendingHistory,
   onGoUpgradePlan,
   onGoNotifications,
   onGoHelp,
@@ -280,6 +288,7 @@ function GlobalMenuSheet({
   onGoModern: () => void;
   onGoPlanBilling: () => void;
   onGoComparePlans: () => void;
+  onGoSpendingHistory: () => void;
   onGoUpgradePlan: () => void;
   onGoNotifications: () => void;
   onGoHelp: () => void;
@@ -331,6 +340,7 @@ function GlobalMenuSheet({
             <MenuSection title="Plan & Billing">
               <MenuItem label="Plan & Billing" onPress={onGoPlanBilling} />
               <MenuItem label="Compare Plans" onPress={onGoComparePlans} />
+              <MenuItem label="Spending & transactions" onPress={onGoSpendingHistory} />
               <MenuItem label="Upgrade Plan" onPress={onGoUpgradePlan} />
             </MenuSection>
 
