@@ -1,6 +1,7 @@
 
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import * as Device from "expo-device";
+import { getCalendars, getLocales } from "expo-localization";
 import { router, type Href } from "expo-router";
 
 import { api, apiSetAuthReady, setOnAuthFailed } from "../api/client";
@@ -65,6 +66,7 @@ type AuthIdentity = {
   userId: string | null;
   fullName: string | null;
   displayName: string | null;
+  countryCode: string | null;
   user: AnyObj | null;
   profile: AnyObj | null;
 };
@@ -77,6 +79,7 @@ type AuthCtx = {
   userId: string | null;
   fullName: string | null;
   displayName: string | null;
+  countryCode: string | null;
   user: AnyObj | null;
   profile: AnyObj | null;
 
@@ -112,6 +115,7 @@ const EMPTY_IDENTITY: AuthIdentity = {
   userId: null,
   fullName: null,
   displayName: null,
+  countryCode: null,
   user: null,
   profile: null,
 };
@@ -140,6 +144,18 @@ function firstNonEmpty(...values: unknown[]): string | null {
     if (text) return text;
   }
   return null;
+}
+
+function deviceCountryCode(): string {
+  try {
+    const zone = String(getCalendars()?.[0]?.timeZone || "");
+    if (zone === "Asia/Kolkata" || zone === "Asia/Calcutta") return "IN";
+  } catch {}
+  try {
+    const region = String(getLocales()?.[0]?.regionCode || "").trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(region)) return region;
+  } catch {}
+  return "US";
 }
 
 function titleCaseFromEmail(email?: string | null) {
@@ -248,12 +264,19 @@ function resolveIdentity(source: unknown, fallbackEmail?: string | null): AuthId
     root?.handle,
     titleCaseFromEmail(email)
   );
+  const rawCountryCode = firstNonEmpty(
+    profile?.country_code, profile?.countryCode, root?.country_code, root?.countryCode
+  );
+  const countryCode = rawCountryCode && /^[A-Za-z]{2}$/.test(rawCountryCode)
+    ? rawCountryCode.toUpperCase()
+    : null;
 
   return {
     email,
     userId: resolveUserId(profile || root),
     fullName,
     displayName,
+    countryCode,
     user: profile,
     profile,
   };
@@ -814,6 +837,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       userId: identity.userId,
       fullName: identity.fullName,
       displayName: identity.displayName,
+      countryCode: identity.countryCode,
       user: identity.user,
       profile: identity.profile,
       mfaChallenge,
@@ -851,6 +875,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             password,
             device_id,
             client_type,
+            country_code: deviceCountryCode(),
           });
 
           if (isMfaRequiredResponse(resp)) {
@@ -905,6 +930,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             agreement_version: DESIFACES_AGREEMENT_VERSION,
             agreement: buildAgreementAcceptance(true),
             terms_accepted: true,
+            country_code: deviceCountryCode(),
           });
 
           if (isMfaRequiredResponse(resp)) {

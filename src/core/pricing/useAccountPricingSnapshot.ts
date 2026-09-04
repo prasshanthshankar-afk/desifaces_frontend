@@ -132,7 +132,7 @@ function resolveAuthIdentity(auth: any): AuthIdentity {
     cleanText(auth?.user?.countryCode) ||
     cleanText(auth?.user?.country_code) ||
     cleanText(claims?.country_code) ||
-    "US";
+    null;
 
   return { userId, email, displayName, countryCode };
 }
@@ -401,10 +401,10 @@ export function useAccountPricingSnapshot(): AccountPricingSnapshot {
   });
 
   const subscriptionQ = useQuery({
-    queryKey: ["account-pricing-snapshot-subscription", enabled ? identity.userId || identity.email || "authed" : "guest", identity.countryCode || "US"],
+    queryKey: ["account-pricing-snapshot-subscription", enabled ? identity.userId || identity.email || "authed" : "guest", identity.countryCode || "canonical"],
     queryFn: async () => {
       try {
-        return await PaymentsApi.apiGetCurrentSubscription(identity.countryCode || "US");
+        return await PaymentsApi.apiGetCurrentSubscription(identity.countryCode || undefined);
       } catch {
         return null;
       }

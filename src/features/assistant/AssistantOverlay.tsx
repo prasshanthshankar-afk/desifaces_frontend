@@ -3,7 +3,6 @@ import { useGlobalSearchParams, usePathname } from "expo-router";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -24,7 +23,7 @@ import {
   type AssistantContextLocator,
   sendAssistantMessage,
 } from "./api/assistant";
-import { PIKU_AVATAR_DATA_URI } from "./pikuAvatar";
+import { PikuMark } from "./PikuMark";
 
 type ChatMessage = {
   id: string;
@@ -35,7 +34,7 @@ type ChatMessage = {
 };
 
 const SUPPORT_EMAIL = "support@desifaces.ai";
-const PIKU_AVATAR = { uri: PIKU_AVATAR_DATA_URI };
+// Piku is rendered locally as vector artwork; no image URI can fail at runtime.
 const C = {
   bg: "#090A0D",
   surface: "#17181D",
@@ -176,7 +175,7 @@ export default function AssistantOverlay() {
         onPress={() => setOpen(true)}
         style={[styles.launcher, { bottom: Math.max(insets.bottom + 76, 92) }]}
       >
-        <Image source={PIKU_AVATAR} style={styles.launcherAvatar} resizeMode="cover" />
+        <PikuMark size={52} />
       </Pressable>
 
       <Modal visible={open} animationType="slide" transparent onRequestClose={() => setOpen(false)}>
@@ -189,7 +188,7 @@ export default function AssistantOverlay() {
             <View style={styles.handle} />
             <View style={styles.header}>
               <View style={styles.identityRow}>
-                <Image source={PIKU_AVATAR} style={styles.headerAvatar} resizeMode="cover" />
+                <View style={styles.headerAvatar}><PikuMark size={42} /></View>
                 <View style={{ flex: 1 }}>
                   <View style={styles.titleRow}>
                     <Text style={styles.title}>Piku</Text>

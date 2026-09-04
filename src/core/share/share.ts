@@ -64,9 +64,9 @@ function extensionFromUrl(url: string): string {
 }
 
 function defaultExtension(type: ShareMediaType): keyof typeof MEDIA_FORMATS {
-  if (type === "audio") return "m4a";
+  if (type === "audio") return "mp3";
   if (type === "video") return "mp4";
-  return "jpg";
+  return "png";
 }
 
 function resolveMediaFormat(url: string, requestedType?: ShareMediaType) {
@@ -150,5 +150,25 @@ export async function shareUrl(inputUrl: string, opts: ShareUrlOpts = {}) {
   }
 }
 
-const ShareService = { shareUrl };
+export async function downloadUrl(inputUrl: string, opts: ShareUrlOpts = {}) {
+  const url = sanitizeUrl(inputUrl);
+  const type: ShareMediaType = opts.type ?? (extensionFromUrl(url) ? MEDIA_FORMATS[extensionFromUrl(url) as keyof typeof MEDIA_FORMATS].type : "image");
+  const format = MEDIA_FORMATS[defaultExtension(type)];
+  const baseDir = getWritableDirectory();
+  if (!baseDir) throw new Error("No writable directory is available for downloads.");
+  const localPath = `${baseDir}desifaces_${Date.now()}.${defaultExtension(type)}`;
+  const result = /^(file|content):\/\//i.test(url) ? { uri: url } : await downloadToLocalFile(url, localPath);
+  const Sharing = await getExpoSharing();
+  if (!Sharing?.isAvailableAsync || !Sharing?.shareAsync || !(await Sharing.isAvailableAsync())) {
+    throw new Error("Saving files is unavailable on this device.");
+  }
+  await Sharing.shareAsync(result.uri, {
+    dialogTitle: `Save desifaces ${defaultExtension(type).toUpperCase()}`,
+    mimeType: format.mimeType,
+    UTI: format.uti,
+  });
+  return result.uri;
+}
+
+const ShareService = { shareUrl, downloadUrl };
 export default ShareService;

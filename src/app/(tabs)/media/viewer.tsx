@@ -162,6 +162,21 @@ function readVideoEventError(errorLike: unknown): string {
   );
 }
 
+async function downloadMediaToDevice(url: string, type: MediaType) {
+  const safeUrl = cleanUrl(url);
+  if (!safeUrl || !ShareModule) {
+    Alert.alert("Download unavailable", "There is no valid media file to download.");
+    return;
+  }
+  try {
+    const mod = ShareModule as any;
+    if (typeof mod.downloadUrl !== "function") throw new Error("Download helper unavailable");
+    await mod.downloadUrl(safeUrl, { type, title: `desifaces ${type}` });
+  } catch (e: any) {
+    Alert.alert("Download failed", String(e?.message ?? e ?? "Download failed"));
+  }
+}
+
 async function shareMediaToSheet(url: string, type: MediaType) {
   const safeUrl = cleanUrl(url);
   if (!safeUrl) {
@@ -584,6 +599,10 @@ export default function MediaViewer() {
   const handleShare = useCallback(async () => {
     await shareMediaToSheet(safeUrl, type);
   }, [safeUrl, type]);
+  const handleDownload = useCallback(async () => {
+    await downloadMediaToDevice(safeUrl, type);
+  }, [safeUrl, type]);
+  const downloadLabel = type === "image" ? "Download PNG" : type === "audio" ? "Download MP3" : "Download MP4";
 
   return (
     <View style={{ flex: 1, backgroundColor: BG }}>
@@ -670,7 +689,8 @@ export default function MediaViewer() {
               <Text style={styles.stepDesc}>Share it instantly or create your next one.</Text>
 
               <View style={styles.actionGrid}>
-                <ActionButton label="Share" icon="⤴" primary onPress={handleShare} />
+                <ActionButton label={downloadLabel} icon="↓" primary onPress={handleDownload} />
+                <ActionButton label="Share" icon="⤴" onPress={handleShare} />
                 <ActionButton label="Dashboard" icon="⌂" onPress={() => router.push("/(tabs)/dashboard" as any)} />
                 <ActionButton label="Create Face" icon="＋" onPress={() => router.push("/(tabs)/face" as any)} />
                 <ActionButton label="Make Video" icon="⚡" onPress={() => router.push("/(tabs)/fusion" as any)} />
@@ -687,6 +707,7 @@ export default function MediaViewer() {
 
               <View style={styles.actionGrid}>
                 <ActionButton label="Use in Audio" icon="♪" primary onPress={useAudioInStudio} />
+                <ActionButton label={downloadLabel} icon="↓" onPress={handleDownload} />
                 <ActionButton label="Share" icon="⤴" onPress={handleShare} />
                 <ActionButton label="Dashboard" icon="⌂" onPress={() => router.push("/(tabs)/dashboard" as any)} />
               </View>
@@ -699,6 +720,7 @@ export default function MediaViewer() {
               <View style={styles.actionGrid}>
                 <ActionButton label="Add Voice" icon="♪" primary onPress={goToAudio} />
                 <ActionButton label="Remix" icon="✎" onPress={() => router.push("/(tabs)/face" as any)} />
+                <ActionButton label={downloadLabel} icon="↓" onPress={handleDownload} />
                 <ActionButton label="Share" icon="⤴" onPress={handleShare} />
                 <ActionButton label="Dashboard" icon="⌂" onPress={() => router.push("/(tabs)/dashboard" as any)} />
               </View>
