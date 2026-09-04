@@ -1,0 +1,96 @@
+name: Mobile Production Parity 2026-09-04
+
+on:
+  push:
+    branches:
+      - release/mobile-production-launch-parity-20260903
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/mobile-production-launch-parity-20260903
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply synchronized mobile launch patch
+        run: python3 scripts/apply-mobile-production-parity-20260904.py
+
+      - name: Launch source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'getCalendars, getLocales' src/core/auth/AuthContext.tsx
+          grep -q 'country_code: deviceCountryCode()' src/core/auth/AuthContext.tsx
+          grep -q 'countryCode: identity.countryCode' src/core/auth/AuthContext.tsx
+          grep -q 'apiGetCurrentSubscription(identity.countryCode || undefined)' src/core/pricing/useAccountPricingSnapshot.ts
+          test -s src/features/assistant/PikuMark.tsx
+          grep -q 'PikuMark' src/features/assistant/AssistantOverlay.tsx
+          ! grep -q 'PIKU_AVATAR_DATA_URI' src/features/assistant/AssistantOverlay.tsx
+          grep -q 'export async function downloadUrl' src/core/share/share.ts
+          grep -q 'return "mp3"' src/core/share/share.ts
+          grep -q 'return "png"' src/core/share/share.ts
+          grep -q 'Download PNG' 'src/app/(tabs)/media/viewer.tsx'
+          grep -q 'Download MP3' 'src/app/(tabs)/media/viewer.tsx'
+          grep -q 'Download MP4' 'src/app/(tabs)/media/viewer.tsx'
+          grep -q 'ai.desifaces.app' app.config.ts
+          grep -q '7528bed0-9b75-42e4-a25a-bd088b6325af' app.config.ts
+          echo MOBILE_LAUNCH_SOURCE_INVARIANTS=PASS
+
+      - name: Install exact dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+
+      - name: Existing capability parity gate
+        run: python3 scripts/test-v3-mobile-capability-parity.py
+
+      - name: TypeScript compile
+        run: npx tsc --noEmit --pretty false
+
+      - name: Focused lint
+        run: >-
+          npx eslint
+          'src/core/auth/AuthContext.tsx'
+          'src/core/pricing/useAccountPricingSnapshot.ts'
+          'src/core/share/share.ts'
+          'src/features/assistant/AssistantOverlay.tsx'
+          'src/features/assistant/PikuMark.tsx'
+          'src/app/(tabs)/media/viewer.tsx'
+          --max-warnings=12
+
+      - name: Commit certified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo MOBILE_SOURCE_ALREADY_SYNCHRONIZED=PASS
+            exit 0
+          fi
+          git config user.name 'desifaces-release-bot'
+          git config user.email 'release@desifaces.ai'
+          git add \
+            src/core/auth/AuthContext.tsx \
+            src/core/pricing/useAccountPricingSnapshot.ts \
+            src/core/share/share.ts \
+            src/features/assistant/AssistantOverlay.tsx \
+            'src/app/(tabs)/media/viewer.tsx'
+          git diff --cached --check
+          git commit -m 'feat(launch): synchronize native country Piku and downloads'
+          git push origin HEAD:release/mobile-production-launch-parity-20260903
+
+      - name: Final marker
+        run: echo MOBILE_PRODUCTION_PARITY=PASS
