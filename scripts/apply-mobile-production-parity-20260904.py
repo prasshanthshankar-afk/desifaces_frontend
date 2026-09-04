@@ -55,7 +55,6 @@ replace_once(auth,
 '''            terms_accepted: true,\n            country_code: deviceCountryCode(),\n          });''',
 "registration country hint")
 
-# Pricing snapshot must not invent US after auth; canonical auth/me drives it.
 snapshot = "src/core/pricing/useAccountPricingSnapshot.ts"
 replace_once(snapshot,
 '''    cleanText(auth?.user?.country_code) ||\n    cleanText(claims?.country_code) ||\n    "US";''',
@@ -84,7 +83,7 @@ replace_once(overlay,
 "Piku mark import")
 replace_once(overlay,
 '''const SUPPORT_EMAIL = "support@desifaces.ai";\nconst PIKU_AVATAR = { uri: PIKU_AVATAR_DATA_URI };''',
-'''const SUPPORT_EMAIL = "support@desifaces.ai";''',
+'''const SUPPORT_EMAIL = "support@desifaces.ai";\n// Piku is rendered locally as vector artwork; no image URI can fail at runtime.''',
 "remove Piku data URI")
 replace_once(overlay,
 '''        <Image source={PIKU_AVATAR} style={styles.launcherAvatar} resizeMode="cover" />''',
@@ -97,7 +96,6 @@ replace_once(overlay,
 
 # ------------------------------------------------------------------
 # 3. Canonical downloadable file extensions in the shared media helper.
-#    V3 backend contracts are PNG/OpenAI face, Azure TTS MP3, Fusion MP4.
 # ------------------------------------------------------------------
 share = "src/core/share/share.ts"
 replace_once(share,
@@ -106,10 +104,9 @@ replace_once(share,
 "canonical download extensions")
 replace_once(share,
 '''const ShareService = { shareUrl };\nexport default ShareService;''',
-'''export async function downloadUrl(inputUrl: string, opts: ShareUrlOpts = {}) {\n  const url = sanitizeUrl(inputUrl);\n  const type: ShareMediaType = opts.type ?? (extensionFromUrl(url) ? MEDIA_FORMATS[extensionFromUrl(url) as keyof typeof MEDIA_FORMATS].type : "image");\n  const format = MEDIA_FORMATS[defaultExtension(type)];\n  const baseDir = getWritableDirectory();\n  if (!baseDir) throw new Error("No writable directory is available for downloads.");\n  const localPath = `${baseDir}desifaces_${Date.now()}.${defaultExtension(type)}`;\n  const result = /^(file|content):\\/\\//i.test(url) ? { uri: url } : await downloadToLocalFile(url, localPath);\n  const Sharing = await getExpoSharing();\n  if (!Sharing?.isAvailableAsync || !Sharing?.shareAsync || !(await Sharing.isAvailableAsync())) {\n    throw new Error("Saving files is unavailable on this device.");\n  }\n  await Sharing.shareAsync(result.uri, {\n    dialogTitle: `Save desifaces ${defaultExtension(type).toUpperCase()}`,\n    mimeType: format.mimeType,\n    UTI: format.uti,\n  });\n  // Keep the local file available until the OS save/share sheet has completed.\n  return result.uri;\n}\n\nconst ShareService = { shareUrl, downloadUrl };\nexport default ShareService;''',
+'''export async function downloadUrl(inputUrl: string, opts: ShareUrlOpts = {}) {\n  const url = sanitizeUrl(inputUrl);\n  const type: ShareMediaType = opts.type ?? (extensionFromUrl(url) ? MEDIA_FORMATS[extensionFromUrl(url) as keyof typeof MEDIA_FORMATS].type : "image");\n  const format = MEDIA_FORMATS[defaultExtension(type)];\n  const baseDir = getWritableDirectory();\n  if (!baseDir) throw new Error("No writable directory is available for downloads.");\n  const localPath = `${baseDir}desifaces_${Date.now()}.${defaultExtension(type)}`;\n  const result = /^(file|content):\\/\\//i.test(url) ? { uri: url } : await downloadToLocalFile(url, localPath);\n  const Sharing = await getExpoSharing();\n  if (!Sharing?.isAvailableAsync || !Sharing?.shareAsync || !(await Sharing.isAvailableAsync())) {\n    throw new Error("Saving files is unavailable on this device.");\n  }\n  await Sharing.shareAsync(result.uri, {\n    dialogTitle: `Save desifaces ${defaultExtension(type).toUpperCase()}`,\n    mimeType: format.mimeType,\n    UTI: format.uti,\n  });\n  return result.uri;\n}\n\nconst ShareService = { shareUrl, downloadUrl };\nexport default ShareService;''',
 "download helper")
 
-# Primary media viewer exposes explicit Download + Share for every media type.
 viewer = "src/app/(tabs)/media/viewer.tsx"
 replace_once(viewer,
 '''async function shareMediaToSheet(url: string, type: MediaType) {''',
