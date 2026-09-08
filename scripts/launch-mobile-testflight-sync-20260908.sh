@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 REPO="prasshanthshankar-afk/desifaces_frontend"
-MOBILE_SHA="47da4e2d8776edffdec567ef068b3fe631d62f35"
+MOBILE_SHA="92007c5333eee2bfeeb01ebbc1016ea34cd91a1d"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN="/tmp/desifaces-mobile-testflight-${STAMP}"
 
@@ -48,7 +48,12 @@ for title in Home Face Voice Video; do
     exit 3
   }
 done
-! grep -q 'title: "More"' "$LAYOUT"
+for forbidden in More Music Retail; do
+  ! grep -q "title: \"$forbidden\"" "$LAYOUT" || {
+    echo "FAIL: forbidden persistent footer item present: $forbidden" >&2
+    exit 3
+  }
+done
 
 echo "MOBILE_PARITY_TESTS=PASS"
 echo "MOBILE_FOOTER_PARITY=PASS"
