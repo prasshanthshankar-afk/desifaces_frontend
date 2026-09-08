@@ -9,12 +9,20 @@ spending_card = (root / "src/components/pricing/SpendingSummaryCard.tsx").read_t
 app_config = (root / "app.config.ts").read_text()
 eas_config = (root / "eas.json").read_text()
 
-for marker in ('title: "Home"', 'title: "Face"', 'title: "Voice"', 'title: "Video"', 'title: "More"'):
+# The production persistent footer is frozen to the four core studio entries.
+for marker in ('title: "Home"', 'title: "Face"', 'title: "Voice"', 'title: "Video"'):
     assert marker in layout, marker
 
-# Secondary capabilities remain discoverable without crowding the primary tab bar.
-for hidden in ('name="settings"', 'name="billing"', 'name="media"', 'name="music"', 'name="retail"'):
-    assert hidden in layout, hidden
+# Secondary capabilities remain routable/discoverable but must not crowd the
+# persistent footer. More, Music and Retail are explicitly hidden along with
+# the other non-primary tab routes.
+for hidden in ('more', 'settings', 'billing', 'media', 'music', 'retail'):
+    marker = f'<Tabs.Screen name="{hidden}" options={{hiddenTabOptions}} />'
+    assert marker in layout, marker
+
+assert 'title: "More"' not in layout, 'More must not be a persistent footer item'
+assert 'title: "Music"' not in layout, 'Music must not be a persistent footer item'
+assert 'title: "Retail"' not in layout, 'Retail must not be a persistent footer item'
 
 for marker in (
     'Multi-Person',
