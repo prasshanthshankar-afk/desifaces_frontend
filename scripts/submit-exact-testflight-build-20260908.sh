@@ -26,36 +26,33 @@ echo "===== 2. WAIT FOR EXACT BUILD ====="
 START="$(date +%s)"
 TIMEOUT=5400
 while true; do
-  JSON="$(npx --yes eas-cli@latest build:view "$BUILD_ID" --json --non-interactive 2>/dev/null)" || {
-    echo "FAIL: unable to read EAS build $BUILD_ID" >&2
-    exit 3
-  }
+  OUT="$(npx --yes eas-cli@latest build:view "$BUILD_ID" --json 2>&1)"
+  RC=$?
+  if (( RC != 0 )); then
+    echo "BUILD_VIEW_RETRY rc=$RC"
+    printf '%s\n' "$OUT" | tail -n 8
+    NOW="$(date +%s)"
+    (( NOW - START < TIMEOUT )) || { echo "FAIL: timed out waiting for EAS build visibility" >&2; exit 4; }
+    sleep 20
+    continue
+  fi
+
+  JSON="$OUT"
   STATUS="$(printf '%s' "$JSON" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("status") or "UNKNOWN").upper())')"
   GIT_SHA="$(printf '%s' "$JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("gitCommitHash") or d.get("gitCommitSha") or "")')"
   echo "BUILD_STATUS=$STATUS"
   if [[ -n "$GIT_SHA" ]]; then
     echo "BUILD_SOURCE_SHA=$GIT_SHA"
-    [[ "$GIT_SHA" == "$EXPECTED_SOURCE_SHA" ]] || {
-      echo "FAIL: build source SHA mismatch" >&2
-      exit 3
-    }
+    [[ "$GIT_SHA" == "$EXPECTED_SOURCE_SHA" ]] || { echo "FAIL: build source SHA mismatch" >&2; exit 3; }
   fi
 
   case "$STATUS" in
-    FINISHED)
-      break
-      ;;
-    ERRORED|CANCELED)
-      echo "FAIL: EAS build ended with status=$STATUS" >&2
-      exit 4
-      ;;
+    FINISHED) break ;;
+    ERRORED|CANCELED) echo "FAIL: EAS build ended with status=$STATUS" >&2; exit 4 ;;
   esac
 
   NOW="$(date +%s)"
-  (( NOW - START < TIMEOUT )) || {
-    echo "FAIL: timed out waiting for EAS build completion" >&2
-    exit 4
-  }
+  (( NOW - START < TIMEOUT )) || { echo "FAIL: timed out waiting for EAS build completion" >&2; exit 4; }
   sleep 30
 done
 
@@ -63,9 +60,6 @@ echo "EXACT_IOS_BUILD=PASS"
 
 echo
 echo "===== 3. SUBMIT EXACT BUILD TO TESTFLIGHT ====="
-# Intentionally target the exact build id. Do not use --latest.
-# Interactive mode is retained because the current EAS submit profile may still
-# require one-time App Store Connect app resolution (ascAppId).
 npx --yes eas-cli@latest submit --platform ios --id "$BUILD_ID" --profile production
 
 echo
