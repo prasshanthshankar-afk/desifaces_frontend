@@ -26,8 +26,11 @@ echo "===== 2. WAIT FOR EXACT BUILD ====="
 START="$(date +%s)"
 TIMEOUT=5400
 while true; do
+  set +e
   OUT="$(npx --yes eas-cli@latest build:view "$BUILD_ID" --json 2>&1)"
   RC=$?
+  set -e
+
   if (( RC != 0 )); then
     echo "BUILD_VIEW_RETRY rc=$RC"
     printf '%s\n' "$OUT" | tail -n 8
@@ -37,9 +40,39 @@ while true; do
     continue
   fi
 
-  JSON="$OUT"
-  STATUS="$(printf '%s' "$JSON" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("status") or "UNKNOWN").upper())')"
-  GIT_SHA="$(printf '%s' "$JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("gitCommitHash") or d.get("gitCommitSha") or "")')"
+  PARSED="$(printf '%s' "$OUT" | python3 -c '
+import json,sys
+s=sys.stdin.read()
+dec=json.JSONDecoder()
+obj=None
+for i,ch in enumerate(s):
+    if ch != "{":
+        continue
+    try:
+        candidate,end=dec.raw_decode(s[i:])
+    except Exception:
+        continue
+    if isinstance(candidate,dict) and ("status" in candidate or "id" in candidate):
+        obj=candidate
+        break
+if obj is None:
+    raise SystemExit(2)
+status=str(obj.get("status") or "UNKNOWN").upper()
+sha=obj.get("gitCommitHash") or obj.get("gitCommitSha") or ""
+print(status+"\t"+sha)
+' 2>/dev/null)" || {
+    echo "BUILD_JSON_RETRY"
+    printf '%s\n' "$OUT" | tail -n 8
+    NOW="$(date +%s)"
+    (( NOW - START < TIMEOUT )) || { echo "FAIL: timed out waiting for parseable EAS build state" >&2; exit 4; }
+    sleep 20
+    continue
+  }
+
+  STATUS="${PARSED%%$'\t'*}"
+  GIT_SHA="${PARSED#*$'\t'}"
+  [[ "$GIT_SHA" == "$PARSED" ]] && GIT_SHA=""
+
   echo "BUILD_STATUS=$STATUS"
   if [[ -n "$GIT_SHA" ]]; then
     echo "BUILD_SOURCE_SHA=$GIT_SHA"
