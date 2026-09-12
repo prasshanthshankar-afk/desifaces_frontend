@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 BRANCH="release/v3-production-web-mobile-parity-20260912"
-EXPECTED_PARITY_COMMIT="cec82eeeb35fe0050544135c51330f6097cda1cb"
+EXPECTED_PARITY_COMMIT="d019cd573754c4b4b1f22836b32ac3cf5066a908"
 
 command -v git >/dev/null || { echo "FAIL: git required"; exit 1; }
 command -v npm >/dev/null || { echo "FAIL: npm required"; exit 1; }
