@@ -2,12 +2,25 @@
 set -Eeuo pipefail
 
 REPO="prasshanthshankar-afk/desifaces_frontend"
-RELEASE_BRANCH="release/mobile-production-20260903"
+RELEASE_BRANCH="release/v3-production-web-mobile-parity-20260912"
+EXPECTED_PARITY_COMMIT="d019cd573754c4b4b1f22836b32ac3cf5066a908"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN="/tmp/desifaces-mobile-production-${STAMP}"
 
 need(){ command -v "$1" >/dev/null 2>&1 || { echo "FAIL: missing required command: $1" >&2; exit 2; }; }
 for x in gh git node npm npx python3; do need "$x"; done
+
+if [[ "${DESIFACES_DEVICE_ACCEPTANCE_APPROVED:-}" != "YES" ]]; then
+  echo "FAIL: physical iOS + Android acceptance is not explicitly approved." >&2
+  echo "Set DESIFACES_DEVICE_ACCEPTANCE_APPROVED=YES only after both device checks pass." >&2
+  exit 5
+fi
+
+if [[ "${DESIFACES_STORE_SUBMISSION_APPROVED:-}" != "YES" ]]; then
+  echo "FAIL: store submission is not explicitly approved." >&2
+  echo "Set DESIFACES_STORE_SUBMISSION_APPROVED=YES only for the intentional store queue cutover." >&2
+  exit 6
+fi
 
 cleanup(){ :; }
 trap cleanup EXIT
@@ -17,13 +30,20 @@ echo " desifaces.ai MOBILE PRODUCTION STORE QUEUE"
 echo "============================================================"
 echo "release_branch=$RELEASE_BRANCH"
 echo "run_dir=$RUN"
+echo "device_acceptance=APPROVED"
+echo "store_submission=APPROVED"
 
 gh repo clone "$REPO" "$RUN" -- --branch "$RELEASE_BRANCH" --single-branch
 cd "$RUN"
 
 echo ""
 echo "===== 1. CERTIFY FROZEN PRODUCTION SOURCE ====="
-python3 scripts/test-v3-mobile-capability-parity.py
+git merge-base --is-ancestor "$EXPECTED_PARITY_COMMIT" HEAD || {
+  echo "FAIL: expected Sep 12 mobile parity lineage is missing" >&2
+  exit 3
+}
+
+bash scripts/certify-v3-production-mobile-parity.sh
 npx expo config --type public > /tmp/desifaces-mobile-expo-config.txt
 grep -q 'ai.desifaces.app' /tmp/desifaces-mobile-expo-config.txt
 grep -q 'desifaces.ai' /tmp/desifaces-mobile-expo-config.txt
