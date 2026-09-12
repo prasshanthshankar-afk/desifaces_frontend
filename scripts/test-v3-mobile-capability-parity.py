@@ -19,11 +19,13 @@ piku = (root / "src/features/assistant/AssistantOverlay.tsx").read_text()
 piku_api = (root / "src/features/assistant/api/assistant.ts").read_text()
 director_api = (root / "src/features/face/api/multiPersonDirector.ts").read_text()
 
-for marker in ('title: "Home"', 'title: "Face"', 'title: "Voice"', 'title: "Video"', 'title: "More"'):
+# Mobile intentionally keeps the primary tab bar compact. "More" remains a
+# hidden route reached through the app menu rather than a fifth visible tab.
+for marker in ('title: "Home"', 'title: "Face"', 'title: "Voice"', 'title: "Video"'):
     assert marker in layout, marker
 
 # Secondary capabilities remain discoverable without crowding the primary tab bar.
-for hidden in ('name="settings"', 'name="billing"', 'name="media"', 'name="music"', 'name="retail"'):
+for hidden in ('name="more"', 'name="settings"', 'name="billing"', 'name="media"', 'name="music"', 'name="retail"'):
     assert hidden in layout, hidden
 
 for marker in (
