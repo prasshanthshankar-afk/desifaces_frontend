@@ -38,9 +38,14 @@ jobs:
           test "$(git branch --show-current)" = "release/v3-production-web-mobile-parity-20260912"
           npm ci
 
-          # No --force and no package.json mutation: accept only lockfile-level,
-          # semver-compatible fixes selected by npm for the existing dependency graph.
+          # npm audit fix returns non-zero while any lower-severity findings
+          # remain. That is acceptable here only because we independently gate
+          # CRITICAL runtime findings after applying its non-breaking lock fix.
+          set +e
           npm audit fix --package-lock-only
+          AUDIT_FIX_RC=$?
+          set -e
+          echo "audit_fix_exit=$AUDIT_FIX_RC"
 
           CHANGED="$(git diff --name-only)"
           BAD="$(printf '%s\n' "$CHANGED" | grep -Ev '^(package-lock.json)$' || true)"
@@ -52,6 +57,7 @@ jobs:
 
           npm ci
           npm audit --omit=dev --audit-level=critical
+          echo MOBILE_RUNTIME_CRITICAL_AUDIT=PASS
           npx --yes expo-doctor
           npm run certify:v3-story
 
