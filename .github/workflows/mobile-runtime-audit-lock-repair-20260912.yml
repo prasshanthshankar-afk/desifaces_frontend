@@ -1,0 +1,69 @@
+name: V3 Mobile Runtime Audit Lock Repair
+
+on:
+  push:
+    branches:
+      - release/v3-production-web-mobile-parity-20260912
+    paths:
+      - '.github/workflows/mobile-runtime-audit-lock-repair-20260912.yml'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v3-mobile-runtime-audit-lock-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/v3-production-web-mobile-parity-20260912
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Apply non-breaking npm audit lock repair
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git branch --show-current)" = "release/v3-production-web-mobile-parity-20260912"
+          npm ci
+
+          # No --force and no package.json mutation: accept only lockfile-level,
+          # semver-compatible fixes selected by npm for the existing dependency graph.
+          npm audit fix --package-lock-only
+
+          CHANGED="$(git diff --name-only)"
+          BAD="$(printf '%s\n' "$CHANGED" | grep -Ev '^(package-lock.json)$' || true)"
+          if [ -n "$BAD" ]; then
+            echo "FAIL: audit repair touched unexpected files"
+            printf '%s\n' "$BAD"
+            exit 1
+          fi
+
+          npm ci
+          npm audit --omit=dev --audit-level=critical
+          npx --yes expo-doctor
+          npm run certify:v3-story
+
+          if git diff --quiet -- package-lock.json; then
+            echo MOBILE_RUNTIME_AUDIT_LOCK_REPAIR=ALREADY_CURRENT
+            exit 0
+          fi
+
+          git config user.name 'desifaces-release-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'chore(mobile): apply non-breaking runtime audit lock repair'
+          git push origin HEAD:release/v3-production-web-mobile-parity-20260912
+          echo MOBILE_RUNTIME_AUDIT_LOCK_REPAIR=PASS
+          echo PRODUCTION_TOUCH=NONE
