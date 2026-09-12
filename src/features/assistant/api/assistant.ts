@@ -12,7 +12,8 @@ export type AssistantContextLocator = {
 export type AssistantAction = {
   type: string;
   label: string;
-  requires_confirmation: boolean;
+  requires_confirmation?: boolean;
+  href?: string | null;
 };
 
 export type AssistantChatResponse = {
