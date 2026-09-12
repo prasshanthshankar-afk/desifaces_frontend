@@ -1,0 +1,73 @@
+name: V3 Mobile Expo SDK 55 Patch Alignment
+
+on:
+  push:
+    branches:
+      - release/v3-production-web-mobile-parity-20260912
+    paths:
+      - '.github/workflows/mobile-expo-sdk55-patch-alignment-20260912.yml'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v3-mobile-expo-sdk55-patch-alignment
+  cancel-in-progress: false
+
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/v3-production-web-mobile-parity-20260912
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Align Expo SDK 55 patch versions only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git branch --show-current)" = "release/v3-production-web-mobile-parity-20260912"
+
+          npm ci
+          cp package.json /tmp/package.json.before
+          cp package-lock.json /tmp/package-lock.json.before
+
+          CI=1 npx --yes expo install --fix
+
+          # The release repair is deliberately dependency-only. Fail if Expo
+          # attempts to rewrite application source/config outside package files.
+          CHANGED="$(git diff --name-only)"
+          if [ -n "$CHANGED" ]; then
+            BAD="$(printf '%s\n' "$CHANGED" | grep -Ev '^(package.json|package-lock.json)$' || true)"
+            if [ -n "$BAD" ]; then
+              echo "FAIL: Expo alignment touched unexpected files"
+              printf '%s\n' "$BAD"
+              exit 1
+            fi
+          fi
+
+          npx --yes expo-doctor
+          npm run certify:v3-story
+
+          if git diff --quiet -- package.json package-lock.json; then
+            echo EXPO_SDK55_PATCH_ALIGNMENT=ALREADY_CURRENT
+            exit 0
+          fi
+
+          git config user.name 'desifaces-release-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add package.json package-lock.json
+          git commit -m 'chore(mobile): align Expo SDK 55 patch dependencies'
+          git push origin HEAD:release/v3-production-web-mobile-parity-20260912
+          echo EXPO_SDK55_PATCH_ALIGNMENT=PASS
+          echo PRODUCTION_TOUCH=NONE
