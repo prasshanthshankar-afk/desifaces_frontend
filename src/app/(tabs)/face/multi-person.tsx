@@ -6,6 +6,7 @@ import DFHeader from "../../../core/ui/DFHeader";
 import FaceCreationModeSwitch from "../../../features/face/FaceCreationModeSwitch";
 import FacePipelineStepper from "../../../features/face/FacePipelineStepper";
 import MultiPersonFaceDirectorScreen from "../../../features/face/MultiPersonFaceDirectorScreen";
+import RecentStoriesMobilePanel from "../../../features/story/RecentStoriesMobilePanel";
 
 export default function MultiPersonFaceRoute() {
   const openHamburgerMenu = useCallback(() => {
@@ -38,6 +39,7 @@ export default function MultiPersonFaceRoute() {
       />
       <FaceCreationModeSwitch active="multi-person" />
       <FacePipelineStepper step={1} />
+      <RecentStoriesMobilePanel />
       <View style={{ flex: 1 }}>
         <MultiPersonFaceDirectorScreen />
       </View>
