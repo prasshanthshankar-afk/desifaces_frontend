@@ -23,6 +23,11 @@ function TabIcon({
   );
 }
 
+const hiddenTabOptions = {
+  href: null,
+  tabBarItemStyle: { display: "none" as const },
+};
+
 export default function TabsLayout() {
   return (
     <Tabs
@@ -98,55 +103,12 @@ export default function TabsLayout() {
         }}
       />
 
-      <Tabs.Screen
-        name="more"
-        options={{
-          title: "More",
-          tabBarIcon: ({ focused, color }) => (
-            <TabIcon focused={focused} color={color} name="grid-outline" />
-          ),
-        }}
-      />
-
-      <Tabs.Screen
-        name="settings"
-        options={{
-          href: null,
-          tabBarItemStyle: { display: "none" },
-        }}
-      />
-
-      <Tabs.Screen
-        name="billing"
-        options={{
-          href: null,
-          tabBarItemStyle: { display: "none" },
-        }}
-      />
-
-      <Tabs.Screen
-        name="media"
-        options={{
-          href: null,
-          tabBarItemStyle: { display: "none" },
-        }}
-      />
-
-      <Tabs.Screen
-        name="music"
-        options={{
-          href: null,
-          tabBarItemStyle: { display: "none" },
-        }}
-      />
-
-      <Tabs.Screen
-        name="retail"
-        options={{
-          href: null,
-          tabBarItemStyle: { display: "none" },
-        }}
-      />
+      <Tabs.Screen name="more" options={hiddenTabOptions} />
+      <Tabs.Screen name="settings" options={hiddenTabOptions} />
+      <Tabs.Screen name="billing" options={hiddenTabOptions} />
+      <Tabs.Screen name="media" options={hiddenTabOptions} />
+      <Tabs.Screen name="music" options={hiddenTabOptions} />
+      <Tabs.Screen name="retail" options={hiddenTabOptions} />
     </Tabs>
   );
 }

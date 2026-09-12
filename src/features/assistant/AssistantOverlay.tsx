@@ -1,9 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useGlobalSearchParams, usePathname } from "expo-router";
+import { router, useGlobalSearchParams, usePathname } from "expo-router";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -24,7 +23,7 @@ import {
   type AssistantContextLocator,
   sendAssistantMessage,
 } from "./api/assistant";
-import { PIKU_AVATAR_DATA_URI } from "./pikuAvatar";
+import { PikuMark } from "./PikuMark";
 
 type ChatMessage = {
   id: string;
@@ -35,7 +34,7 @@ type ChatMessage = {
 };
 
 const SUPPORT_EMAIL = "support@desifaces.ai";
-const PIKU_AVATAR = { uri: PIKU_AVATAR_DATA_URI };
+// Piku is rendered locally as vector artwork; no image URI can fail at runtime.
 const C = {
   bg: "#090A0D",
   surface: "#17181D",
@@ -88,6 +87,23 @@ function labelForScreen(screen: string) {
     app: "desifaces",
   };
   return labels[screen] || screen.replace(/_/g, " ");
+}
+
+function renderPikuText(value: string) {
+  const parts = String(value || "").split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  return parts.map((part, index) =>
+    part.startsWith("**") && part.endsWith("**") && part.length > 4 ? (
+      <Text key={`${index}-${part}`} style={styles.messageBold}>{part.slice(2, -2)}</Text>
+    ) : part
+  );
+}
+
+function storyIdFromActionHref(href?: string | null) {
+  const value = String(href || "").trim();
+  if (!value.startsWith("/app/")) return "";
+  const match = value.match(/[?&](?:story|story_id|storyId)=([^&#]+)/);
+  if (!match?.[1]) return "";
+  try { return decodeURIComponent(match[1]); } catch { return match[1]; }
 }
 
 export default function AssistantOverlay() {
@@ -164,6 +180,19 @@ export default function AssistantOverlay() {
     void Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=desifaces%20support`);
   }, []);
 
+  const handleAction = useCallback((action: AssistantAction) => {
+    const storyId = storyIdFromActionHref(action.href);
+    if (storyId) {
+      setOpen(false);
+      router.push({
+        pathname: "/(tabs)/face/story/[storyId]",
+        params: { storyId },
+      } as any);
+      return;
+    }
+    setDraft(action.label);
+  }, []);
+
   const hideForRoute =
     pathname.startsWith("/(auth)") || pathname.includes("/login") || pathname === "/";
   if (!isReady || !isAuthed || hideForRoute) return null;
@@ -176,7 +205,7 @@ export default function AssistantOverlay() {
         onPress={() => setOpen(true)}
         style={[styles.launcher, { bottom: Math.max(insets.bottom + 76, 92) }]}
       >
-        <Image source={PIKU_AVATAR} style={styles.launcherAvatar} resizeMode="cover" />
+        <PikuMark size={52} />
       </Pressable>
 
       <Modal visible={open} animationType="slide" transparent onRequestClose={() => setOpen(false)}>
@@ -189,7 +218,7 @@ export default function AssistantOverlay() {
             <View style={styles.handle} />
             <View style={styles.header}>
               <View style={styles.identityRow}>
-                <Image source={PIKU_AVATAR} style={styles.headerAvatar} resizeMode="cover" />
+                <View style={styles.headerAvatar}><PikuMark size={42} /></View>
                 <View style={{ flex: 1 }}>
                   <View style={styles.titleRow}>
                     <Text style={styles.title}>Piku</Text>
@@ -239,7 +268,7 @@ export default function AssistantOverlay() {
                   <View
                     style={message.role === "user" ? styles.userBubble : styles.assistantBubble}
                   >
-                    <Text style={styles.messageText}>{message.text}</Text>
+                    <Text style={styles.messageText}>{renderPikuText(message.text)}</Text>
                     {message.restricted ? (
                       <Pressable onPress={openSupport} style={styles.supportLink}>
                         <Ionicons name="mail-outline" size={14} color={C.brand} />
@@ -251,8 +280,8 @@ export default function AssistantOverlay() {
                     <View style={styles.actionRow}>
                       {message.actions.slice(0, 3).map((action) => (
                         <Pressable
-                          key={action.type}
-                          onPress={() => setDraft(action.label)}
+                          key={`${action.type}-${action.label}`}
+                          onPress={() => handleAction(action)}
                           style={styles.actionChip}
                         >
                           <Text style={styles.actionText}>{action.label}</Text>
@@ -412,6 +441,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   messageText: { color: C.text, fontSize: 13.5, lineHeight: 20 },
+  messageBold: { fontWeight: "900", color: C.text },
   supportLink: { flexDirection: "row", gap: 6, alignItems: "center", marginTop: 10 },
   supportText: { color: C.brand, fontSize: 12, fontWeight: "800" },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 7 },

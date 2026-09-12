@@ -1,5 +1,5 @@
 import { api } from "../../../core/api/client";
-import { DIRECTOR_BASE } from "../../../core/config/env";
+import { AUDIO_BASE, DIRECTOR_BASE } from "../../../core/config/env";
 import type {
   ReviewDecision,
   StudioStageState,
@@ -48,6 +48,10 @@ export type AudioSyncResult = {
   error_code?: string | null;
   error_message?: string | null;
   workflow: StudioWorkflowView;
+};
+
+export type AudioMediaReadUrl = {
+  read_url: string;
 };
 
 export type ParticipantVoiceProfileResult = {
@@ -119,14 +123,42 @@ export function dispatchDialogueAudio(
   );
 }
 
+export function getAudioMediaReadUrl(mediaAssetId: string) {
+  return api.get<AudioMediaReadUrl>(
+    AUDIO_BASE,
+    `/api/audio/assets/${encodeURIComponent(mediaAssetId)}/read-url`
+  );
+}
+
+async function hydrateDurableAudioUrl(result: AudioSyncResult) {
+  const mediaAssetId = String(result.media_asset_id || "").trim();
+  if (!mediaAssetId) return result;
+
+  const media = await getAudioMediaReadUrl(mediaAssetId);
+  const readUrl = String(media?.read_url || "").trim();
+  if (!readUrl) {
+    throw new Error("Audio media read URL is unavailable");
+  }
+
+  return {
+    ...result,
+    audio_url: readUrl,
+  } satisfies AudioSyncResult;
+}
+
 /**
  * Sync is a state-refresh operation. Director marks a terminal provider failure
  * in the workflow before returning the error response. Recover that authoritative
  * workflow so the UI cannot remain visually stuck on "Generating" forever.
+ *
+ * For completed/resumed Audio, never trust the generation-time SAS URL as the
+ * durable playback identity. When Director returns media_asset_id, ask svc-audio
+ * for a fresh read URL so mobile has the same resume/playback behavior as Web.
  */
 export async function syncDialogueAudio(workflowId: string, stageRunId: string) {
+  let result: AudioSyncResult;
   try {
-    return await api.post<AudioSyncResult>(
+    result = await api.post<AudioSyncResult>(
       DIRECTOR_BASE,
       `/api/director/studio-workflows/${encodeURIComponent(workflowId)}/audio-stages/${encodeURIComponent(stageRunId)}/sync`,
       {}
@@ -168,6 +200,8 @@ export async function syncDialogueAudio(workflowId: string, stageRunId: string) 
 
     throw error;
   }
+
+  return hydrateDurableAudioUrl(result);
 }
 
 export function audioPricingQuote(preview: AudioPricingPreview) {
