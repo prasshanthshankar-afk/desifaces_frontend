@@ -78,6 +78,19 @@ export type DirectorRunView = {
   errors?: string[];
 };
 
+export type RecentStory = {
+  story_id: string;
+  thread_id?: string | null;
+  state: string;
+  title: string;
+  updated_at: string;
+  workflow_id?: string | null;
+  workflow_state?: string | null;
+  current_stage?: string | null;
+  attention_state?: string | null;
+  continue_path: string;
+};
+
 export type CreativeBriefInput = {
   text: string;
   locale?: string | null;
@@ -102,6 +115,14 @@ export function getDirectorRun(threadId: string) {
   return api.get<DirectorRunView>(
     DIRECTOR_BASE,
     `/api/director/runs/${encodeURIComponent(threadId)}`
+  );
+}
+
+export function getRecentStories(limit = 6) {
+  const safeLimit = Math.max(1, Math.min(25, Math.trunc(limit || 6)));
+  return api.get<RecentStory[]>(
+    DIRECTOR_BASE,
+    `/api/director/stories/recent?limit=${safeLimit}`
   );
 }
 
