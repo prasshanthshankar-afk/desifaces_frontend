@@ -12,6 +12,9 @@ story_route = (root / "src/app/(tabs)/face/story/[storyId].tsx").read_text()
 multiperson_route = (root / "src/app/(tabs)/face/multi-person.tsx").read_text()
 recent_panel = (root / "src/features/story/RecentStoriesMobilePanel.tsx").read_text()
 face_cohort = (root / "src/features/face/MultiPersonFaceCohortDenseScreen.tsx").read_text()
+audio_api = (root / "src/features/audio/api/multiPersonStory.ts").read_text()
+media_viewer = (root / "src/app/(tabs)/media/viewer.tsx").read_text()
+story_final = (root / "src/features/story/MultiPersonStoryFinalScreen.tsx").read_text()
 piku = (root / "src/features/assistant/AssistantOverlay.tsx").read_text()
 piku_api = (root / "src/features/assistant/api/assistant.ts").read_text()
 director_api = (root / "src/features/face/api/multiPersonDirector.ts").read_text()
@@ -63,6 +66,35 @@ for marker in (
     'retry only this character',
 ):
     assert marker in face_cohort, marker
+
+# Durable generated Audio must match the Web contract: media_asset_id is the
+# durable identity and svc-audio mints a fresh read URL after resume/reload.
+for marker in (
+    'AUDIO_BASE',
+    'getAudioMediaReadUrl',
+    '/api/audio/assets/${encodeURIComponent(mediaAssetId)}/read-url',
+    'hydrateDurableAudioUrl',
+    'media_asset_id',
+    'audio_url: readUrl',
+):
+    assert marker in audio_api, marker
+assert 'return hydrateDurableAudioUrl(result);' in audio_api, 'Audio sync does not hydrate durable read URL'
+
+# Final Story playback must use durable media identity/read-url rather than
+# depending only on generation-time video URLs.
+for marker in ('finalMediaId', 'getStoryFinalMediaReadUrl', 'media?.read_url'):
+    assert marker in story_final, marker
+
+# Download/share parity is intentionally compact on mobile but must preserve the
+# same user capabilities for image/audio/video outputs.
+for marker in (
+    'Download PNG',
+    'Download MP3',
+    'Download MP4',
+    'downloadUrl',
+    'Share',
+):
+    assert marker in media_viewer, marker
 
 # Recent Story discovery/continuation mirrors the Web experience.
 for marker in (
