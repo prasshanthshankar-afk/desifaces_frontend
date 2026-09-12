@@ -35,7 +35,9 @@ npx eslint \
   src/features/assistant/api/assistant.ts \
   src/features/story/RecentStoriesMobilePanel.tsx \
   src/features/face/api/multiPersonDirector.ts \
+  src/features/audio/api/multiPersonStory.ts \
   'src/app/(tabs)/face/multi-person.tsx' \
+  'src/app/(tabs)/media/viewer.tsx' \
   --max-warnings=0
 
 echo "MOBILE_SOURCE_TYPE_LINT=PASS"
@@ -73,6 +75,18 @@ done
 rm -f /tmp/desifaces-mobile-parallel-pricing.$$
 echo "MOBILE_SHARED_PRICING_AUTHORITY=PASS"
 echo "MOBILE_NATIVE_BILLING_RAILS_PRESENT=PASS"
+
+echo
+echo "===== 6. DURABLE MEDIA / CUSTOMER CAPABILITY GUARD ====="
+grep -Fq '/api/audio/assets/${encodeURIComponent(mediaAssetId)}/read-url' src/features/audio/api/multiPersonStory.ts
+grep -Fq 'return hydrateDurableAudioUrl(result);' src/features/audio/api/multiPersonStory.ts
+grep -Fq 'getStoryFinalMediaReadUrl' src/features/story/MultiPersonStoryFinalScreen.tsx
+grep -Fq 'Download MP3' 'src/app/(tabs)/media/viewer.tsx'
+grep -Fq 'Download MP4' 'src/app/(tabs)/media/viewer.tsx'
+grep -Fq 'Download PNG' 'src/app/(tabs)/media/viewer.tsx'
+echo "MOBILE_DURABLE_AUDIO_PARITY=PASS"
+echo "MOBILE_FINAL_MEDIA_PARITY=PASS"
+echo "MOBILE_DOWNLOAD_SHARE_PARITY=PASS"
 
 echo
 echo "============================================================"
