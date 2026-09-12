@@ -44,7 +44,10 @@ echo "MOBILE_SOURCE_TYPE_LINT=PASS"
 
 echo
 echo "===== 3. EXPO DOCTOR ====="
-npm run doctor
+# expo-doctor is intentionally run through npx because it is a release
+# diagnostic CLI rather than an application runtime dependency. --yes keeps CI
+# non-interactive while npm still resolves the official Expo doctor package.
+npx --yes expo-doctor
 echo "MOBILE_EXPO_DOCTOR=PASS"
 
 echo
