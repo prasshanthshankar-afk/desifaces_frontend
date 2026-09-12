@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useGlobalSearchParams, usePathname } from "expo-router";
+import { router, useGlobalSearchParams, usePathname } from "expo-router";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -89,6 +89,23 @@ function labelForScreen(screen: string) {
   return labels[screen] || screen.replace(/_/g, " ");
 }
 
+function renderPikuText(value: string) {
+  const parts = String(value || "").split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  return parts.map((part, index) =>
+    part.startsWith("**") && part.endsWith("**") && part.length > 4 ? (
+      <Text key={`${index}-${part}`} style={styles.messageBold}>{part.slice(2, -2)}</Text>
+    ) : part
+  );
+}
+
+function storyIdFromActionHref(href?: string | null) {
+  const value = String(href || "").trim();
+  if (!value.startsWith("/app/")) return "";
+  const match = value.match(/[?&](?:story|story_id|storyId)=([^&#]+)/);
+  if (!match?.[1]) return "";
+  try { return decodeURIComponent(match[1]); } catch { return match[1]; }
+}
+
 export default function AssistantOverlay() {
   const { isAuthed, isReady } = useAuth();
   const { override } = useAssistantContext();
@@ -161,6 +178,19 @@ export default function AssistantOverlay() {
 
   const openSupport = useCallback(() => {
     void Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=desifaces%20support`);
+  }, []);
+
+  const handleAction = useCallback((action: AssistantAction) => {
+    const storyId = storyIdFromActionHref(action.href);
+    if (storyId) {
+      setOpen(false);
+      router.push({
+        pathname: "/(tabs)/face/story/[storyId]",
+        params: { storyId },
+      } as any);
+      return;
+    }
+    setDraft(action.label);
   }, []);
 
   const hideForRoute =
@@ -238,7 +268,7 @@ export default function AssistantOverlay() {
                   <View
                     style={message.role === "user" ? styles.userBubble : styles.assistantBubble}
                   >
-                    <Text style={styles.messageText}>{message.text}</Text>
+                    <Text style={styles.messageText}>{renderPikuText(message.text)}</Text>
                     {message.restricted ? (
                       <Pressable onPress={openSupport} style={styles.supportLink}>
                         <Ionicons name="mail-outline" size={14} color={C.brand} />
@@ -250,8 +280,8 @@ export default function AssistantOverlay() {
                     <View style={styles.actionRow}>
                       {message.actions.slice(0, 3).map((action) => (
                         <Pressable
-                          key={action.type}
-                          onPress={() => setDraft(action.label)}
+                          key={`${action.type}-${action.label}`}
+                          onPress={() => handleAction(action)}
                           style={styles.actionChip}
                         >
                           <Text style={styles.actionText}>{action.label}</Text>
@@ -411,6 +441,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   messageText: { color: C.text, fontSize: 13.5, lineHeight: 20 },
+  messageBold: { fontWeight: "900", color: C.text },
   supportLink: { flexDirection: "row", gap: 6, alignItems: "center", marginTop: 10 },
   supportText: { color: C.brand, fontSize: 12, fontWeight: "800" },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 7 },
