@@ -43,7 +43,11 @@ export default function RecentStoriesMobilePanel() {
   const [error, setError] = useState("");
 
   const load = useCallback(async (refresh = false) => {
-    refresh ? setRefreshing(true) : setLoading(true);
+    if (refresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError("");
     try {
       const next = await getRecentStories(6);
