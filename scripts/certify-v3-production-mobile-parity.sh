@@ -27,8 +27,12 @@ echo "===== 1. SOURCE PARITY CONTRACT ====="
 python3 scripts/test-v3-mobile-capability-parity.py
 
 echo
-echo "===== 2. DEPENDENCY LOCK / TYPE / LINT ====="
+echo "===== 2. DEPENDENCY LOCK / RUNTIME SECURITY / TYPE / LINT ====="
 npm ci
+# Launch gate only on production/runtime dependencies. Dev-tool findings are
+# tracked separately and must not hide a critical vulnerability shipped to users.
+npm audit --omit=dev --audit-level=critical
+echo "MOBILE_RUNTIME_CRITICAL_AUDIT=PASS"
 npm run certify:v3-story
 npx eslint \
   src/features/assistant/AssistantOverlay.tsx \
