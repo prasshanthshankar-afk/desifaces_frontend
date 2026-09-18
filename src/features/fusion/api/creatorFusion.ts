@@ -245,7 +245,7 @@ export type FusionJobView = {
 };
 
 const TALKING_VIDEO_BETA_RELEASE = true;
-const CINEMATIC_VIDEO_COMING_SOON = true;
+const CINEMATIC_VIDEO_COMING_SOON = false;
 
 export type FusionSegmentView = {
   id: string;
