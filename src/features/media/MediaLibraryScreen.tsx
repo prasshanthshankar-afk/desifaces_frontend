@@ -380,7 +380,7 @@ async function fetchLibrary({
   offset?: number;
 }) {
   const candidatePath = (endpoints as any)?.dashboard?.library ?? "/api/dashboard/library";
-  const qs = `?type=${encodeURIComponent(type)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`;
+  const qs = `?type=${encodeURIComponent(type)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}&final_only=1&exclude_child_segments=1&library_scope=final_outputs`;
 
   const res = await fetch(joinUrl(DASH_BASE, `${candidatePath}${qs}`), {
     headers: { Authorization: `Bearer ${token}` },
@@ -635,7 +635,7 @@ export default function MediaLibraryScreen() {
       if (mode === "pick-face") return item?.studio === "face";
       if (mode === "build-fusion") return item?.studio === "face" || item?.studio === "audio";
       if (mode === "pick-audio") return item?.studio === "audio";
-      return item?.studio === "face" || item?.studio === "video";
+      return item?.studio === "face" || item?.studio === "audio" || item?.studio === "video";
     });
   }, [query.data, mode]);
 
@@ -931,7 +931,7 @@ export default function MediaLibraryScreen() {
         ? "Tap the thumbnail to preview and play audio, then use the one you want."
         : mode === "build-fusion"
           ? "Pick a face first. Audio selection happens inside Audio Studio."
-          : "Browse saved faces and videos.";
+          : "Browse saved faces, voice clips and finished videos.";
 
   return (
     <View style={styles.root}>
@@ -957,6 +957,7 @@ export default function MediaLibraryScreen() {
               <>
                 <HeaderPill label="All" active={filter === "all"} onPress={() => setFilter("all")} />
                 <HeaderPill label="Faces" active={filter === "face"} onPress={() => setFilter("face")} />
+                <HeaderPill label="Audio" active={filter === "audio"} onPress={() => setFilter("audio")} />
                 <HeaderPill label="Videos" active={filter === "video"} onPress={() => setFilter("video")} />
               </>
             )}
