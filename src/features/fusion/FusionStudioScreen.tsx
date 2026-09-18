@@ -70,7 +70,7 @@ type CinematicVideoType =
 type CinematicOutputProfile = "fast" | "premium";
 
 const TALKING_VIDEO_BETA_RELEASE = true;
-const CINEMATIC_VIDEO_COMING_SOON = true;
+const CINEMATIC_VIDEO_COMING_SOON = false;
 
 function clamp01(x: number) {
   return Math.max(0, Math.min(1, x));
@@ -2889,7 +2889,7 @@ const liveBillingValueLabel =
         <GlassCard style={{ marginTop: 12 }}>
           <Text style={{ color: DF.text, fontWeight: "900", fontSize: 14 }}>Launch lineup</Text>
           <Text style={{ color: DF.muted, marginTop: 6, fontWeight: "700", fontSize: 12 }}>
-            Talking Video Economy is included in the product today. Talking Video Premium is available as Beta Release, and Cinematic Video Direction is the next release.
+            Talking Video Economy is included in the product today. Talking Video Premium is available as Beta Release, and Cinematic Video Direction is available for directed cinematic storytelling.
           </Text>
 
           <View style={{ gap: 10, marginTop: 12 }}>
@@ -2902,7 +2902,7 @@ const liveBillingValueLabel =
               {
                 code: "CINEMATIC_VIDEO_DIRECTION" as VideoMode,
                 label: "Cinematic Video Direction",
-                detail: "Coming soon. Directed cinematic storytelling will follow after the Talking Video Beta launch.",
+                detail: "Directed cinematic storytelling with intent, camera, performance, and scene controls.",
               },
             ]).map((item) => {
               const active = videoMode === item.code;
