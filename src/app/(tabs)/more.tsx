@@ -38,7 +38,7 @@ const createItems: WorkspaceItem[] = [
 const manageItems: WorkspaceItem[] = [
   {
     title: "Saved Work",
-    subtitle: "Open finished faces and final videos without exposing internal scene outputs.",
+    subtitle: "Open saved faces, voice clips and final videos without exposing internal scene outputs.",
     icon: "albums-outline",
     route: "/media/library",
   },
