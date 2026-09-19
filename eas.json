@@ -23,6 +23,21 @@
       "environment": "production",
       "ios": {
         "distribution": "store"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.desifaces.ai",
+        "EXPO_PUBLIC_AUTH_BASE_URL": "https://api.desifaces.ai",
+        "EXPO_PUBLIC_CORE_BASE_URL": "https://api.desifaces.ai/core",
+        "EXPO_PUBLIC_FACE_BASE_URL": "https://api.desifaces.ai/face",
+        "EXPO_PUBLIC_AUDIO_BASE_URL": "https://api.desifaces.ai/audio",
+        "EXPO_PUBLIC_VIDEO_BASE_URL": "https://api.desifaces.ai/video",
+        "EXPO_PUBLIC_FUSION_BASE_URL": "https://api.desifaces.ai/video",
+        "EXPO_PUBLIC_DASHBOARD_BASE_URL": "https://api.desifaces.ai/dashboard",
+        "EXPO_PUBLIC_PRICING_BASE_URL": "https://api.desifaces.ai/pricing",
+        "EXPO_PUBLIC_DIRECTOR_BASE_URL": "https://api.desifaces.ai/director",
+        "EXPO_PUBLIC_ASSISTANT_BASE_URL": "https://api.desifaces.ai/assistant",
+        "EXPO_PUBLIC_FUSION_EXTENSION_BASE_URL": "https://api.desifaces.ai/fusion-extension",
+        "EXPO_PUBLIC_BILLING_RETURN_URL_BASE": "https://app.desifaces.ai/pricing/plan-billing"
       }
     },
     "development-testflight": {
