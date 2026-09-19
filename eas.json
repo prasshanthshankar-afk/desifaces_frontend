@@ -35,7 +35,16 @@
     }
   },
   "submit": {
-    "production": {},
+    "production": {
+      "android": {
+        "track": "production",
+        "releaseStatus": "completed"
+      },
+      "ios": {
+        "appleId": "prashanth@desifaces.ai",
+        "appleTeamId": "9GZ97FB9SW"
+      }
+    },
     "development-testflight": {}
   }
 }
