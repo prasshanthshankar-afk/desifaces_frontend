@@ -720,6 +720,6 @@ const styles = StyleSheet.create({
   confirmationPrice: { color: STUDIO.accentText, fontSize: 20, lineHeight: 25, fontWeight: "900" },
   confirmationMeta: { color: STUDIO.muted, fontSize: 12, lineHeight: 17, fontWeight: "700" },
   confirmationGuarantee: { color: STUDIO.text, fontSize: 11, lineHeight: 16, fontWeight: "800" },
-  confirmationActions: { flexDirection: "row", gap: 8, marginTop: 4 },
+  confirmationActions: { width: "100%", gap: 8, marginTop: 4 },
   pressed: { opacity: 0.76 },
 });
