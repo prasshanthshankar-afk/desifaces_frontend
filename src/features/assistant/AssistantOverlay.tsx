@@ -34,7 +34,7 @@ type ChatMessage = {
 };
 
 const SUPPORT_EMAIL = "support@desifaces.ai";
-// Piku is rendered locally as vector artwork; no image URI can fail at runtime.
+// Piku avatar is bundled locally; no remote image URI can fail at runtime.
 const C = {
   bg: "#090A0D",
   surface: "#17181D",
