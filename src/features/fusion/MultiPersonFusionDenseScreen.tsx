@@ -558,6 +558,7 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
                   <FinalVideoPlayer uri={videoUrl} />
                   <CompactButton
                     label="Open in Viewer"
+                    fill
                     onPress={() => router.push({
                       pathname: "/(tabs)/media/viewer" as any,
                       params: {
@@ -709,7 +710,7 @@ const styles = StyleSheet.create({
   finalMediaTitle: { color: STUDIO.text, fontSize: 12, fontWeight: "900" },
   video: { width: "100%", aspectRatio: 16 / 9, borderRadius: 12, backgroundColor: "#000" },
   finalMediaMeta: { color: STUDIO.muted, fontSize: 11, lineHeight: 16, fontWeight: "700" },
-  actions: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 7 },
+  actions: { width: "100%", gap: 7 },
   footerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, paddingHorizontal: 2 },
   footerTitle: { color: STUDIO.text, fontSize: 11, fontWeight: "900" },
   footerMeta: { color: STUDIO.muted, fontSize: 10, fontWeight: "800" },
