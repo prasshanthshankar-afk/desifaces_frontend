@@ -107,8 +107,6 @@ export default function TabsLayout() {
       <Tabs.Screen name="settings" options={hiddenTabOptions} />
       <Tabs.Screen name="billing" options={hiddenTabOptions} />
       <Tabs.Screen name="media" options={hiddenTabOptions} />
-      <Tabs.Screen name="music" options={hiddenTabOptions} />
-      <Tabs.Screen name="retail" options={hiddenTabOptions} />
     </Tabs>
   );
 }
