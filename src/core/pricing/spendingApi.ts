@@ -61,10 +61,9 @@ export type SpendingTransaction = {
 };
 
 function join(base: string, path: string): string {
-  return `${String(base || "").replace(/\\/+$/, "")}/${String(path || "").replace(
-    /^\\+/,
-    ""
-  )}`;
+  const cleanBase = String(base || "").replace(/\/+$/, "");
+  const cleanPath = String(path || "").replace(/^\/+/,"");
+  return `${cleanBase}/${cleanPath}`;
 }
 
 function normalizeBearer(token: string): string {
