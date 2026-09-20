@@ -6,6 +6,7 @@ layout = (root / "src/app/(tabs)/_layout.tsx").read_text()
 more = (root / "src/app/(tabs)/more.tsx").read_text()
 spending = (root / "src/app/pricing/spending-history.tsx").read_text()
 spending_card = (root / "src/components/pricing/SpendingSummaryCard.tsx").read_text()
+spending_api = (root / "src/core/pricing/spendingApi.ts").read_text()
 app_config = (root / "app.config.ts").read_text()
 eas_config = (root / "eas.json").read_text()
 story_route = (root / "src/app/(tabs)/face/story/[storyId].tsx").read_text()
@@ -25,8 +26,13 @@ for marker in ('title: "Home"', 'title: "Face"', 'title: "Voice"', 'title: "Vide
     assert marker in layout, marker
 
 # Secondary capabilities remain discoverable without crowding the primary tab bar.
-for hidden in ('name="more"', 'name="settings"', 'name="billing"', 'name="media"', 'name="music"', 'name="retail"'):
+for hidden in ('name="more"', 'name="settings"', 'name="billing"', 'name="media"'):
     assert hidden in layout, hidden
+
+for removed in ('name="music"', 'name="retail"'):
+    assert removed not in layout, removed
+assert not (root / "src/app/(tabs)/music").exists(), "music placeholder tab tree must not ship"
+assert not (root / "src/app/(tabs)/retail").exists(), "retail placeholder tab tree must not ship"
 
 for marker in (
     'Multi-Person',
@@ -46,6 +52,11 @@ for marker in ('Spending & transactions', 'Money paid', 'Credits purchased', 'TR
 
 for marker in ('credits used', 'money paid', 'Money paid and credits used are shown separately.'):
     assert marker in spending_card, marker
+
+# Match the Web BFF pricing identity contract so spending routes receive the
+# authenticated user selector expected by svc-pricing in production.
+for marker in ('normalizeBearer', 'jwtUserId', '"X-User-Id"', 'endpoints.pricing.spending.summary', 'endpoints.pricing.spending.transactions'):
+    assert marker in spending_api, marker
 
 # Multi-Person Story must retain the same canonical stage progression as Web.
 for marker in (
