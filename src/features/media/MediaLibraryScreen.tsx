@@ -37,7 +37,8 @@ const DF = {
 };
 
 type LibraryMode = "browse" | "pick-face" | "pick-audio" | "build-fusion";
-type LibraryFilter = "all" | "face" | "audio" | "video";
+type LibraryApiFilter = "all" | "face" | "audio" | "video";
+type LibraryFilter = LibraryApiFilter | "group-photo-conversation" | "multi-person-conversation";
 
 type LibraryItem = {
   library_id?: string;
@@ -118,8 +119,27 @@ function parseMode(value: any): LibraryMode {
 
 function parseFilter(value: any): LibraryFilter {
   const v = cleanParam(value).toLowerCase();
-  if (v === "face" || v === "audio" || v === "video") return v;
+  if (
+    v === "face" ||
+    v === "audio" ||
+    v === "video" ||
+    v === "group-photo-conversation" ||
+    v === "multi-person-conversation"
+  ) return v;
   return "all";
+}
+
+function apiFilterFor(filter: LibraryFilter): LibraryApiFilter {
+  return filter === "group-photo-conversation" || filter === "multi-person-conversation" ? "video" : filter;
+}
+
+function conversationKindOf(item: LibraryItem): "group_photo_conversation" | "multi_person_conversation" | "" {
+  const explicit = cleanParam(item?.reuse_payload?.conversation_kind || item?.conversation_kind).toLowerCase();
+  if (explicit === "group_photo_conversation" || explicit === "multi_person_conversation") return explicit;
+  const mode = cleanParam(item?.reuse_payload?.conversation_mode || item?.conversation_mode).toLowerCase();
+  if (mode === "shared_scene") return "group_photo_conversation";
+  if (mode === "ordered_speaker_shots") return "multi_person_conversation";
+  return "";
 }
 
 function joinUrl(base: string, path: any) {
@@ -375,7 +395,7 @@ async function fetchLibrary({
 }: {
   token: string;
   logout: () => Promise<void>;
-  type: LibraryFilter;
+  type: LibraryApiFilter;
   limit?: number;
   offset?: number;
 }) {
@@ -623,7 +643,7 @@ export default function MediaLibraryScreen() {
       fetchLibrary({
         token,
         logout: logout ?? (async () => {}),
-        type: filter,
+        type: apiFilterFor(filter),
         limit: 50,
         offset: 0,
       }),
@@ -635,9 +655,11 @@ export default function MediaLibraryScreen() {
       if (mode === "pick-face") return item?.studio === "face";
       if (mode === "build-fusion") return item?.studio === "face" || item?.studio === "audio";
       if (mode === "pick-audio") return item?.studio === "audio";
+      if (filter === "group-photo-conversation") return conversationKindOf(item) === "group_photo_conversation";
+      if (filter === "multi-person-conversation") return conversationKindOf(item) === "multi_person_conversation";
       return item?.studio === "face" || item?.studio === "video";
     });
-  }, [query.data, mode]);
+  }, [query.data, mode, filter]);
 
   const selectedFace = useMemo(
     () => items.find((item) => item?.library_id === selectedFaceId) ?? null,
@@ -931,7 +953,7 @@ export default function MediaLibraryScreen() {
         ? "Tap the thumbnail to preview and play audio, then use the one you want."
         : mode === "build-fusion"
           ? "Pick a face first. Audio selection happens inside Audio Studio."
-          : "Browse saved faces and videos.";
+          : "Browse saved faces, videos, group photo conversations and multi-person conversations.";
 
   return (
     <View style={styles.root}>
@@ -958,6 +980,16 @@ export default function MediaLibraryScreen() {
                 <HeaderPill label="All" active={filter === "all"} onPress={() => setFilter("all")} />
                 <HeaderPill label="Faces" active={filter === "face"} onPress={() => setFilter("face")} />
                 <HeaderPill label="Videos" active={filter === "video"} onPress={() => setFilter("video")} />
+                <HeaderPill
+                  label="Group Photo Conversation"
+                  active={filter === "group-photo-conversation"}
+                  onPress={() => setFilter("group-photo-conversation")}
+                />
+                <HeaderPill
+                  label="Multi-Person Conversation"
+                  active={filter === "multi-person-conversation"}
+                  onPress={() => setFilter("multi-person-conversation")}
+                />
               </>
             )}
           </View>
