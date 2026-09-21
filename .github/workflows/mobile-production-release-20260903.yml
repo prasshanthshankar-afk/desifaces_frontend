@@ -57,6 +57,9 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
       - name: Require Expo release token
         run: test -n "$EXPO_TOKEN"
 
@@ -77,6 +80,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: Require Expo release token
         run: test -n "$EXPO_TOKEN"
