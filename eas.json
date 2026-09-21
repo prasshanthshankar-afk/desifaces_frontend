@@ -57,7 +57,8 @@
       },
       "ios": {
         "appleId": "prashanth@desifaces.ai",
-        "appleTeamId": "9GZ97FB9SW"
+        "appleTeamId": "9GZ97FB9SW",
+        "ascAppId": "6770987492"
       }
     },
     "development-testflight": {}
