@@ -871,7 +871,7 @@ export default function MediaLibraryScreen() {
           router.push("/(tabs)/audio" as any);
           return;
         }
-        const imageUrl = pickImageUrl(item);
+        const imageUrl = pickFaceUrl(item);
         router.push({
           pathname: "/media/viewer",
           params: {
