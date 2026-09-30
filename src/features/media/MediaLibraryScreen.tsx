@@ -6,6 +6,7 @@ import {
   Pressable,
   FlatList,
   ActivityIndicator,
+  ScrollView,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
@@ -19,6 +20,14 @@ import { DASH_BASE, FACE_BASE } from "../../core/config/env";
 import { useCreatorFlow } from "../../core/flow/creatorFlowStore";
 import { saveCreateFlowContext } from "../../core/media/createFlow";
 import { useAccountPricingSnapshot } from "../../core/pricing/useAccountPricingSnapshot";
+import {
+  SAVED_WORK_FILTERS,
+  baseLibraryType,
+  canReuseAsStandaloneFace,
+  itemMatchesSavedWorkCategory,
+  savedWorkCategory,
+  type SavedWorkCategory,
+} from "./libraryTaxonomy";
 
 const DF = {
   bg: "#090B10",
@@ -37,7 +46,7 @@ const DF = {
 };
 
 type LibraryMode = "browse" | "pick-face" | "pick-audio" | "build-fusion";
-type LibraryFilter = "all" | "face" | "audio" | "video";
+type LibraryFilter = SavedWorkCategory;
 
 type LibraryItem = {
   library_id?: string;
@@ -117,10 +126,10 @@ function parseMode(value: any): LibraryMode {
 }
 
 function parseFilter(value: any): LibraryFilter {
-  const v = cleanParam(value).toLowerCase();
-  if (v === "face" || v === "audio" || v === "video") return v;
-  return "all";
+  const v = cleanParam(value).toLowerCase() as LibraryFilter;
+  return SAVED_WORK_FILTERS.some((item) => item.key === v) ? v : "all";
 }
+
 
 function joinUrl(base: string, path: any) {
   const b = String(base ?? "").replace(/\/+$/, "");
@@ -380,7 +389,8 @@ async function fetchLibrary({
   offset?: number;
 }) {
   const candidatePath = (endpoints as any)?.dashboard?.library ?? "/api/dashboard/library";
-  const qs = `?type=${encodeURIComponent(type)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}&final_only=1&exclude_child_segments=1&library_scope=final_outputs`;
+  const serverType = baseLibraryType(type);
+  const qs = `?type=${encodeURIComponent(serverType)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}&final_only=1&exclude_child_segments=1&library_scope=final_outputs`;
 
   const res = await fetch(joinUrl(DASH_BASE, `${candidatePath}${qs}`), {
     headers: { Authorization: `Bearer ${token}` },
@@ -632,12 +642,14 @@ export default function MediaLibraryScreen() {
   const items = useMemo(() => {
     const raw = Array.isArray(query.data?.items) ? query.data?.items ?? [] : [];
     return raw.filter((item) => {
-      if (mode === "pick-face") return item?.studio === "face";
-      if (mode === "build-fusion") return item?.studio === "face" || item?.studio === "audio";
+      if (mode === "pick-face") return item?.studio === "face" && canReuseAsStandaloneFace(item);
+      if (mode === "build-fusion") {
+        return (item?.studio === "face" && canReuseAsStandaloneFace(item)) || item?.studio === "audio";
+      }
       if (mode === "pick-audio") return item?.studio === "audio";
-      return item?.studio === "face" || item?.studio === "audio" || item?.studio === "video";
+      return itemMatchesSavedWorkCategory(item, filter);
     });
-  }, [query.data, mode]);
+  }, [filter, query.data, mode]);
 
   const selectedFace = useMemo(
     () => items.find((item) => item?.library_id === selectedFaceId) ?? null,
@@ -816,14 +828,15 @@ export default function MediaLibraryScreen() {
   );
 
   const primaryActionLabel = useCallback((item: LibraryItem) => {
-    if (mode === "pick-face" && item?.studio === "face") return "Use face";
+    if (mode === "pick-face" && item?.studio === "face" && canReuseAsStandaloneFace(item)) return "Use face";
     if (mode === "pick-audio" && item?.studio === "audio") return "Use audio";
     if (mode === "build-fusion") {
       if (item?.studio === "face") return selectedFaceId === item?.library_id ? "Face selected" : "Select face";
       if (item?.studio === "audio") return selectedAudioId === item?.library_id ? "Audio selected" : "Select audio";
       return "Open";
     }
-    if (item?.studio === "face") return "Use face";
+    if (item?.studio === "face" && canReuseAsStandaloneFace(item)) return "Use face";
+    if (item?.studio === "face") return "Open";
     if (item?.studio === "audio") return "Use audio";
     return "Preview";
   }, [mode, selectedFaceId, selectedAudioId]);
@@ -853,8 +866,22 @@ export default function MediaLibraryScreen() {
         }
       }
       if (item?.studio === "face") {
-        await applyFace(item);
-        router.push("/(tabs)/audio" as any);
+        if (canReuseAsStandaloneFace(item)) {
+          await applyFace(item);
+          router.push("/(tabs)/audio" as any);
+          return;
+        }
+        const imageUrl = pickFaceUrl(item);
+        router.push({
+          pathname: "/media/viewer",
+          params: {
+            type: "image",
+            image_url: imageUrl,
+            url: imageUrl,
+            title: cleanParam(item?.title) || "Saved image",
+            subtitle: itemSubtitle(item),
+          } as any,
+        } as any);
         return;
       }
       await openItem(item);
@@ -948,20 +975,28 @@ export default function MediaLibraryScreen() {
           <Text style={styles.heroTitle}>{title}</Text>
           <Text style={styles.heroText}>{subtitle}</Text>
 
-          <View style={styles.filterRow}>
-            {mode === "pick-audio" ? (
-              <HeaderPill label="Audio" active />
-            ) : mode === "pick-face" || mode === "build-fusion" ? (
-              <HeaderPill label="Faces" active />
-            ) : (
-              <>
-                <HeaderPill label="All" active={filter === "all"} onPress={() => setFilter("all")} />
-                <HeaderPill label="Faces" active={filter === "face"} onPress={() => setFilter("face")} />
-                <HeaderPill label="Audio" active={filter === "audio"} onPress={() => setFilter("audio")} />
-                <HeaderPill label="Videos" active={filter === "video"} onPress={() => setFilter("video")} />
-              </>
-            )}
-          </View>
+          {mode === "pick-audio" ? (
+            <View style={styles.filterRow}><HeaderPill label="Audio" active /></View>
+          ) : mode === "pick-face" || mode === "build-fusion" ? (
+            <View style={styles.filterRow}><HeaderPill label="Faces" active /></View>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filterScroll}
+            >
+              <View style={styles.filterRow}>
+                {SAVED_WORK_FILTERS.map((item) => (
+                  <HeaderPill
+                    key={item.key}
+                    label={item.label}
+                    active={filter === item.key}
+                    onPress={() => setFilter(item.key)}
+                  />
+                ))}
+              </View>
+            </ScrollView>
+          )}
 
           {mode === "build-fusion" ? (
             <View style={styles.selectionSummary}>
@@ -1057,6 +1092,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: "700",
   },
+  filterScroll: { paddingRight: 12 },
   filterRow: {
     flexDirection: "row",
     flexWrap: "wrap",
