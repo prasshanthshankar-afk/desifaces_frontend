@@ -8,6 +8,8 @@ import DFHeader from "../../../../core/ui/DFHeader";
 import MultiPersonAudioWorkspaceScreen from "../../../../features/audio/MultiPersonAudioWorkspaceScreen";
 import { useAssistantContextOverride } from "../../../../features/assistant/AssistantContext";
 import MultiPersonFaceSavedWorkScreen from "../../../../features/face/MultiPersonFaceSavedWorkScreen";
+import SharedSceneSetupScreen from "../../../../features/face/SharedSceneSetupScreen";
+import { getSharedSceneState } from "../../../../features/face/api/sharedScene";
 import MultiPersonFusionDenseScreen from "../../../../features/fusion/MultiPersonFusionDenseScreen";
 import MultiPersonStoryFinalScreen from "../../../../features/story/MultiPersonStoryFinalScreen";
 
@@ -39,11 +41,14 @@ export default function StoryStudioRoute() {
   const params = useLocalSearchParams<{
     storyId?: string | string[];
     stage?: string | string[];
+    experience?: string | string[];
   }>();
   const storyId = String(one(params.storyId) || "").trim();
   const explicitStage = normalizeStage(one(params.stage));
+  const sharedSceneMode = String(one(params.experience) || "").trim() === "shared_scene";
   const [resolvedStage, setResolvedStage] = useState<StoryStage | null>(explicitStage);
   const [error, setError] = useState("");
+  const [sharedPhase, setSharedPhase] = useState<string>("");
   const activeRef = useRef(true);
 
   useAssistantContextOverride(
@@ -51,13 +56,40 @@ export default function StoryStudioRoute() {
       ? {
           screen: resolvedStage ? `story_${resolvedStage}` : "story",
           storyId,
+          experience: sharedSceneMode ? "shared_scene" : "separate_faces",
         }
       : null
   );
 
   const refreshCanonicalStage = useCallback(async () => {
     if (!storyId) return;
-    const workflow = await ensureStoryStudioWorkflow(storyId);
+    const workflow = await ensureStoryStudioWorkflow(
+      storyId,
+      sharedSceneMode ? "shared_scene" : "ordered_speaker_shots"
+    );
+
+    if (sharedSceneMode) {
+      const shared = await getSharedSceneState(workflow.workflow_id);
+      if (!activeRef.current) return;
+      const phase = String(shared?.phase || "").trim();
+      setSharedPhase(phase);
+      if (["people", "group_photo_source", "group_photo_prepare", "group_photo_map", "group_photo_approve"].includes(phase)) {
+        setResolvedStage("face");
+        return;
+      }
+      if (phase === "audio") {
+        setResolvedStage("audio");
+        return;
+      }
+      if (phase === "video") {
+        setResolvedStage("fusion");
+        return;
+      }
+      if (phase === "final") {
+        setResolvedStage("story_final");
+        return;
+      }
+    }
     if (!activeRef.current) return;
     const hasStoryFinal = (workflow?.stages ?? []).some(
       (stage) =>
@@ -74,7 +106,7 @@ export default function StoryStudioRoute() {
       const requested = current || explicitStage;
       return stageRank(canonical) > stageRank(requested) ? canonical : requested || canonical;
     });
-  }, [explicitStage, storyId]);
+  }, [explicitStage, sharedSceneMode, storyId]);
 
   useEffect(() => {
     activeRef.current = true;
@@ -132,6 +164,20 @@ export default function StoryStudioRoute() {
             <Text style={styles.loading}>Opening Story…</Text>
           </>
         )}
+      </View>
+    );
+  }
+
+  if (
+    sharedSceneMode &&
+    ["people", "group_photo_source", "group_photo_prepare", "group_photo_map", "group_photo_approve"].includes(sharedPhase)
+  ) {
+    return (
+      <View style={styles.safe}>
+        <DFHeader subtitle="Group Photo Conversation" onMenuPress={openHamburgerMenu} onPressMeta={openPlanScreen} />
+        <View style={styles.body}>
+          <SharedSceneSetupScreen storyId={storyId} />
+        </View>
       </View>
     );
   }
