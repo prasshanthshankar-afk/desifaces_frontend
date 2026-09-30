@@ -73,7 +73,7 @@ export default function MultiPersonFaceRoute() {
           >
             <Text style={styles.experienceTitle}>Add people one by one</Text>
             <Text style={styles.experienceText}>
-              Create or reuse each person's Face separately, approve the cast, then create Audio and Video.
+              Create or reuse each person’s Face separately, approve the cast, then create Audio and Video.
             </Text>
           </Pressable>
         </View>
