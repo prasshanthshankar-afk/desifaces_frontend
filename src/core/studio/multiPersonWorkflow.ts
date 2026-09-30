@@ -140,12 +140,12 @@ export type ConversationMode = "ordered_speaker_shots" | "shared_scene";
 
 export async function ensureStoryStudioWorkflow(
   storyId: string,
-  conversationMode: ConversationMode = "ordered_speaker_shots"
+  conversationMode?: ConversationMode
 ) {
   const view = await api.post<StudioWorkflowView>(
     DIRECTOR_BASE,
     `/api/director/stories/${encodeURIComponent(storyId)}/studio-workflows`,
-    { conversation_mode: conversationMode }
+    conversationMode ? { conversation_mode: conversationMode } : {}
   );
   return normalizeStudioWorkflow(view);
 }
