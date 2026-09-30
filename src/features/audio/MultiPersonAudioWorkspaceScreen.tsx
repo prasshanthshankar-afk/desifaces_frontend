@@ -377,7 +377,7 @@ export default function MultiPersonAudioWorkspaceScreen({
         setRefreshing(false);
       }
     }
-  }, [hydrateProfiles, storyId, token]);
+  }, [conversationMode, hydrateProfiles, storyId, token]);
 
   useEffect(() => { void load(); }, [load]);
 
