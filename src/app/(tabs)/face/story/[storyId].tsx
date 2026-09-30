@@ -46,7 +46,17 @@ export default function StoryStudioRoute() {
   }>();
   const storyId = String(one(params.storyId) || "").trim();
   const explicitStage = normalizeStage(one(params.stage));
-  const sharedSceneMode = String(one(params.experience) || "").trim() === "shared_scene";
+  const requestedExperience = String(one(params.experience) || "").trim();
+  const requestedConversationMode =
+    requestedExperience === "shared_scene"
+      ? "shared_scene"
+      : requestedExperience === "separate_faces"
+        ? "ordered_speaker_shots"
+        : undefined;
+  const [detectedConversationMode, setDetectedConversationMode] = useState<
+    "ordered_speaker_shots" | "shared_scene" | ""
+  >(requestedConversationMode || "");
+  const sharedSceneMode = detectedConversationMode === "shared_scene";
   const [resolvedStage, setResolvedStage] = useState<StoryStage | null>(explicitStage);
   const [error, setError] = useState("");
   const [sharedPhase, setSharedPhase] = useState<string>("");
@@ -66,10 +76,16 @@ export default function StoryStudioRoute() {
     if (!storyId) return;
     const workflow = await ensureStoryStudioWorkflow(
       storyId,
-      sharedSceneMode ? "shared_scene" : "ordered_speaker_shots"
+      requestedConversationMode
     );
+    const canonicalConversationMode =
+      String(workflow?.metadata?.conversation_mode || "").trim() === "shared_scene"
+        ? "shared_scene"
+        : "ordered_speaker_shots";
+    if (!activeRef.current) return;
+    setDetectedConversationMode(canonicalConversationMode);
 
-    if (sharedSceneMode) {
+    if (canonicalConversationMode === "shared_scene") {
       const shared = await getSharedSceneState(workflow.workflow_id);
       if (!activeRef.current) return;
       const phase = String(shared?.phase || "").trim();
@@ -107,7 +123,7 @@ export default function StoryStudioRoute() {
       const requested = current || explicitStage;
       return stageRank(canonical) > stageRank(requested) ? canonical : requested || canonical;
     });
-  }, [explicitStage, sharedSceneMode, storyId]);
+  }, [explicitStage, requestedConversationMode, storyId]);
 
   useEffect(() => {
     activeRef.current = true;
