@@ -94,6 +94,7 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
   const [photoUrl, setPhotoUrl] = useState("");
   const [photoMediaId, setPhotoMediaId] = useState("");
   const [dimensions, setDimensions] = useState<SharedSceneDimensions | null>(null);
+  const [renderedSize, setRenderedSize] = useState<{ width: number; height: number } | null>(null);
   const [targets, setTargets] = useState<Record<string, SharedScenePoint>>({});
   const [activeSpeakerId, setActiveSpeakerId] = useState("");
 
@@ -383,17 +384,10 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
         setError("Select a speaker first, then tap that person's face.");
         return;
       }
-      const width = Number(event?.nativeEvent?.target?.width || 0);
-      const height = Number(event?.nativeEvent?.target?.height || 0);
       const locationX = Number(event?.nativeEvent?.locationX || 0);
       const locationY = Number(event?.nativeEvent?.locationY || 0);
-
-      // React Native PressEvent gives locationX/locationY but not rendered size
-      // consistently across platforms. Use a measured wrapper size recorded by
-      // onLayout when available.
-      const rendered = (event?.currentTarget as any)?.__dfSize;
-      const renderedWidth = Number(rendered?.width || width);
-      const renderedHeight = Number(rendered?.height || height);
+      const renderedWidth = Number(renderedSize?.width || 0);
+      const renderedHeight = Number(renderedSize?.height || 0);
       if (!(renderedWidth > 0 && renderedHeight > 0)) {
         setError("The photo dimensions are not ready yet. Tap the photo again.");
         return;
@@ -421,7 +415,7 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
         setError(errorText(reason));
       }
     },
-    [activeSpeakerId, dimensions, photoMediaId, stage, targets, workflow]
+    [activeSpeakerId, dimensions, photoMediaId, renderedSize, stage, targets, workflow]
   );
 
   const allMapped = useMemo(
@@ -667,16 +661,12 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
               style={styles.mapFrame}
               onLayout={(event) => {
                 const size = event.nativeEvent.layout;
-                (event.currentTarget as any).__dfSize = { width: size.width, height: size.height };
+                setRenderedSize({ width: size.width, height: size.height });
               }}
             >
               <Pressable
                 style={StyleSheet.absoluteFill}
-                onPress={(event) => {
-                  const layout = (event.currentTarget as any).__dfSize;
-                  (event as any).currentTarget.__dfSize = layout;
-                  void mapSpeaker(event);
-                }}
+                onPress={(event) => void mapSpeaker(event)}
               >
                 <ExpoImage
                   source={{ uri: photoUrl }}
