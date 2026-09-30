@@ -136,13 +136,26 @@ export function getStoryWorkspace(storyId: string) {
   );
 }
 
-export async function ensureStoryStudioWorkflow(storyId: string) {
+export type ConversationMode = "ordered_speaker_shots" | "shared_scene";
+
+export async function ensureStoryStudioWorkflow(
+  storyId: string,
+  conversationMode: ConversationMode = "ordered_speaker_shots"
+) {
   const view = await api.post<StudioWorkflowView>(
     DIRECTOR_BASE,
     `/api/director/stories/${encodeURIComponent(storyId)}/studio-workflows`,
-    {}
+    { conversation_mode: conversationMode }
   );
   return normalizeStudioWorkflow(view);
+}
+
+export function workflowConversationMode(
+  workflow: StudioWorkflowView | null | undefined
+): ConversationMode {
+  return String(workflow?.metadata?.conversation_mode || "").trim() === "shared_scene"
+    ? "shared_scene"
+    : "ordered_speaker_shots";
 }
 
 export async function getStudioWorkflow(workflowId: string) {
