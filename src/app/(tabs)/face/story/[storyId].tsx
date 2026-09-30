@@ -11,6 +11,7 @@ import MultiPersonFaceSavedWorkScreen from "../../../../features/face/MultiPerso
 import SharedSceneSetupScreen from "../../../../features/face/SharedSceneSetupScreen";
 import { getSharedSceneState } from "../../../../features/face/api/sharedScene";
 import MultiPersonFusionDenseScreen from "../../../../features/fusion/MultiPersonFusionDenseScreen";
+import SharedSceneFusionScreen from "../../../../features/fusion/SharedSceneFusionScreen";
 import MultiPersonStoryFinalScreen from "../../../../features/story/MultiPersonStoryFinalScreen";
 
 type StoryStage = "face" | "audio" | "fusion" | "story_final";
@@ -187,10 +188,22 @@ export default function StoryStudioRoute() {
   }
 
   if (resolvedStage === "audio") {
-    return <MultiPersonAudioWorkspaceScreen storyId={storyId} />;
+    return (
+      <MultiPersonAudioWorkspaceScreen
+        storyId={storyId}
+        conversationMode={sharedSceneMode ? "shared_scene" : "ordered_speaker_shots"}
+      />
+    );
   }
   if (resolvedStage === "fusion") {
-    return <MultiPersonFusionDenseScreen storyId={storyId} />;
+    return sharedSceneMode ? (
+      <SharedSceneFusionScreen storyId={storyId} />
+    ) : (
+      <MultiPersonFusionDenseScreen
+        storyId={storyId}
+        conversationMode="ordered_speaker_shots"
+      />
+    );
   }
 
   return (
