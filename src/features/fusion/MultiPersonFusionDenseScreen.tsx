@@ -51,7 +51,10 @@ import {
   type StudioWorkflowView,
 } from "./api/multiPersonStory";
 
-type Props = { storyId: string };
+type Props = {
+  storyId: string;
+  conversationMode?: "ordered_speaker_shots" | "shared_scene";
+};
 type StageMap<T> = Record<string, T>;
 
 type ConfirmationState = {
@@ -179,7 +182,10 @@ function ReadinessItem({ label, value, ready }: { label: string; value: string; 
   );
 }
 
-export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
+export default function MultiPersonFusionDenseScreen({
+  storyId,
+  conversationMode = "ordered_speaker_shots",
+}: Props) {
   const viewport = useStudioViewport();
   const [workspace, setWorkspace] = useState<StoryWorkspaceView | null>(null);
   const [workflow, setWorkflow] = useState<StudioWorkflowView | null>(null);
@@ -213,7 +219,7 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
     try {
       const [nextWorkspace, initialWorkflow] = await Promise.all([
         getStoryWorkspace(storyId),
-        ensureStoryStudioWorkflow(storyId),
+        ensureStoryStudioWorkflow(storyId, conversationMode),
       ]);
       let latestWorkflow = initialWorkflow;
       const recovered: StageMap<FusionSyncResult> = {};
@@ -245,7 +251,7 @@ export default function MultiPersonFusionDenseScreen({ storyId }: Props) {
         setRefreshing(false);
       }
     }
-  }, [storyId]);
+  }, [conversationMode, storyId]);
 
   useEffect(() => { void load(); }, [load]);
 
