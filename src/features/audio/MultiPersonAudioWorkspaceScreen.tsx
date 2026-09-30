@@ -64,7 +64,10 @@ import {
   type StudioWorkflowView,
 } from "./api/multiPersonStory";
 
-type Props = { storyId: string };
+type Props = {
+  storyId: string;
+  conversationMode?: "ordered_speaker_shots" | "shared_scene";
+};
 type StageMap<T> = Record<string, T>;
 type PlayerHandle = ReturnType<typeof createAudioPlayer>;
 type PickerKind = "locale" | "voice" | "style";
@@ -224,7 +227,10 @@ function ChoiceModal({
   );
 }
 
-export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
+export default function MultiPersonAudioWorkspaceScreen({
+  storyId,
+  conversationMode = "ordered_speaker_shots",
+}: Props) {
   const viewport = useStudioViewport();
   const { token } = useAuth();
   const [workspace, setWorkspace] = useState<StoryWorkspaceView | null>(null);
@@ -323,7 +329,7 @@ export default function MultiPersonAudioWorkspaceScreen({ storyId }: Props) {
     try {
       const [initialWorkspace, initialWorkflow, localeResponse, countryResponse] = await Promise.all([
         getStoryWorkspace(storyId),
-        ensureStoryStudioWorkflow(storyId),
+        ensureStoryStudioWorkflow(storyId, conversationMode),
         fetchAudioLocales(token || undefined),
         fetchAudioCountries(token || undefined),
       ]);
