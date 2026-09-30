@@ -128,7 +128,7 @@ const styles = StyleSheet.create({
     color: STUDIO.muted,
     fontSize: 9.5,
     lineHeight: 14,
-    fontWeight: "650",
+    fontWeight: "600",
     marginTop: 5,
   },
   pressed: { opacity: 0.76 },
