@@ -5,6 +5,7 @@ type AssistantContextOverride = {
   storyId?: string;
   sceneId?: string;
   participantId?: string;
+  experience?: "shared_scene" | "separate_faces";
 };
 
 type AssistantContextValue = {
@@ -32,6 +33,7 @@ export function useAssistantContextOverride(value: AssistantContextOverride | nu
   const storyId = value?.storyId;
   const sceneId = value?.sceneId;
   const participantId = value?.participantId;
+  const experience = value?.experience;
   const enabled = Boolean(value);
 
   useEffect(() => {
@@ -39,7 +41,7 @@ export function useAssistantContextOverride(value: AssistantContextOverride | nu
       setOverride(null);
       return;
     }
-    setOverride({ screen, storyId, sceneId, participantId });
+    setOverride({ screen, storyId, sceneId, participantId, experience });
     return () => setOverride(null);
-  }, [enabled, participantId, sceneId, screen, setOverride, storyId]);
+  }, [enabled, experience, participantId, sceneId, screen, setOverride, storyId]);
 }
