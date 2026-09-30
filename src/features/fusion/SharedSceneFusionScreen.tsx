@@ -4,7 +4,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 
@@ -30,8 +29,7 @@ function errorText(error: any) {
 
 export default function SharedSceneFusionScreen({ storyId }: { storyId: string }) {
   const [state, setState] = useState<SharedSceneWorkflowState | null>(null);
-  const [mode, setMode] = useState<"precise_lipsync" | "natural_motion">("precise_lipsync");
-  const [prompt, setPrompt] = useState("");
+  const mode = "precise_lipsync" as const;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -47,10 +45,6 @@ export default function SharedSceneFusionScreen({ storyId }: { storyId: string }
 
   const save = useCallback(async () => {
     if (!state?.video?.stage_run_id) return;
-    if (mode === "natural_motion" && !prompt.trim()) {
-      setError("Describe the natural motion before saving video direction.");
-      return;
-    }
     setBusy(true);
     setError("");
     try {
@@ -58,8 +52,8 @@ export default function SharedSceneFusionScreen({ storyId }: { storyId: string }
         state.workflow_id,
         state.video.stage_run_id,
         {
-          motion_mode: mode,
-          video_prompt: mode === "natural_motion" ? prompt.trim() : null,
+          motion_mode: "precise_lipsync",
+          video_prompt: null,
         }
       );
       await load();
@@ -68,7 +62,7 @@ export default function SharedSceneFusionScreen({ storyId }: { storyId: string }
     } finally {
       setBusy(false);
     }
-  }, [load, mode, prompt, state]);
+  }, [load, state]);
 
   if (!state) {
     return (
@@ -98,37 +92,17 @@ export default function SharedSceneFusionScreen({ storyId }: { storyId: string }
           Save the motion direction before checking the video price. The approved group photo and speaker mapping stay locked.
         </Text>
 
-        <Pressable
-          onPress={() => setMode("precise_lipsync")}
-          style={[styles.choice, mode === "precise_lipsync" && styles.choiceActive]}
-        >
-          <Text style={styles.choiceTitle}>Precise lip-sync</Text>
+        <View style={[styles.choice, styles.choiceActive]}>
+          <Text style={styles.choiceTitle}>Precise lip-sync · Fast</Text>
           <Text style={styles.choiceText}>
-            Keep the shared photo visually stable and focus motion on the mapped speaker.
+            Current launch mode. Keep the shared photo visually stable and focus motion on the mapped active speaker.
           </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => setMode("natural_motion")}
-          style={[styles.choice, mode === "natural_motion" && styles.choiceActive]}
-        >
-          <Text style={styles.choiceTitle}>Natural motion</Text>
-          <Text style={styles.choiceText}>
-            Add broader natural movement while preserving the mapped speakers and shared scene.
+        </View>
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>
+            Enhanced Natural motion is temporarily withheld to match the current web launch experience.
           </Text>
-        </Pressable>
-
-        {mode === "natural_motion" ? (
-          <TextInput
-            value={prompt}
-            onChangeText={setPrompt}
-            placeholder="Describe the natural motion you want in the conversation."
-            placeholderTextColor={STUDIO.faint}
-            multiline
-            textAlignVertical="top"
-            style={styles.input}
-          />
-        ) : null}
+        </View>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -211,17 +185,19 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     marginTop: 3,
   },
-  input: {
-    minHeight: 96,
-    borderRadius: 12,
+  notice: {
+    marginTop: 10,
+    borderRadius: 11,
     borderWidth: 1,
     borderColor: STUDIO.border,
-    backgroundColor: STUDIO.bg,
-    color: STUDIO.text,
+    backgroundColor: STUDIO.surfaceSoft,
     padding: 10,
-    fontSize: 11,
-    lineHeight: 17,
-    marginTop: 10,
+  },
+  noticeText: {
+    color: STUDIO.muted,
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: "700",
   },
   error: {
     color: "#FFC0C6",
