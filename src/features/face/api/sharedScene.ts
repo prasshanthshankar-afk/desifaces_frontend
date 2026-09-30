@@ -232,6 +232,21 @@ export async function uploadValidatedGroupPhoto(params: {
   return { uploaded, media_asset_id: id, image_url: url, validation: storedValidation };
 }
 
+export function validateStoredGroupPhoto(
+  mediaAssetIdValue: string,
+  expectedSpeakers: number
+) {
+  return api.post<GroupPhotoValidation>(
+    FACE_BASE,
+    endpoints.face.groupPhoto.validateAsset,
+    {
+      media_asset_id: mediaAssetIdValue,
+      expected_speakers: expectedSpeakers,
+    },
+    { timeoutMs: 90000 }
+  );
+}
+
 export function persistSharedSceneDraft(
   workflowId: string,
   stageRunId: string,
