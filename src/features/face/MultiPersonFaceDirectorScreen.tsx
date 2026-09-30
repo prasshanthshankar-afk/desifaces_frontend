@@ -46,7 +46,14 @@ const RUNNING_STATES = new Set([
   "compiling",
 ]);
 
-export default function MultiPersonFaceDirectorScreen() {
+export type MultiPersonExperience = "separate_faces" | "shared_scene";
+
+export default function MultiPersonFaceDirectorScreen({
+  experience = "separate_faces",
+}: {
+  experience?: MultiPersonExperience;
+}) {
+  const sharedSceneMode = experience === "shared_scene";
   const viewport = useStudioViewport();
   const [brief, setBrief] = useState("");
   const [run, setRun] = useState<DirectorRunView | null>(null);
@@ -95,7 +102,12 @@ export default function MultiPersonFaceDirectorScreen() {
   const submitBrief = useCallback(async () => {
     const text = brief.trim();
     if (!text) {
-      Alert.alert("Multi-Person Face", "Describe the people and scene you want to create.");
+      Alert.alert(
+        "Multi-Person Studio",
+        sharedSceneMode
+          ? "Describe the people and conversation you want to create."
+          : "Describe the people and scene you want to create."
+      );
       return;
     }
 
@@ -107,10 +119,17 @@ export default function MultiPersonFaceDirectorScreen() {
         text,
         locale: "en",
         desired_scene_count: 1,
-        constraints: {
-          workflow: "face_cast_first",
-          human_review_required: true,
-        },
+        constraints: sharedSceneMode
+          ? {
+              workflow: "shared_scene_conversation",
+              conversation_mode: "shared_scene",
+              human_review_required: true,
+            }
+          : {
+              workflow: "face_cast_first",
+              conversation_mode: "ordered_speaker_shots",
+              human_review_required: true,
+            },
       });
       if (mounted.current) setRun(next);
     } catch (error) {
@@ -118,7 +137,7 @@ export default function MultiPersonFaceDirectorScreen() {
     } finally {
       if (mounted.current) setSubmitting(false);
     }
-  }, [brief]);
+  }, [brief, sharedSceneMode]);
 
   const review = useCallback(
     async (approved: boolean) => {
@@ -146,9 +165,12 @@ export default function MultiPersonFaceDirectorScreen() {
     if (!readyStoryId) return;
     router.push({
       pathname: "/(tabs)/face/story/[storyId]",
-      params: { storyId: readyStoryId },
+      params: {
+        storyId: readyStoryId,
+        experience: sharedSceneMode ? "shared_scene" : "separate_faces",
+      },
     } as any);
-  }, [readyStoryId]);
+  }, [readyStoryId, sharedSceneMode]);
 
   const reset = useCallback(() => {
     setRun(null);
@@ -167,10 +189,16 @@ export default function MultiPersonFaceDirectorScreen() {
         ]}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.eyebrow}>MULTI-PERSON FACE</Text>
-        <Text style={styles.title}>Create the cast from your intent</Text>
+        <Text style={styles.eyebrow}>MULTI-PERSON STUDIO</Text>
+        <Text style={styles.title}>
+          {sharedSceneMode
+            ? "Turn one group photo into a real conversation"
+            : "Add people one by one, then build the conversation"}
+        </Text>
         <Text style={styles.subtitle}>
-          Describe the people and situation. The Creative Director will propose a structured story plan for your review before Face Studio generates anyone.
+          {sharedSceneMode
+            ? "Describe the people, topic and desired outcome. Creative Director prepares speaker-attributed dialogue for review before you create or upload the one group photo used by the conversation."
+            : "Describe the people and situation. Creative Director proposes the cast and story plan for review before Face Studio generates anyone."}
         </Text>
 
         {!run ? (
@@ -182,7 +210,11 @@ export default function MultiPersonFaceDirectorScreen() {
               editable={!submitting}
               multiline
               textAlignVertical="top"
-              placeholder="Example: Ananya, 35, and her father Ravi, 65, are in their Chennai ancestral home discussing how to reopen a community arts space. Create two distinct, natural, expressive characters."
+              placeholder={
+                sharedSceneMode
+                  ? "Example: Maya and Arjun are colleagues discussing whether AI can help small businesses while people remain responsible for important decisions. Give both speakers natural alternating dialogue."
+                  : "Example: Ananya, 35, and her father Ravi, 65, are in their Chennai ancestral home discussing how to reopen a community arts space. Create two distinct, natural, expressive characters."
+              }
               placeholderTextColor={STUDIO.faint}
               style={styles.input}
             />
@@ -198,7 +230,9 @@ export default function MultiPersonFaceDirectorScreen() {
               {submitting ? (
                 <ActivityIndicator color="#1c1208" />
               ) : (
-                <Text style={styles.primaryText}>Ask Creative Director</Text>
+                <Text style={styles.primaryText}>
+                  {sharedSceneMode ? "Plan group-photo conversation" : "Ask Creative Director"}
+                </Text>
               )}
             </Pressable>
           </View>
@@ -290,7 +324,9 @@ export default function MultiPersonFaceDirectorScreen() {
               <View style={styles.card}>
                 <Text style={styles.sectionTitle}>Human review</Text>
                 <Text style={styles.helper}>
-                  Approve this Director plan to create the canonical Story and unlock the participant Face workflow. Or request a revision before any Face provider cost is incurred.
+                  {sharedSceneMode
+                    ? "Approve this conversation plan before choosing the group-photo source. No Face, Audio or Video provider cost is incurred until you explicitly check and confirm pricing."
+                    : "Approve this Director plan to create the canonical Story and unlock the participant Face workflow. Or request a revision before any Face provider cost is incurred."}
                 </Text>
                 <TextInput
                   value={feedback}
@@ -328,15 +364,21 @@ export default function MultiPersonFaceDirectorScreen() {
 
             {run.state === "ready" && readyStoryId ? (
               <View style={styles.readyCard}>
-                <Text style={styles.readyTitle}>Story ready for Face Studio</Text>
+                <Text style={styles.readyTitle}>
+                  {sharedSceneMode ? "Conversation ready for Group Photo Setup" : "Story ready for Face Studio"}
+                </Text>
                 <Text style={styles.readyText}>
-                  {run.workspace?.participants?.length || plan?.participants?.length || 0} participant(s) are now canonical. Face generation still requires pricing confirmation and individual HITL approval.
+                  {sharedSceneMode
+                    ? `${run.workspace?.participants?.length || plan?.participants?.length || 0} speaker(s) are now canonical. Next, confirm the people and prepare one group photo before Audio or Video can start.`
+                    : `${run.workspace?.participants?.length || plan?.participants?.length || 0} participant(s) are now canonical. Face generation still requires pricing confirmation and individual HITL approval.`}
                 </Text>
                 <Pressable
                   onPress={openFaceCast}
                   style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
                 >
-                  <Text style={styles.primaryText}>Open Face Cast</Text>
+                  <Text style={styles.primaryText}>
+                    {sharedSceneMode ? "Open Group Photo Setup" : "Open Face Cast"}
+                  </Text>
                 </Pressable>
               </View>
             ) : null}
