@@ -442,6 +442,12 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
       });
       const latest = await getStudioWorkflow(workflow.workflow_id);
       setWorkflow(latest);
+      const canonical = await getSharedSceneState(workflow.workflow_id);
+      setState(canonical);
+      if (canonical.video?.supported === false || canonical.people.speaker_count !== 2) {
+        setMessage("Group photo approved and saved. Video conversation and lip-sync currently support 2 people only, so Audio and Video will not be started for this group.");
+        return;
+      }
       setMessage("Group photo approved. Opening conversation voices.");
       router.replace({
         pathname: "/(tabs)/face/story/[storyId]",
@@ -481,6 +487,20 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
         Complete only the current phase. desifaces will not unlock Audio or Video until the people and group photo are explicitly approved.
       </Text>
 
+      {state.people.speaker_count > 2 ? (
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>
+            You can create, edit and save this {state.people.speaker_count}-person group photo. Video conversation and lip-sync currently support 2 people only. No Audio or Video credits will be requested from this workflow after the photo is approved.
+          </Text>
+        </View>
+      ) : null}
+      {state.phase === "group_photo_complete" ? (
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>
+            Group photo ready. It remains available for image use and Saved Work. 3–4 person group-photo video and lip-sync will be introduced after additional testing.
+          </Text>
+        </View>
+      ) : null}
       {message ? <View style={styles.notice}><Text style={styles.noticeText}>{message}</Text></View> : null}
       {error ? <View style={styles.errorBox}><Text style={styles.error}>{error}</Text></View> : null}
 
@@ -688,7 +708,13 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
             onPress={() => void approvePhoto()}
             style={[styles.primaryButton, (!allMapped || !dimensions || !!busy) && styles.disabled]}
           >
-            <Text style={styles.primaryText}>{busy === "approve-photo" ? "Approving…" : "Approve group photo & continue to voices"}</Text>
+            <Text style={styles.primaryText}>
+              {busy === "approve-photo"
+                ? "Approving…"
+                : state.people.speaker_count === 2
+                  ? "Approve group photo & continue to voices"
+                  : "Approve & save group photo"}
+            </Text>
           </Pressable>
         </View>
       ) : null}
