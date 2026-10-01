@@ -31,6 +31,7 @@ export type SharedSceneWorkflowState = {
     | "group_photo_prepare"
     | "group_photo_map"
     | "group_photo_approve"
+    | "group_photo_complete"
     | "audio"
     | "video"
     | "final"
@@ -65,6 +66,9 @@ export type SharedSceneWorkflowState = {
     stage_run_id?: string | null;
     state?: string | null;
     settings_saved: boolean;
+    supported?: boolean;
+    max_people?: number;
+    reason?: string | null;
   };
 };
 
