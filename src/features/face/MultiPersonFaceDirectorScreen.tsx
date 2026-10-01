@@ -369,7 +369,9 @@ export default function MultiPersonFaceDirectorScreen({
                 </Text>
                 <Text style={styles.readyText}>
                   {sharedSceneMode
-                    ? `${run.workspace?.participants?.length || plan?.participants?.length || 0} speaker(s) are now canonical. Next, confirm the people and prepare one group photo before Audio or Video can start.`
+                    ? (run.workspace?.participants?.length || plan?.participants?.length || 0) > 2
+                      ? `${run.workspace?.participants?.length || plan?.participants?.length || 0} speakers are now canonical. You can create and save the group photo, but video conversation and lip-sync currently support 2 people only. This limitation is shown again before any group-photo pricing action.`
+                      : `${run.workspace?.participants?.length || plan?.participants?.length || 0} speaker(s) are now canonical. Next, confirm the people and prepare one group photo before Audio or Video can start.`
                     : `${run.workspace?.participants?.length || plan?.participants?.length || 0} participant(s) are now canonical. Face generation still requires pricing confirmation and individual HITL approval.`}
                 </Text>
                 <Pressable
