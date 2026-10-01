@@ -45,6 +45,10 @@ export default function SharedSceneFusionScreen({ storyId }: { storyId: string }
 
   const save = useCallback(async () => {
     if (!state?.video?.stage_run_id) return;
+    if (state.video?.supported === false || state.people.speaker_count !== 2) {
+      setError("Video conversation and lip-sync currently support 2 people only. Your group photo remains saved and reusable.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -70,6 +74,25 @@ export default function SharedSceneFusionScreen({ storyId }: { storyId: string }
         <ActivityIndicator color={STUDIO.accent} />
         <Text style={styles.muted}>Loading conversation video setup…</Text>
         {error ? <Text style={styles.error}>{error}</Text> : null}
+      </View>
+    );
+  }
+
+  if (state.video?.supported === false || state.people.speaker_count !== 2) {
+    return (
+      <View style={styles.root}>
+        <View style={styles.card}>
+          <Text style={styles.eyebrow}>GROUP PHOTO CONVERSATION</Text>
+          <Text style={styles.title}>Group photo saved</Text>
+          <Text style={styles.muted}>
+            Video conversation and lip-sync currently support 2 people only. This {state.people.speaker_count}-person group photo remains available for image use and Saved Work.
+          </Text>
+          <View style={styles.notice}>
+            <Text style={styles.noticeText}>
+              3–4 person group-photo video generation will be introduced after additional testing.
+            </Text>
+          </View>
+        </View>
       </View>
     );
   }

@@ -90,7 +90,7 @@ export default function StoryStudioRoute() {
       if (!activeRef.current) return;
       const phase = String(shared?.phase || "").trim();
       setSharedPhase(phase);
-      if (["people", "group_photo_source", "group_photo_prepare", "group_photo_map", "group_photo_approve"].includes(phase)) {
+      if (["people", "group_photo_source", "group_photo_prepare", "group_photo_map", "group_photo_approve", "group_photo_complete"].includes(phase)) {
         setResolvedStage("face");
         return;
       }
@@ -187,7 +187,7 @@ export default function StoryStudioRoute() {
 
   if (
     sharedSceneMode &&
-    ["people", "group_photo_source", "group_photo_prepare", "group_photo_map", "group_photo_approve"].includes(sharedPhase)
+    ["people", "group_photo_source", "group_photo_prepare", "group_photo_map", "group_photo_approve", "group_photo_complete"].includes(sharedPhase)
   ) {
     return (
       <View style={styles.safe}>
