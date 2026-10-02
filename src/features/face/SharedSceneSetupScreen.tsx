@@ -107,6 +107,15 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
 
   const speakers = state?.people?.speakers || [];
   const stage = fusionStage(workflow);
+  const speakerCount = Number(state?.people?.speaker_count || speakers.length || 0);
+  const videoSupported =
+    state?.video?.supported === undefined
+      ? speakerCount === 2
+      : Boolean(state.video.supported);
+  const imageOnlyGroup = speakerCount > 2 || state?.video?.supported === false;
+  const videoMaxPeople = Number(state?.video?.max_people || 2);
+  const videoLimitMessage =
+    `Group photos can include 2 or more people. Video conversations and lip-sync currently support ${videoMaxPeople} people only.`;
 
   const hydrateDrafts = useCallback((items: SharedSceneSpeakerProfile[]) => {
     setDrafts((current) => {
@@ -440,8 +449,20 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
           point: targets[clean(speaker.participant_id)],
         })),
       });
-      const latest = await getStudioWorkflow(workflow.workflow_id);
+      const [latest, latestState] = await Promise.all([
+        getStudioWorkflow(workflow.workflow_id),
+        getSharedSceneState(workflow.workflow_id),
+      ]);
       setWorkflow(latest);
+      setState(latestState);
+
+      if (latestState.video?.supported === false || latestState.people.speaker_count !== 2) {
+        setMessage(
+          "Group photo approved and saved. Video conversation and lip-sync currently support 2 people only, so Audio and Video will not be started for this group."
+        );
+        return;
+      }
+
       setMessage("Group photo approved. Opening conversation voices.");
       router.replace({
         pathname: "/(tabs)/face/story/[storyId]",
@@ -480,6 +501,11 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
       <Text style={styles.muted}>
         Complete only the current phase. desifaces will not unlock Audio or Video until the people and group photo are explicitly approved.
       </Text>
+
+      <View style={styles.limitBox}>
+        <Text style={styles.limitTitle}>Group photo capability</Text>
+        <Text style={styles.limitText}>{videoLimitMessage}</Text>
+      </View>
 
       {message ? <View style={styles.notice}><Text style={styles.noticeText}>{message}</Text></View> : null}
       {error ? <View style={styles.errorBox}><Text style={styles.error}>{error}</Text></View> : null}
@@ -553,6 +579,14 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>2. Prepare the conversation photo</Text>
           <Text style={styles.muted}>Choose one path. Everyone who will speak must appear in the same image.</Text>
+          {imageOnlyGroup ? (
+            <View style={styles.limitBox}>
+              <Text style={styles.limitTitle}>Image-only conversation group</Text>
+              <Text style={styles.limitText}>
+                You can generate and save this {speakerCount}-person group photo. Video conversation and lip-sync are currently available only for 2-person group photos.
+              </Text>
+            </View>
+          ) : null}
           {state.group_photo.generate_supported ? (
             <Pressable onPress={() => void chooseSource("generate")} style={styles.primaryButton}>
               <Text style={styles.primaryText}>Generate a group photo</Text>
@@ -577,6 +611,14 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
       {state.phase === "group_photo_prepare" && state.group_photo.source_mode === "generate" ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Generate a group photo</Text>
+          {imageOnlyGroup ? (
+            <View style={styles.limitBox}>
+              <Text style={styles.limitTitle}>Before you spend credits</Text>
+              <Text style={styles.limitText}>
+                You can create and save this {speakerCount}-person group photo. Video conversation and lip-sync currently support 2 people only.
+              </Text>
+            </View>
+          ) : null}
           <TextInput
             value={photoPrompt}
             onChangeText={(value) => { setPhotoPrompt(value); setPhotoQuote(null); }}
@@ -633,7 +675,7 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
         </View>
       ) : null}
 
-      {["group_photo_map", "group_photo_approve"].includes(state.phase) || photoMediaId ? (
+      {["group_photo_map", "group_photo_approve"].includes(state.phase) || (photoMediaId && !state.group_photo.approved) ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>3. Identify each person</Text>
           <Text style={styles.muted}>Select a speaker name, then tap that person's face in the photo.</Text>
@@ -688,7 +730,38 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
             onPress={() => void approvePhoto()}
             style={[styles.primaryButton, (!allMapped || !dimensions || !!busy) && styles.disabled]}
           >
-            <Text style={styles.primaryText}>{busy === "approve-photo" ? "Approving…" : "Approve group photo & continue to voices"}</Text>
+            <Text style={styles.primaryText}>
+              {busy === "approve-photo"
+                ? "Approving…"
+                : imageOnlyGroup
+                  ? "Approve & save group photo"
+                  : "Approve group photo & continue to voices"}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {state.phase === "group_photo_complete" || state.next_action === "video_unavailable_for_group_size" ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Group photo saved</Text>
+          {photoUrl ? (
+            <ExpoImage
+              source={{ uri: photoUrl }}
+              style={styles.completedImage}
+              contentFit="contain"
+            />
+          ) : null}
+          <View style={styles.limitBox}>
+            <Text style={styles.limitTitle}>Image ready · video unavailable for this group size</Text>
+            <Text style={styles.limitText}>
+              This group photo remains saved and reusable for image workflows. Video conversation and lip-sync currently support 2 people only.
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => router.replace("/(tabs)/face/multi-person" as any)}
+            style={styles.secondaryButton}
+          >
+            <Text style={styles.buttonText}>Back to Multi-Person</Text>
           </Pressable>
         </View>
       ) : null}
@@ -819,6 +892,35 @@ const styles = StyleSheet.create({
   pillMapped: { borderColor: "rgba(67,209,123,0.35)" },
   pillText: { color: STUDIO.text, fontSize: 10, fontWeight: "800" },
   speakerPills: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 9 },
+  limitBox: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: STUDIO.accentBorder,
+    backgroundColor: STUDIO.accentFill,
+    padding: 10,
+    marginTop: 9,
+    marginBottom: 4,
+  },
+  limitTitle: {
+    color: STUDIO.accentText,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "900",
+  },
+  limitText: {
+    color: STUDIO.text,
+    fontSize: 10.5,
+    lineHeight: 16,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  completedImage: {
+    width: "100%",
+    aspectRatio: 16 / 9,
+    borderRadius: 12,
+    backgroundColor: STUDIO.surfaceSoft,
+    marginTop: 8,
+  },
   notice: {
     borderRadius: 12,
     borderWidth: 1,
