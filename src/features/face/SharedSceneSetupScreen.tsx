@@ -137,6 +137,35 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
       setState(canonical);
       hydrateDrafts(canonical.people?.speakers || []);
 
+      const persistedTargets = canonical.group_photo?.speaker_targets || {};
+      const hydratedTargets: Record<string, SharedScenePoint> = {};
+      for (const [participantId, target] of Object.entries(persistedTargets)) {
+        const point = target?.point;
+        if (
+          point &&
+          Number.isFinite(Number(point.x)) &&
+          Number.isFinite(Number(point.y))
+        ) {
+          hydratedTargets[participantId] = {
+            x: Math.max(0, Math.min(1, Number(point.x))),
+            y: Math.max(0, Math.min(1, Number(point.y))),
+          };
+        }
+      }
+      setTargets(hydratedTargets);
+
+      const persistedDimensions = canonical.group_photo?.dimensions;
+      if (
+        persistedDimensions &&
+        Number(persistedDimensions.width) > 0 &&
+        Number(persistedDimensions.height) > 0
+      ) {
+        setDimensions({
+          width: Number(persistedDimensions.width),
+          height: Number(persistedDimensions.height),
+        });
+      }
+
       const mediaId = clean(
         canonical.group_photo?.approved_media_id ||
         canonical.group_photo?.draft_media_id
@@ -486,6 +515,11 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
       <Text style={styles.muted}>
         Complete only the current phase. desifaces will not unlock Audio or Video until the people and group photo are explicitly approved.
       </Text>
+      <View style={styles.notice}>
+        <Text style={styles.noticeText}>
+          Group photos can include 2 or more people. Video conversations and lip-sync currently support 2 people only.
+        </Text>
+      </View>
 
       {state.people.speaker_count > 2 ? (
         <View style={styles.notice}>
@@ -497,7 +531,7 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
       {state.phase === "group_photo_complete" ? (
         <View style={styles.notice}>
           <Text style={styles.noticeText}>
-            Group photo ready. It remains available for image use and Saved Work. 3–4 person group-photo video and lip-sync will be introduced after additional testing.
+            Group photo ready. It remains available for image use and Saved Work. Support for larger group conversations is planned for a future release.
           </Text>
         </View>
       ) : null}
