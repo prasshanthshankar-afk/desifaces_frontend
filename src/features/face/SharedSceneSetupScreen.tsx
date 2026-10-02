@@ -105,7 +105,10 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
   const [photoQuote, setPhotoQuote] = useState<any>(null);
   const [generated, setGenerated] = useState<any[]>([]);
 
-  const speakers = state?.people?.speakers || [];
+  const speakers = useMemo(
+    () => state?.people?.speakers || [],
+    [state?.people?.speakers]
+  );
   const stage = fusionStage(workflow);
 
   const hydrateDrafts = useCallback((items: SharedSceneSpeakerProfile[]) => {
@@ -690,7 +693,7 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
       {["group_photo_map", "group_photo_approve"].includes(state.phase) || photoMediaId ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>3. Identify each person</Text>
-          <Text style={styles.muted}>Select a speaker name, then tap that person's face in the photo.</Text>
+          <Text style={styles.muted}>Select a speaker name, then tap that person&apos;s face in the photo.</Text>
           <View style={styles.speakerPills}>
             {speakers.map((speaker) => {
               const id = clean(speaker.participant_id);
