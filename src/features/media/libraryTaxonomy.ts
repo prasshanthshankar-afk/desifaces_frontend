@@ -80,10 +80,10 @@ export function canReuseAsStandaloneFace(item: any) {
   return savedWorkCategory(item) === "face";
 }
 
-export const SAVED_WORK_FILTERS: Array<{
+export const SAVED_WORK_FILTERS: {
   key: SavedWorkCategory;
   label: string;
-}> = [
+}[] = [
   { key: "all", label: "All" },
   { key: "face", label: "Faces" },
   { key: "audio", label: "Audio" },
