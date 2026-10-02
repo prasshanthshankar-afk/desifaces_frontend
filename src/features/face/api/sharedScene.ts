@@ -65,6 +65,9 @@ export type SharedSceneWorkflowState = {
     stage_run_id?: string | null;
     state?: string | null;
     settings_saved: boolean;
+    supported?: boolean;
+    max_people?: number;
+    reason?: string | null;
   };
 };
 
