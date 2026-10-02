@@ -260,10 +260,10 @@ export function persistSharedSceneDraft(
     shared_scene_media_id: string;
     image_width?: number | null;
     image_height?: number | null;
-    speaker_targets: Array<{
+    speaker_targets: {
       participant_id: string;
       point: SharedScenePoint;
-    }>;
+    }[];
   }
 ) {
   return api.put<any>(
@@ -280,10 +280,10 @@ export function approveSharedScene(
     shared_scene_media_id: string;
     image_width: number;
     image_height: number;
-    speaker_targets: Array<{
+    speaker_targets: {
       participant_id: string;
       point: SharedScenePoint;
-    }>;
+    }[];
   }
 ) {
   return api.put<any>(
