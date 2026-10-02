@@ -52,6 +52,8 @@ export type SharedSceneWorkflowState = {
     generation_input?: Record<string, any> | null;
     draft_media_id?: string | null;
     approved_media_id?: string | null;
+    dimensions?: SharedSceneDimensions | null;
+    speaker_targets?: Record<string, { point?: SharedScenePoint | null; box?: Record<string, number> | null }>;
     mapped_count: number;
     required_mapped_count: number;
     approved: boolean;
@@ -258,10 +260,10 @@ export function persistSharedSceneDraft(
     shared_scene_media_id: string;
     image_width?: number | null;
     image_height?: number | null;
-    speaker_targets: Array<{
+    speaker_targets: {
       participant_id: string;
       point: SharedScenePoint;
-    }>;
+    }[];
   }
 ) {
   return api.put<any>(
@@ -278,10 +280,10 @@ export function approveSharedScene(
     shared_scene_media_id: string;
     image_width: number;
     image_height: number;
-    speaker_targets: Array<{
+    speaker_targets: {
       participant_id: string;
       point: SharedScenePoint;
-    }>;
+    }[];
   }
 ) {
   return api.put<any>(

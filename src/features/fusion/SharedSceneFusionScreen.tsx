@@ -29,7 +29,6 @@ function errorText(error: any) {
 
 export default function SharedSceneFusionScreen({ storyId }: { storyId: string }) {
   const [state, setState] = useState<SharedSceneWorkflowState | null>(null);
-  const mode = "precise_lipsync" as const;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -89,7 +88,7 @@ export default function SharedSceneFusionScreen({ storyId }: { storyId: string }
           </Text>
           <View style={styles.notice}>
             <Text style={styles.noticeText}>
-              3–4 person group-photo video generation will be introduced after additional testing.
+              Support for larger group conversations is planned for a future release.
             </Text>
           </View>
         </View>

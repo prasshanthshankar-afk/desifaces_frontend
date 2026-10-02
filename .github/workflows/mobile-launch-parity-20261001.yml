@@ -1,0 +1,64 @@
+name: Mobile Launch Parity 2026-10-01
+
+on:
+  push:
+    branches:
+      - release/mobile-launch-parity-20261001
+  pull_request:
+    branches:
+      - desifaces-v3
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    name: mobile-launch-parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout mobile release candidate
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+
+      - name: Capability and group-photo launch source gate
+        run: python3 scripts/test-v3-mobile-capability-parity.py
+
+      - name: TypeScript compile gate
+        run: npx tsc --noEmit --pretty false
+
+      - name: Lint changed mobile surfaces
+        run: >-
+          npx eslint
+          'src/app/(tabs)/face/multi-person.tsx'
+          src/features/face/SharedSceneSetupScreen.tsx
+          src/features/face/api/sharedScene.ts
+          src/features/fusion/SharedSceneFusionScreen.tsx
+          src/features/media/MediaLibraryScreen.tsx
+          src/features/media/libraryTaxonomy.ts
+          --max-warnings=0
+
+      - name: Expo doctor
+        run: npx expo-doctor
+
+      - name: Release-candidate marker
+        run: |
+          echo MOBILE_LAUNCH_PARITY=PASS
+          echo DATABASE_MIGRATION=NONE
+          echo PRICING_MODEL_MUTATION=NONE
+          echo STORE_SUBMISSION=NONE

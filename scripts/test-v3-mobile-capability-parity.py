@@ -20,6 +20,12 @@ piku = (root / "src/features/assistant/AssistantOverlay.tsx").read_text()
 piku_api = (root / "src/features/assistant/api/assistant.ts").read_text()
 director_api = (root / "src/features/face/api/multiPersonDirector.ts").read_text()
 
+shared_scene_screen = (root / "src/features/face/SharedSceneSetupScreen.tsx").read_text()
+shared_scene_api = (root / "src/features/face/api/sharedScene.ts").read_text()
+shared_scene_fusion = (root / "src/features/fusion/SharedSceneFusionScreen.tsx").read_text()
+media_library = (root / "src/features/media/MediaLibraryScreen.tsx").read_text()
+library_taxonomy = (root / "src/features/media/libraryTaxonomy.ts").read_text()
+
 # Mobile intentionally keeps the primary tab bar compact. "More" remains a
 # hidden route reached through the app menu rather than a fifth visible tab.
 for marker in ('title: "Home"', 'title: "Face"', 'title: "Voice"', 'title: "Video"'):
@@ -153,6 +159,58 @@ for marker in (
     assert marker in (app_config + eas_config), marker
 for forbidden in ('desifaces.ai Dev', 'desifaces-dev', 'ai.desifaces.app.dev'):
     assert forbidden not in app_config, forbidden
+
+# Group-photo launch parity: group image creation supports 2+ people while
+# shared-scene Audio/Video remains limited to exactly two people for launch.
+for marker in (
+    'supported?: boolean',
+    'max_people?: number',
+    'reason?: string | null',
+    'speaker_targets?: Record<string',
+    'dimensions?: SharedSceneDimensions | null',
+):
+    assert marker in shared_scene_api, marker
+
+for marker in (
+    'Group photos can include 2 or more people.',
+    'Video conversations and lip-sync currently support 2 people only.',
+    'No Audio or Video credits will be requested',
+    'Approve & save group photo',
+    'group_photo_complete',
+    'setTargets(hydratedTargets)',
+    'canonical.group_photo?.speaker_targets',
+    'canonical.group_photo?.dimensions',
+    'Support for larger group conversations is planned for a future release.',
+):
+    assert marker in shared_scene_screen, marker
+
+for marker in (
+    'state.video?.supported === false',
+    'state.people.speaker_count !== 2',
+    'Support for larger group conversations is planned for a future release.',
+):
+    assert marker in shared_scene_fusion, marker
+
+assert '3–4 person group-photo video generation will be introduced after additional testing.' not in shared_scene_fusion
+assert '3–4 person group-photo video and lip-sync will be introduced after additional testing.' not in shared_scene_screen
+
+# Saved Work keeps distinct group/multi-person taxonomy and exposes image/video
+# eligibility for group photos without inventing client-side pricing rules.
+for marker in (
+    '"group-photos"',
+    '"group-videos"',
+    '"group-photo-conversation"',
+    '"multi-person-conversation"',
+):
+    assert marker in library_taxonomy, marker
+
+for marker in (
+    'groupCapabilityLabel',
+    'Image only · ${count} people',
+    'Video eligible · 2 people',
+    'savedWorkCategory(item)',
+):
+    assert marker in media_library, marker
 
 # Mobile must not create a parallel pricing model or expose provider-specific policy.
 for forbidden in ('credits_per_second', 'UPDATE pricing_', 'INSERT INTO pricing_', 'stripe_price_id'):

@@ -375,6 +375,43 @@ function itemSubtitle(item: LibraryItem) {
   return bits.join(" • ");
 }
 
+
+function groupParticipantCount(item: LibraryItem): number {
+  const r = item?.reuse_payload || {};
+  const meta = item?.metadata_json || {};
+  const artifactMeta = meta?.artifact_meta || {};
+  const values = [
+    item?.participant_count,
+    r?.participant_count,
+    meta?.participant_count,
+    artifactMeta?.participant_count,
+    item?.meta?.participant_count,
+  ];
+  for (const value of values) {
+    const count = Number(value);
+    if (Number.isFinite(count) && count > 0) return Math.trunc(count);
+  }
+  const participants = Array.isArray(item?.participants)
+    ? item.participants
+    : Array.isArray(r?.participants)
+      ? r.participants
+      : [];
+  return participants.length;
+}
+
+function groupCapabilityLabel(item: LibraryItem): string {
+  const category = savedWorkCategory(item);
+  if (category !== "group-photos" && category !== "group-photo-conversation") {
+    return "";
+  }
+  const count = groupParticipantCount(item);
+  if (count > 2) return `Image only · ${count} people`;
+  if (count === 2) return "Video eligible · 2 people";
+  return category === "group-photo-conversation"
+    ? "Group Photo Conversation"
+    : "Group photo";
+}
+
 async function fetchLibrary({
   token,
   logout,
@@ -494,10 +531,6 @@ async function resolveFaceReuseData(
     gender,
     aspectRatio,
   };
-}
-
-function hasReusableFaceArtifact(item: LibraryItem | null | undefined): boolean {
-  return !!pickFaceArtifactId((item ?? undefined) as any);
 }
 
 function HeaderPill({
@@ -898,6 +931,9 @@ export default function MediaLibraryScreen() {
     ({ item }: { item: LibraryItem }) => {
       const isAudio = item?.studio === "audio";
       const isVideo = item?.studio === "video";
+      const category = savedWorkCategory(item);
+      const categoryLabel = SAVED_WORK_FILTERS.find((entry) => entry.key === category)?.label || "";
+      const capabilityLabel = groupCapabilityLabel(item);
       const active =
         (item?.studio === "face" && selectedFaceId === item?.library_id) ||
         (item?.studio === "audio" && selectedAudioId === item?.library_id);
@@ -918,6 +954,16 @@ export default function MediaLibraryScreen() {
               <View style={styles.metaChip}>
                 <Text style={styles.metaChipText}>{String(item?.status || "ready").toUpperCase()}</Text>
               </View>
+              {categoryLabel ? (
+                <View style={styles.metaChip}>
+                  <Text style={styles.metaChipText}>{categoryLabel}</Text>
+                </View>
+              ) : null}
+              {capabilityLabel ? (
+                <View style={[styles.metaChip, capabilityLabel.startsWith("Image only") ? styles.metaChipWarning : null]}>
+                  <Text style={styles.metaChipText}>{capabilityLabel}</Text>
+                </View>
+              ) : null}
               {!!cleanParam(item?.source_job_id) && (
                 <View style={styles.metaChip}>
                   <Text style={styles.metaChipText}>Job linked</Text>
@@ -1249,6 +1295,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.04)",
     paddingHorizontal: 8,
     paddingVertical: 4,
+  },
+  metaChipWarning: {
+    borderColor: "rgba(255,190,92,0.38)",
+    backgroundColor: "rgba(255,190,92,0.08)",
   },
   metaChipText: {
     color: DF.text,
