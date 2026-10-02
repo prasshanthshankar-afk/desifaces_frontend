@@ -58,7 +58,7 @@ export default function MultiPersonFaceRoute() {
           >
             <Text style={styles.experienceTitle}>Create one group photo</Text>
             <Text style={styles.experienceText}>
-              Keep everyone together in one photo, identify each speaker once, then create the conversation.
+              Keep everyone together in one photo, identify each speaker once, then create the conversation. Group photos support 2+ people; video conversation currently supports 2.
             </Text>
           </Pressable>
           <Pressable
