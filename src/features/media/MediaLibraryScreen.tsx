@@ -533,10 +533,6 @@ async function resolveFaceReuseData(
   };
 }
 
-function hasReusableFaceArtifact(item: LibraryItem | null | undefined): boolean {
-  return !!pickFaceArtifactId((item ?? undefined) as any);
-}
-
 function HeaderPill({
   label,
   active,
