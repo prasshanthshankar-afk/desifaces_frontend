@@ -51,6 +51,8 @@ export type SharedSceneWorkflowState = {
     generation_input?: Record<string, any> | null;
     draft_media_id?: string | null;
     approved_media_id?: string | null;
+    dimensions?: SharedSceneDimensions | null;
+    speaker_targets?: Record<string, { point?: SharedScenePoint | null; box?: Record<string, number> | null }>;
     mapped_count: number;
     required_mapped_count: number;
     approved: boolean;
