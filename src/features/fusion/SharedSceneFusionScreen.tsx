@@ -89,7 +89,7 @@ export default function SharedSceneFusionScreen({ storyId }: { storyId: string }
           </Text>
           <View style={styles.notice}>
             <Text style={styles.noticeText}>
-              3–4 person group-photo video generation will be introduced after additional testing.
+              Support for larger group conversations is planned for a future release.
             </Text>
           </View>
         </View>
