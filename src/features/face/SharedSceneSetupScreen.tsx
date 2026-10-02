@@ -112,7 +112,7 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
     state?.video?.supported === undefined
       ? speakerCount === 2
       : Boolean(state.video.supported);
-  const imageOnlyGroup = speakerCount > 2 || state?.video?.supported === false;
+  const imageOnlyGroup = speakerCount > 2 || !videoSupported;
   const videoMaxPeople = Number(state?.video?.max_people || 2);
   const videoLimitMessage =
     `Group photos can include 2 or more people. Video conversations and lip-sync currently support ${videoMaxPeople} people only.`;
@@ -145,6 +145,35 @@ export default function SharedSceneSetupScreen({ storyId }: Props) {
       setWorkflow(wf);
       setState(canonical);
       hydrateDrafts(canonical.people?.speakers || []);
+
+      const persistedTargets = canonical.group_photo?.speaker_targets || {};
+      const hydratedTargets: Record<string, SharedScenePoint> = {};
+      for (const [participantId, target] of Object.entries(persistedTargets)) {
+        const point = target?.point;
+        if (
+          point &&
+          Number.isFinite(Number(point.x)) &&
+          Number.isFinite(Number(point.y))
+        ) {
+          hydratedTargets[participantId] = {
+            x: Math.max(0, Math.min(1, Number(point.x))),
+            y: Math.max(0, Math.min(1, Number(point.y))),
+          };
+        }
+      }
+      setTargets(hydratedTargets);
+
+      const persistedDimensions = canonical.group_photo?.dimensions;
+      if (
+        persistedDimensions &&
+        Number(persistedDimensions.width) > 0 &&
+        Number(persistedDimensions.height) > 0
+      ) {
+        setDimensions({
+          width: Number(persistedDimensions.width),
+          height: Number(persistedDimensions.height),
+        });
+      }
 
       const mediaId = clean(
         canonical.group_photo?.approved_media_id ||
