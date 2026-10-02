@@ -29,7 +29,6 @@ function errorText(error: any) {
 
 export default function SharedSceneFusionScreen({ storyId }: { storyId: string }) {
   const [state, setState] = useState<SharedSceneWorkflowState | null>(null);
-  const mode = "precise_lipsync" as const;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
