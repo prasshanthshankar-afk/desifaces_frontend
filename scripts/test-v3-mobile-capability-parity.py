@@ -25,6 +25,12 @@ shared_scene_api = (root / "src/features/face/api/sharedScene.ts").read_text()
 shared_scene_fusion = (root / "src/features/fusion/SharedSceneFusionScreen.tsx").read_text()
 media_library = (root / "src/features/media/MediaLibraryScreen.tsx").read_text()
 library_taxonomy = (root / "src/features/media/libraryTaxonomy.ts").read_text()
+plan_billing = (root / "src/app/pricing/plan-billing.tsx").read_text()
+upgrade_confirm = (root / "src/app/pricing/upgrade-confirm.tsx").read_text()
+topup = (root / "src/features/pricing/TopUpScreen.tsx").read_text()
+payments_api = (root / "src/core/payments/apiPayments.ts").read_text()
+apple_iap = (root / "src/core/payments/appleIap.ts").read_text()
+register_screen = (root / "src/features/auth/RegisterScreen.tsx").read_text()
 
 # Mobile intentionally keeps the primary tab bar compact. "More" remains a
 # hidden route reached through the app menu rather than a fifth visible tab.
@@ -212,8 +218,82 @@ for marker in (
 ):
     assert marker in media_library, marker
 
-# Mobile must not create a parallel pricing model or expose provider-specific policy.
-for forbidden in ('credits_per_second', 'UPDATE pricing_', 'INSERT INTO pricing_', 'stripe_price_id'):
+# Billing/currency launch contract: mobile consumes shared backend pricing,
+# derives INR only for India, keeps USD elsewhere, and preserves native-store
+# purchase/restore paths without introducing client-side plan pricing.
+for marker in (
+    'billingCurrencyForCountry',
+    '=== "IN" ? "INR" : "USD"',
+    'apple_iap',
+    'google_play',
+    'Restore Apple purchases',
+    'Restore Google Play purchases',
+):
+    assert marker in plan_billing, marker
+
+for marker in (
+    'billingCurrencyForCountry',
+    '=== "IN" ? "INR" : "USD"',
+    'countryCode',
+    'currency: billingCurrency',
+):
+    assert marker in upgrade_confirm, marker
+    assert marker in topup, marker
+
+for marker in (
+    '"X-Country-Code"',
+    '"X-Currency"',
+    'EXPO_PUBLIC_DF_FORCE_COUNTRY_CODE',
+    'EXPO_PUBLIC_DF_FORCE_CURRENCY',
+):
+    assert marker in payments_api, marker
+
+for marker in (
+    'restoreAppleSubscriptionsAndConfirm',
+    'countryCode',
+    'currency',
+):
+    assert marker in apple_iap, marker
+
+# Registration must remain fail-closed until the user explicitly accepts the
+# Agreement and Terms & Conditions.
+for marker in (
+    'acceptedAgreement',
+    'canSubmit = emailOk && pwOk && matchOk && acceptedAgreement && !busy',
+    'Please accept the Agreement and Terms & Conditions.',
+    'Agreement',
+    'Terms & Conditions',
+):
+    assert marker in register_screen, marker
+
+# Production mobile profile must stay on production APIs and must not carry QA
+# force-country/currency overrides.
+for marker in (
+    'https://api.desifaces.ai',
+    '"environment": "production"',
+    '"distribution": "store"',
+):
+    assert marker in eas_config, marker
+for forbidden in (
+    'EXPO_PUBLIC_DF_FORCE_COUNTRY_CODE',
+    'EXPO_PUBLIC_DF_FORCE_CURRENCY',
+):
+    assert forbidden not in eas_config, forbidden
+
+# Mobile must not create a parallel pricing model or write pricing state.
+# Backend catalog identifiers such as stripe_price_id may legitimately flow
+# through billing/upgrade payloads, so only client-authored rate/SQL behavior
+# is forbidden across billing surfaces.
+for forbidden in ('credits_per_second', 'UPDATE pricing_', 'INSERT INTO pricing_'):
+    assert forbidden not in more
+    assert forbidden not in spending
+    assert forbidden not in plan_billing
+    assert forbidden not in upgrade_confirm
+    assert forbidden not in topup
+
+# Preserve the original navigation/spending guard against exposing raw Stripe
+# catalog IDs in end-user summary surfaces.
+for forbidden in ('stripe_price_id',):
     assert forbidden not in more
     assert forbidden not in spending
 
