@@ -280,12 +280,21 @@ for forbidden in (
 ):
     assert forbidden not in eas_config, forbidden
 
-# Mobile must not create a parallel pricing model or expose provider-specific policy.
-for forbidden in ('credits_per_second', 'UPDATE pricing_', 'INSERT INTO pricing_', 'stripe_price_id'):
+# Mobile must not create a parallel pricing model or write pricing state.
+# Backend catalog identifiers such as stripe_price_id may legitimately flow
+# through billing/upgrade payloads, so only client-authored rate/SQL behavior
+# is forbidden across billing surfaces.
+for forbidden in ('credits_per_second', 'UPDATE pricing_', 'INSERT INTO pricing_'):
     assert forbidden not in more
     assert forbidden not in spending
     assert forbidden not in plan_billing
     assert forbidden not in upgrade_confirm
     assert forbidden not in topup
+
+# Preserve the original navigation/spending guard against exposing raw Stripe
+# catalog IDs in end-user summary surfaces.
+for forbidden in ('stripe_price_id',):
+    assert forbidden not in more
+    assert forbidden not in spending
 
 print('V3_MOBILE_CAPABILITY_PARITY_SOURCE_TEST=PASS')
